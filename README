@@ -1,0 +1,17 @@
+AirCat - An embedded Internet Radio Player and Wireless Audio Receiver.
+   Website: http://www.sparod.com/aircat/
+   Git: https://github.com/sparod/aircat/
+
+ABOUT
+-----
+
+This project intends to create an Internet Radio Player and Wireless Audio Receiver for Embedded boards like BeagleBoard or Raspberry Pi. The aim is to provide a low cost solution to add Internet and Wireless features to standart speakers.
+More details coming soon...
+
+RELATED PROJECTS
+----------------
+
+AirCat Mobile - A remote control for AirCat on Andoird and iOS. 
+   Website: http://www.sparod.com/aircat-mobile/
+   Git: https://github.com/sparod/aircat-mobile/
+
