@@ -1,10 +1,11 @@
 bin_PROGRAMS = aircat
 
-aircat_SOURCES = main.c
+aircat_SOURCES = main.c \
+		 http.c
 
 aircat_LDADD = 
 
-AM_CPPFLAGS = 
+AM_CPPFLAGS = -Wall
 
-EXTRA_DIST = 
+EXTRA_DIST = http.h
 

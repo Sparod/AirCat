@@ -13,6 +13,9 @@ AC_PROG_MAKE_SET
 
 # Checks for header files.
 AC_HEADER_STDC
+#strcasecmp
+
+# Checks for lib
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
