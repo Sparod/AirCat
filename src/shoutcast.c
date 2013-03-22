@@ -91,6 +91,19 @@ int shoutcast_open(struct shout_handle *h, const char *url)
 	if(p != NULL)
 	h->info.metaint = atoi(p);
 	/* TODO: ice-audio-info: */
+	p = http_get_header(h->http, "content-type", 0);
+	if(p != NULL)
+	{
+		if(strncmp(p, "audio/mpeg", 10) == 0)
+			h->info.type = MPEG_STREAM;
+		else if(strncmp(p, "audio/aacp", 10) == 0)
+			h->info.type = AAC_STREAM;
+		else
+		{
+			h->info.type = NONE_STREAM;
+			return -1;
+		}
+	}
 
 	/* Update metaint with extracted info */
 	h->metaint = h->info.metaint;

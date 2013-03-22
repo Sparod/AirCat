@@ -19,6 +19,8 @@
 #ifndef _SHOUTCAST_CLIENT_H
 #define _SHOUTCAST_CLIENT_H
 
+enum {NONE_STREAM, MPEG_STREAM, AAC_STREAM};
+
 struct radio_info {
 	int bitrate;		//icy-br: || ice-audio-info: ice-bitrate=
 	char *description;	//icy-description:
@@ -30,6 +32,7 @@ struct radio_info {
 	int samplerate;		//ice-audio-info: ice-samplerate=
 	int channels;		//ice-audio-info: ice-channels=
 	int metaint;		//icy-metaint:
+	int type;		// Audio Codec (MPEG_STREAM or AAC_STREAM)
 };
 
 struct shout_handle;
