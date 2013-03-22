@@ -170,7 +170,15 @@ char *http_get_header(struct http_handle *h, const char *name, int case_sensitiv
 
 int http_read(struct http_handle *h, unsigned char *buffer, int size)
 {
-	return 0;
+	if(h->sock < 0)
+		return -1;
+
+#ifdef HAVE_OPENSSL
+	if(h->is_ssl)
+		return SSL_read(h->ssl, buffer, size);
+	else
+#endif
+		return read(h->sock, buffer, size);
 }
 
 int http_close(struct http_handle *h)
