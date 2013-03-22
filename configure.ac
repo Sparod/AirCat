@@ -16,6 +16,9 @@ AC_HEADER_STDC
 #strcasecmp
 
 # Checks for lib
+PKG_CHECK_MODULES(libssl, libssl >= 0.9.8o, [
+	AC_DEFINE([HAVE_OPENSSL], 1, ["Use openssl"])
+])
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile

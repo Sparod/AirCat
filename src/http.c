@@ -38,6 +38,10 @@
 #include "config.h"
 #endif
 
+#ifdef HAVE_OPENSSL
+#include <openssl/ssl.h>
+#endif
+
 #include "http.h"
 
 enum {HTTP_GET, HTTP_HEAD, HTTP_POST};
@@ -65,6 +69,11 @@ struct http_proxy {
 
 struct http_handle {
 	int sock;
+	int is_ssl;
+#ifdef HAVE_OPENSSL
+	SSL *ssl;
+	SSL_CTX *ssl_ctx;
+#endif
 	int follow;
 	struct http_proxy proxy;
 	struct http_request req;
@@ -90,6 +99,7 @@ struct http_handle *http_init()
 
 	h->sock = -1;
 	h->follow = 1;
+	h->is_ssl = 0;
 	memset((unsigned char*)&(h->proxy), 0, sizeof(struct http_proxy));	
 	memset((unsigned char*)&(h->req), 0, sizeof(struct http_request));
 	h->headers = NULL;
@@ -182,9 +192,13 @@ static int http_parse_url(struct http_handle *h, const char *url)
 	}
 	else if(strncmp(url, "https://", 8) == 0)
 	{
-		fprintf(stderr, "HTTPS not yet supported!\n");
+		url += 8;
 		h->req.port = 443;
+		h->is_ssl = 1;
+#ifndef HAVE_OPENSSL
+		fprintf(stderr, "HTTPS not yet supported!\n");
 		return -1;
+#endif
 	}
 
 	/* Scheme: http://username:password@hostname:port/resource?data */
@@ -255,6 +269,33 @@ static int http_connect(struct http_handle *h)
 	{
 		return -1;
 	}
+
+#ifdef HAVE_OPENSSL
+	/* Create connection if HTTPS */
+	if(h->is_ssl)
+	{
+		/* Init library */
+		SSL_library_init();
+
+		/* Create openssl context */
+		h->ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+		if(h->ssl_ctx == NULL)
+			return -1;
+
+		/* Create a new SSL object */
+		h->ssl = SSL_new(h->ssl_ctx);
+		if(h->ssl == NULL)
+			return -1;
+
+		/* Attach socket to SSL */
+		if(SSL_set_fd(h->ssl, h->sock) != 1)
+			return -1;
+
+		/* Initiate the TLS/SSL handshake with server */
+		if(SSL_connect(h->ssl) != 1)
+			return -1;
+	}
+#endif
 	
 	return 0;
 }
@@ -267,6 +308,7 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	char *auth;
 	int code = 0;
 	int size = 0;
+	int ret = 0;
 
 	/* Parse URL */
 	if(http_parse_url(h, url) < 0)
@@ -302,7 +344,13 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	printf("%s\n", buffer);
 
 	/* Send HTTP request */
-	if (write(h->sock, buffer, size) != size)
+#ifdef HAVE_OPENSSL
+	if(h->is_ssl)
+		ret = SSL_write(h->ssl, buffer, size);
+	else
+#endif
+		ret = write(h->sock, buffer, size);
+	if (ret != size)
 	{
 		http_close(h);
 		return -1;
@@ -344,11 +392,20 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 static int http_read_line(struct http_handle *h, char *buffer, int length)
 {
 	int i;
+	int ret;
 
 	for(i = 0; i < length-1; i++)
 	{
-		if(read(h->sock, &buffer[i], 1) != 1)
+#ifdef HAVE_OPENSSL
+		if(h->is_ssl)
+			ret = SSL_read(h->ssl, &buffer[i], 1);
+		else
+#endif
+			ret = read(h->sock, &buffer[i], 1);
+
+		if(ret != 1)
 			return i;
+
 		if(buffer[i] == '\n')
 			break;
 	}
@@ -496,7 +553,16 @@ static int http_close_free(struct http_handle *h, int do_free)
 
 	/* Close socket */
 	if(h->sock != -1)
+	{
+#ifdef HAVE_OPENSSL
+		if(h->is_ssl)
+		{
+			SSL_free(h->ssl);
+			SSL_CTX_free(h->ssl_ctx);
+		}
+#endif
 		close(h->sock);
+	}
 	h->sock = -1;
 
 	/* Free memory */
