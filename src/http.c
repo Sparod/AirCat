@@ -192,11 +192,12 @@ static int http_parse_url(struct http_handle *h, const char *url)
 {
 	char *temp;
 
+	h->req.port = 80;
+
 	/* Remove http:// and https:// */
 	if(strncmp(url, "http://", 7) == 0)
 	{
 		url += 7;
-		h->req.port = 80;
 	}
 	else if(strncmp(url, "https://", 8) == 0)
 	{
