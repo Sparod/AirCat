@@ -1,0 +1,50 @@
+/*
+ * shoutcast.h - A ShoutCast Client
+ * 
+ * Copyright (c) 2013   A. Dilly
+ * 
+ * AirCat is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation.
+ * 
+ * AirCat is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef _SHOUTCAST_CLIENT_H
+#define _SHOUTCAST_CLIENT_H
+
+struct radio_info {
+	int bitrate;		//icy-br: || ice-audio-info: ice-bitrate=
+	char *description;	//icy-description:
+	char *genre;		//icy-genre:
+	char *name;		//icy-name:
+	int pub;		//icy-pub:
+	int private;		//icy-private;
+	char *url;		//icy-url:
+	int samplerate;		//ice-audio-info: ice-samplerate=
+	int channels;		//ice-audio-info: ice-channels=
+	int metaint;		//icy-metaint:
+};
+
+struct shout_handle;
+
+struct shout_handle *shoutcast_init();
+
+int shoutcast_open(struct shout_handle *h, const char *url);
+
+int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size);
+
+struct radio_info *shoutcast_get_info(struct shout_handle *h);
+
+char *shoutcast_get_metadata(struct shout_handle *h);
+
+int shoutcast_close(struct shout_handle *h);
+
+#endif
+
