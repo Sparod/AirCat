@@ -341,8 +341,6 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 		size += sprintf(&buffer[size], "%s", h->req.extra);
 	size += sprintf(&buffer[size], "\r\n");
 
-	printf("%s\n", buffer);
-
 	/* Send HTTP request */
 #ifdef HAVE_OPENSSL
 	if(h->is_ssl)
