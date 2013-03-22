@@ -373,6 +373,16 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 		/* Get redirection from header */
 		location = (char*)http_get_header(h, "Location", 0);
 
+		/* Regenerate url if auth */
+		if(h->req.auth != NULL)
+		{
+			auth = malloc((strlen(h->req.auth)+strlen(location)+2)*sizeof(char));
+			ret = (strstr(location, "//")-location);
+			location[ret] = 0;
+			sprintf(auth, "%s//%s@%s", location, h->req.auth, &location[ret+2]);
+			location = auth;
+		}
+
 		/* Init a new connection */
 		h2 = http_init();
 
@@ -384,6 +394,12 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 
 		/* Close current connection and copy new connection in current */
 		http_copy(h, h2);
+
+		/* If url has been regenerated */
+		if(h->req.auth != NULL)
+		{
+			free(auth);
+		}
 	}
 
 	return code;
