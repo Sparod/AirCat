@@ -25,9 +25,10 @@ struct decoder;
 
 struct decoder *decoder_mp3_init(void *input_callback, void *user_data);
 
-int decoder_mp3_open(struct decoder* h);
-int decoder_mp3_read(struct decoder* h, float *buffer, size_t size);
-int decoder_mp3_close(struct decoder* h);
+int decoder_mp3_open(struct decoder *dec);
+unsigned long decoder_mp3_get_samplerate(struct decoder *dec);
+int decoder_mp3_read(struct decoder *dec, float *buffer, size_t size);
+int decoder_mp3_close(struct decoder *dec);
 
 #endif
 

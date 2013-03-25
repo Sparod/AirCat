@@ -32,6 +32,7 @@ struct decoder {
 	void *user_data;
 	unsigned char buffer[BUFFER_SIZE];
 	unsigned short pcm_remain;
+	unsigned long samplerate;
 };
 
 
@@ -59,7 +60,15 @@ int decoder_mp3_open(struct decoder* dec)
 	/* PCM data remaining in output buffer */
 	dec->pcm_remain = 0;
 
+	/* Set samplerate to zero */
+	dec->samplerate = 0;
+
 	return 0;
+}
+
+unsigned long decoder_mp3_get_samplerate(struct decoder* dec)
+{
+	return dec->samplerate;
 }
 
 static int decoder_mp3_fill(struct decoder *dec)
@@ -154,6 +163,10 @@ int decoder_mp3_read(struct decoder *dec, float *output_buffer, size_t output_si
 			}
 		}
 	}
+
+	/* Set samplerate */
+	if(dec->samplerate == 0)
+		dec->samplerate = dec->Frame.header.samplerate;
 
 	/* Synthethise PCM */
 	mad_synth_frame(&dec->Synth, &dec->Frame);

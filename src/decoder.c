@@ -25,7 +25,7 @@
 struct decoder_handle {
 	struct decoder *dec;
 	int (*open)(struct decoder*);
-	int (*read)(struct decoder*, unsigned char*, size_t);
+	int (*read)(struct decoder*, float*, size_t);
 	int (*close)(struct decoder*);
 };
 
