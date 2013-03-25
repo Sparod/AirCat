@@ -19,6 +19,7 @@ AC_HEADER_STDC
 PKG_CHECK_MODULES(libssl, libssl >= 0.9.8o, [
 	AC_DEFINE([HAVE_OPENSSL], 1, ["Use openssl"])
 ])
+PKG_CHECK_MODULES(libmad, mad >= 0.15.0b)
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile

@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "http.h"
+#include "decoder.h"
 #include "shoutcast.h"
 
 #ifdef HAVE_CONFIG_H
@@ -34,7 +35,11 @@ struct shout_handle {
 	int meta_len;			// Metadata string length
 	char meta_buffer[16*255];	// Metadata string
 	struct radio_info info;		// Radio infos
+	struct decoder_handle *dec;		// Decoder structure
 };
+
+/* Callback for decoder */
+static int shoutcast_read_stream(unsigned char *buffer, size_t size, void * user_data);
 
 struct shout_handle *shoutcast_init()
 {
@@ -109,11 +114,46 @@ int shoutcast_open(struct shout_handle *h, const char *url)
 	h->metaint = h->info.metaint;
 	h->remaining = h->metaint;
 
+	/* Init decoder */
+	h->dec = decoder_init(h->info.type, &shoutcast_read_stream, h);
+
+	/* Open decoder */
+	decoder_open(h->dec);
+
 	return 0;
 }
 
-int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
+int shoutcast_read(struct shout_handle *h, float *buffer, size_t size)
 {
+	return decoder_read(h->dec, buffer, size);
+}
+
+struct radio_info *shoutcast_get_info(struct shout_handle *h)
+{
+	return &h->info;
+}
+
+char *shoutcast_get_metadata(struct shout_handle *h)
+{
+	return h->meta_buffer;
+}
+
+int shoutcast_close(struct shout_handle *h)
+{
+	/* Close decoder */
+	decoder_close(h->dec);
+
+	/* Close HTTP */
+	http_close(h->http);
+
+	free(h);
+
+	return 0;
+}
+
+static int shoutcast_read_stream(unsigned char *buffer, size_t size, void * user_data)
+{
+	struct shout_handle *h = (struct shout_handle*) user_data; 
 	int read_len = 0;
 	int meta_len = 0;
 	unsigned char c;
@@ -152,24 +192,5 @@ int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 	}
 
 	return read_len;
-}
-
-struct radio_info *shoutcast_get_info(struct shout_handle *h)
-{
-	return &h->info;
-}
-
-char *shoutcast_get_metadata(struct shout_handle *h)
-{
-	return h->meta_buffer;
-}
-
-int shoutcast_close(struct shout_handle *h)
-{
-	http_close(h->http);
-
-	free(h);
-
-	return 0;
 }
 

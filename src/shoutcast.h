@@ -41,7 +41,7 @@ struct shout_handle *shoutcast_init();
 
 int shoutcast_open(struct shout_handle *h, const char *url);
 
-int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size);
+int shoutcast_read(struct shout_handle *h, float *buffer, size_t size);
 
 struct radio_info *shoutcast_get_info(struct shout_handle *h);
 
