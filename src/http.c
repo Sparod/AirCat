@@ -314,7 +314,7 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	char *method[] = {"GET", "HEAD", "POST"};
 	char buffer[MAX_SIZE_HEADER];
 	char *location;
-	char *auth;
+	char *auth = NULL;
 	int code = 0;
 	int size = 0;
 	int ret = 0;
