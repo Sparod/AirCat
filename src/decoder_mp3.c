@@ -26,6 +26,7 @@
 
 struct decoder {
 	struct mad_stream Stream;
+	struct mad_header Header;
 	struct mad_frame Frame;
 	struct mad_synth Synth;
 	int (*read_stream)(unsigned char *, size_t, void *);
@@ -33,8 +34,11 @@ struct decoder {
 	unsigned char buffer[BUFFER_SIZE];
 	unsigned short pcm_remain;
 	unsigned long samplerate;
+	int nb_channel;
 };
 
+static int decoder_mp3_fill(struct decoder *dec);
+static int decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, size_t output_size);
 
 struct decoder *decoder_mp3_init(void *input_callback, void *user_data)
 {
@@ -54,14 +58,39 @@ int decoder_mp3_open(struct decoder* dec)
 {
 	/* Initialize mad */
 	mad_stream_init(&dec->Stream);
+	mad_header_init(&dec->Header);
 	mad_frame_init(&dec->Frame);
 	mad_synth_init(&dec->Synth);
 
 	/* PCM data remaining in output buffer */
 	dec->pcm_remain = 0;
 
-	/* Set samplerate to zero */
-	dec->samplerate = 0;
+	/* Parse first header to get samplerate and number of channel */
+	decoder_mp3_fill(dec);
+	while(mad_header_decode(&dec->Header, &dec->Stream))
+	{
+		if(MAD_RECOVERABLE(dec->Stream.error))
+		{
+			continue;
+		}
+		else
+		{
+			if(dec->Stream.error == MAD_ERROR_BUFLEN)
+			{
+				/* Refill buffer */
+				if(decoder_mp3_fill(dec) < 0)
+					return -1;
+			}
+			else
+			{
+				break;
+			}
+		}
+	}
+
+	/* Get infos */
+	dec->samplerate = dec->Header.samplerate;
+	dec->nb_channel = MAD_NCHANNELS(&dec->Header);
 
 	return 0;
 }
@@ -69,6 +98,11 @@ int decoder_mp3_open(struct decoder* dec)
 unsigned long decoder_mp3_get_samplerate(struct decoder* dec)
 {
 	return dec->samplerate;
+}
+
+int decoder_mp3_get_nb_channel(struct decoder *dec)
+{
+	return dec->nb_channel;
 }
 
 static int decoder_mp3_fill(struct decoder *dec)
@@ -128,12 +162,6 @@ int decoder_mp3_read(struct decoder *dec, float *output_buffer, size_t output_si
 {
 	unsigned short size = 0;
 
-	/* Fill buffer */
-	if(dec->Stream.buffer == NULL)
-	{
-		decoder_mp3_fill(dec);
-	}
-
 	/* Empty remaining PCM before decoding another frame */
 	if(dec->pcm_remain > 0)
 	{
@@ -164,10 +192,6 @@ int decoder_mp3_read(struct decoder *dec, float *output_buffer, size_t output_si
 		}
 	}
 
-	/* Set samplerate */
-	if(dec->samplerate == 0)
-		dec->samplerate = dec->Frame.header.samplerate;
-
 	/* Synthethise PCM */
 	mad_synth_frame(&dec->Synth, &dec->Frame);
 
@@ -183,6 +207,7 @@ int decoder_mp3_close(struct decoder *dec)
 	/* Close mad */
 	mad_synth_finish(&dec->Synth);
 	mad_frame_finish(&dec->Frame);
+	mad_header_finish(&dec->Header);
 	mad_stream_finish(&dec->Stream);
 
 	if(dec != NULL)
