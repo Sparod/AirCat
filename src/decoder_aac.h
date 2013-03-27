@@ -1,5 +1,5 @@
 /*
- * decoder.h - Decoder base
+ * decoder_aac.h - A AAC Decoder based on faad2
  *
  * Copyright (c) 2013   A. Dilly
  *
@@ -16,23 +16,18 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _DECODER_H
-#define _DECODER_H
+#ifndef _DECODER_AAC_H
+#define _DECODER_AAC_H
 
-/* Generic handle */
-struct decoder_handle;
+#include "decoder.h"
 
-enum {
-	CODEC_NO,
-	CODEC_MP3,
-	CODEC_AAC
-};
+struct decoder;
 
-struct decoder_handle *decoder_init(int codec, void *input_callback, void *user_data);
+struct decoder *decoder_aac_init(void *input_callback, void *user_data);
 
-int decoder_open(struct decoder_handle *h);
-int decoder_read(struct decoder_handle *h, float *buffer, size_t size);
-int decoder_close(struct decoder_handle *h);
+int decoder_aac_open(struct decoder *dec);
+int decoder_aac_read(struct decoder *dec, float *buffer, size_t size);
+int decoder_aac_close(struct decoder *dec);
 
 #endif
 

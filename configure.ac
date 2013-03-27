@@ -15,11 +15,17 @@ AC_PROG_MAKE_SET
 AC_HEADER_STDC
 #strcasecmp
 
-# Checks for lib
+# Check for libssl for HTTPS support
 PKG_CHECK_MODULES(libssl, libssl >= 0.9.8o, [
 	AC_DEFINE([HAVE_OPENSSL], 1, ["Use openssl"])
 ])
+
+# Check for libmad for MP3 decoder
 PKG_CHECK_MODULES(libmad, mad >= 0.15.0b)
+
+# Check for libfaad for AAC decoder
+AC_CHECK_HEADERS(neaacdec.h,
+  [AC_CHECK_LIB(faad, NeAACDecOpen)])
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
