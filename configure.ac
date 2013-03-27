@@ -27,6 +27,9 @@ PKG_CHECK_MODULES(libmad, mad >= 0.15.0b)
 AC_CHECK_HEADERS(neaacdec.h,
   [AC_CHECK_LIB(faad, NeAACDecOpen)])
 
+# Check for libsamplerate for samplerate conversion
+PKG_CHECK_MODULES(libsamplerate, samplerate >= 0.1.7)
+
 # Check for libasound2 for Alsa output
 PKG_CHECK_MODULES(libasound2, alsa >= 1.0.0)
 

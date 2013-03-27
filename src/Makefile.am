@@ -7,11 +7,12 @@ aircat_SOURCES = main.c \
 		 decoder.c \
 	 	 decoder_aac.c \
 		 decoder_mp3.c \
+		 resample.c \
 		 alsa.c
 
-aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libasound2_LIBS)
+aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsamplerate_LIBS) $(libasound2_LIBS)
 
-AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libasound2_CFLAGS) -Wall
+AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsamplerate_CFLAGS) $(libasound2_CFLAGS) -Wall
 
 EXTRA_DIST = http.h \
 	     file.h \
@@ -19,5 +20,6 @@ EXTRA_DIST = http.h \
 	     decoder.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
+	     resample.h \
 	     alsa.h
 
