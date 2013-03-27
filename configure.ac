@@ -27,6 +27,9 @@ PKG_CHECK_MODULES(libmad, mad >= 0.15.0b)
 AC_CHECK_HEADERS(neaacdec.h,
   [AC_CHECK_LIB(faad, NeAACDecOpen)])
 
+# Check for libasound2 for Alsa output
+PKG_CHECK_MODULES(libasound2, alsa >= 1.0.0)
+
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
 		 src/Makefile])
