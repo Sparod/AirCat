@@ -35,7 +35,7 @@ struct shout_handle {
 	int meta_len;			// Metadata string length
 	char meta_buffer[16*255];	// Metadata string
 	struct radio_info info;		// Radio infos
-	struct decoder_handle *dec;		// Decoder structure
+	struct decoder_handle *dec;	// Decoder structure
 };
 
 /* Callback for decoder */

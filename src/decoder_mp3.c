@@ -136,7 +136,6 @@ static long decoder_mp3_fill(struct decoder *dec)
 static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, size_t output_size)
 {
 	unsigned short pos;
-	float sample;
 	int i;
 
 	pos = dec->Synth.pcm.length-dec->pcm_remain;
@@ -144,13 +143,11 @@ static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, s
 	for(i = 0; pos < dec->Synth.pcm.length && i < output_size; pos++, i += 2)
 	{
 		/* Left channel */
-		sample = (float) (dec->Synth.pcm.samples[0][pos] / (float) (1L << MAD_F_FRACBITS));
-		*(output_buffer++) = sample;
+		*(output_buffer++) = (float) (dec->Synth.pcm.samples[0][pos] / (float) (1L << MAD_F_FRACBITS));
 
 		/* Right channel */
 		if(MAD_NCHANNELS(&dec->Frame.header) == 2)
-			sample = (float) (dec->Synth.pcm.samples[1][pos] / (float) (1L << MAD_F_FRACBITS));
-		*(output_buffer++) = sample;
+			*(output_buffer++) = (float) (dec->Synth.pcm.samples[1][pos] / (float) (1L << MAD_F_FRACBITS));
 	}
 
 	dec->pcm_remain = dec->Synth.pcm.length-pos;
