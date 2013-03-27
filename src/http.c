@@ -1,22 +1,22 @@
 /*
  * http.c - A Tiny HTTP Client
- * 
+ *
  * Support only HTTP 1.0 with:
  * 	- Basic HTTP Proxy (no auth!)
  * 	- Basic Auth
  *	- Follow redirection
  *
  * Copyright (c) 2013   A. Dilly
- * 
+ *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation.
- * 
+ *
  * AirCat is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
@@ -28,7 +28,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netdb.h> 
+#include <netdb.h>
 
 #define MAX_SIZE_HEADER 8192
 #define MAX_SIZE_LINE 512
@@ -100,7 +100,7 @@ struct http_handle *http_init()
 	h->sock = -1;
 	h->follow = 1;
 	h->is_ssl = 0;
-	memset((unsigned char*)&(h->proxy), 0, sizeof(struct http_proxy));	
+	memset((unsigned char*)&(h->proxy), 0, sizeof(struct http_proxy));
 	memset((unsigned char*)&(h->req), 0, sizeof(struct http_request));
 	h->headers = NULL;
 
@@ -274,7 +274,7 @@ static int http_connect(struct http_handle *h)
 		server_addr.sin_port = htons(h->req.port);
 
 	/* Connect to HTTP server */
-	if (connect(h->sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) 
+	if (connect(h->sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
 	{
 		return -1;
 	}
@@ -305,7 +305,7 @@ static int http_connect(struct http_handle *h)
 			return -1;
 	}
 #endif
-	
+
 	return 0;
 }
 
@@ -515,7 +515,7 @@ static int http_copy(struct http_handle *h, struct http_handle *h2)
 
 	/* Close socket and free only members of structure */
 	http_close_free(h, 0);
-	
+
 	/* Copy memory of h2 -> h */
 	memcpy((unsigned char*)h, (unsigned char*)h2, sizeof(struct http_handle));
 
@@ -529,7 +529,7 @@ static char *http_base64_encode(const char *buffer, int length)
 {
 	unsigned char *s = (unsigned char*) buffer;
 	char *output, *p;
-	
+
 	output = malloc(((4*((length+2)/3))+1)*sizeof(char));
 	if(output == NULL)
 		return NULL;
@@ -612,5 +612,4 @@ static int http_close_free(struct http_handle *h, int do_free)
 
 	return 0;
 }
-
 
