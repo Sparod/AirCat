@@ -25,45 +25,42 @@
 
 struct decoder_handle {
 	struct decoder *dec;
-	int (*open)(struct decoder*);
+	int (*open)(struct decoder**, void*, void*);
 	int (*read)(struct decoder*, float*, size_t);
 	int (*close)(struct decoder*);
 };
 
-struct decoder_handle *decoder_init(int codec, void *input_callback, void *user_data)
+int decoder_open(struct decoder_handle **handle, int codec, void *input_callback, void *user_data)
 {
 	struct decoder_handle *h;
 
 	if(input_callback == NULL)
-		return NULL;
+		return -1;
 
-	h = malloc(sizeof(struct decoder_handle));
-	if(h == NULL)
-		return NULL;
+	*handle = malloc(sizeof(struct decoder_handle));
+	if(*handle == NULL)
+		return -1;
+	h = *handle;
 
 	if(codec == CODEC_MP3)
 	{
-		h->dec = decoder_mp3_init(input_callback, user_data);
 		h->open = &decoder_mp3_open;
 		h->read = &decoder_mp3_read;
 		h->close = &decoder_mp3_close;
 	}
 	else if(codec == CODEC_AAC)
 	{
-		h->dec = decoder_aac_init(input_callback, user_data);
 		h->open = &decoder_aac_open;
 		h->read = &decoder_aac_read;
 		h->close = &decoder_aac_close;
 	}
 	else
+	{
 		h->dec = NULL;
+		return -1;
+	}
 
-	return h;
-}
-
-int decoder_open(struct decoder_handle *h)
-{
-	return h->open(h->dec);
+	return h->open(&h->dec, input_callback, user_data);
 }
 
 int decoder_read(struct decoder_handle *h, float *buffer, size_t size)

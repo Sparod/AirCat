@@ -21,9 +21,7 @@
 
 struct file_handle;
 
-struct file_handle *file_init();
-
-int file_open(struct file_handle *h, const char *name);
+int file_open(struct file_handle **h, const char *name);
 
 int file_read(struct file_handle *h, float *buffer, size_t size);
 

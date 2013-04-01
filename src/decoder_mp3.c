@@ -40,22 +40,18 @@ struct decoder {
 static long decoder_mp3_fill(struct decoder *dec);
 static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, size_t output_size);
 
-struct decoder *decoder_mp3_init(void *input_callback, void *user_data)
+int decoder_mp3_open(struct decoder **decoder, void *input_callback, void *user_data)
 {
 	struct decoder *dec;
 
-	dec = malloc(sizeof(struct decoder));
-	if(dec == NULL)
-		return NULL;
+	*decoder = malloc(sizeof(struct decoder));
+	if(*decoder == NULL)
+		return -1;
+	dec = *decoder;
 
 	dec->read_stream = input_callback;
 	dec->user_data = user_data;
 
-	return dec;
-}
-
-int decoder_mp3_open(struct decoder* dec)
-{
 	/* Initialize mad */
 	mad_stream_init(&dec->Stream);
 	mad_header_init(&dec->Header);

@@ -41,14 +41,17 @@ struct shout_handle {
 /* Callback for decoder */
 static int shoutcast_read_stream(unsigned char *buffer, size_t size, void * user_data);
 
-struct shout_handle *shoutcast_init()
+int shoutcast_open(struct shout_handle **handle, const char *url)
 {
 	struct shout_handle *h;
+	int code = 0;
+	char *p;
 
 	/* Alloc structure */
-	h = malloc(sizeof(struct shout_handle));
-	if(h == NULL)
-		return NULL;
+	*handle = malloc(sizeof(struct shout_handle));
+	if(*handle == NULL)
+		return -1;
+	h = *handle;
 
 	/* Set to zero radio_info structure */
 	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
@@ -58,16 +61,8 @@ struct shout_handle *shoutcast_init()
 	if(h->http == NULL)
 	{
 		shoutcast_close(h);
-		return NULL;
+		return -1;
 	}
-
-	return h;
-}
-
-int shoutcast_open(struct shout_handle *h, const char *url)
-{
-	int code = 0;
-	char *p;
 
 	/* Set options */
 	http_set_option(h->http, HTTP_USER_AGENT, "Aircat 1.0");
@@ -114,11 +109,8 @@ int shoutcast_open(struct shout_handle *h, const char *url)
 	h->metaint = h->info.metaint;
 	h->remaining = h->metaint;
 
-	/* Init decoder */
-	h->dec = decoder_init(h->info.type, &shoutcast_read_stream, h);
-
 	/* Open decoder */
-	decoder_open(h->dec);
+	decoder_open(&h->dec, h->info.type, &shoutcast_read_stream, h);
 
 	return 0;
 }

@@ -52,23 +52,6 @@ struct decoder {
 static long decoder_aac_fill(struct decoder *dec, unsigned long bytes);
 static long decoder_aac_fill_output(struct decoder *dec, float *output_buffer, size_t output_size);
 
-struct decoder *decoder_aac_init(void *input_callback, void *user_data)
-{
-	struct decoder *dec;
-
-	dec = malloc(sizeof(struct decoder));
-	if(dec == NULL)
-		return NULL;
-
-	dec->read_stream = input_callback;
-	dec->user_data = user_data;
-
-	dec->buffer_size = 0;
-	dec->buffer_pos = 0;
-
-	return dec;
-}
-
 /* FIXME */
 static int decoder_aac_sync(struct decoder *dec)
 {
@@ -91,10 +74,22 @@ static int decoder_aac_sync(struct decoder *dec)
 	}
 }
 
-int decoder_aac_open(struct decoder* dec)
+int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_data)
 {
 	NeAACDecConfigurationPtr config;
 	NeAACDecFrameInfo frameInfo;
+	struct decoder *dec;
+
+	*decoder = malloc(sizeof(struct decoder));
+	if(*decoder == NULL)
+		return -1;
+	dec = *decoder;
+
+	dec->read_stream = input_callback;
+	dec->user_data = user_data;
+
+	dec->buffer_size = 0;
+	dec->buffer_pos = 0;
 
 	/* Initialize faad */
 	dec->hDec = NeAACDecOpen();

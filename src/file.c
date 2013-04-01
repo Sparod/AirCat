@@ -35,20 +35,16 @@ struct file_handle {
 /* Callback for decoder */
 static int file_read_stream(unsigned char *buffer, size_t size, void * user_data);
 
-struct file_handle *file_init()
+int file_open(struct file_handle **handle, const char *name)
 {
 	struct file_handle *h;
 
 	/* Alloc structure */
-	h = malloc(sizeof(struct file_handle));
-	if(h == NULL)
-		return NULL;
+	*handle = malloc(sizeof(struct file_handle));
+	if(*handle == NULL)
+		return -1;
+	h = *handle;
 
-	return h;
-}
-
-int file_open(struct file_handle *h, const char *name)
-{
 	/* Connect and get header from server */
 	h->fp = fopen(name, "rb");
 	if(h->fp == NULL)
@@ -56,11 +52,8 @@ int file_open(struct file_handle *h, const char *name)
 
 	/* Detect file format and codec */
 
-	/* Init decoder */
-	h->dec = decoder_init(2, &file_read_stream, h);
-
 	/* Open decoder */
-	decoder_open(h->dec);
+	decoder_open(&h->dec, 2, &file_read_stream, h);
 
 	return 0;
 }
