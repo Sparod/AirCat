@@ -29,10 +29,14 @@ struct decoder {
 	struct mad_header Header;
 	struct mad_frame Frame;
 	struct mad_synth Synth;
-	int (*read_stream)(unsigned char *, size_t, void *);
+	/* Read Callback */
+	int (*input_callback)(void *, unsigned char *, size_t);
 	void *user_data;
+	/* Input buffer */
 	unsigned char buffer[BUFFER_SIZE+MAD_BUFFER_GUARD];
+	/* Output cursor */
 	unsigned short pcm_remain;
+	/* Infos */
 	unsigned long samplerate;
 	int nb_channel;
 };
@@ -49,7 +53,7 @@ int decoder_mp3_open(struct decoder **decoder, void *input_callback, void *user_
 		return -1;
 	dec = *decoder;
 
-	dec->read_stream = input_callback;
+	dec->input_callback = input_callback;
 	dec->user_data = user_data;
 
 	/* Initialize mad */
@@ -119,7 +123,7 @@ static long decoder_mp3_fill(struct decoder *dec)
 	}
 
 	/* Read data from callback */
-	size = dec->read_stream(&dec->buffer[remaining], size, dec->user_data);
+	size = dec->input_callback(dec->user_data, &dec->buffer[remaining], size);
 	if(size < 0)
 		return -1;
 

@@ -33,7 +33,7 @@ struct file_handle {
 };
 
 /* Callback for decoder */
-static int file_read_stream(unsigned char *buffer, size_t size, void * user_data);
+static int file_read_stream(void * user_data, unsigned char *buffer, size_t size);
 
 int file_open(struct file_handle **handle, const char *name)
 {
@@ -76,7 +76,7 @@ int file_close(struct file_handle *h)
 	return 0;
 }
 
-static int file_read_stream(unsigned char *buffer, size_t size, void * user_data)
+static int file_read_stream(void * user_data, unsigned char *buffer, size_t size)
 {
 	struct file_handle *h = (struct file_handle*) user_data;
 	size_t ret = 0;

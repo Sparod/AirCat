@@ -34,7 +34,7 @@
 struct decoder {
 	NeAACDecHandle hDec;
 	/* Read Callback */
-	int (*read_stream)(unsigned char *, size_t, void *);
+	int (*input_callback)(void *, unsigned char *, size_t);
 	void *user_data;
 	/* Input buffer */
 	unsigned char buffer[BUFFER_SIZE];
@@ -85,7 +85,7 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_
 		return -1;
 	dec = *decoder;
 
-	dec->read_stream = input_callback;
+	dec->input_callback = input_callback;
 	dec->user_data = user_data;
 
 	dec->buffer_size = 0;
@@ -148,7 +148,7 @@ static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
 	/* Read data from callback */
 	while(dec->buffer_size < FAAD_MIN_STREAMSIZE*2)
 	{
-		bread = dec->read_stream(&dec->buffer[remaining], size, dec->user_data);
+		bread = dec->input_callback(dec->user_data, &dec->buffer[remaining], size);
 		if(bread < 0)
 			return -1;
 		dec->buffer_size += bread;

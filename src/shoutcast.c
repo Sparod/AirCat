@@ -39,7 +39,7 @@ struct shout_handle {
 };
 
 /* Callback for decoder */
-static int shoutcast_read_stream(unsigned char *buffer, size_t size, void * user_data);
+static int shoutcast_read_stream(void * user_data, unsigned char *buffer, size_t size);
 
 int shoutcast_open(struct shout_handle **handle, const char *url)
 {
@@ -143,7 +143,7 @@ int shoutcast_close(struct shout_handle *h)
 	return 0;
 }
 
-static int shoutcast_read_stream(unsigned char *buffer, size_t size, void * user_data)
+static int shoutcast_read_stream(void * user_data, unsigned char *buffer, size_t size)
 {
 	struct shout_handle *h = (struct shout_handle*) user_data;
 	int read_len = 0;
