@@ -19,6 +19,17 @@
 #ifndef _ALSA_OUTPUT_H
 #define _ALSA_OUTPUT_H
 
+struct alsa_format {
+	unsigned long samplerate;
+	unsigned char nb_channel;
+};
+
+struct alsa_handle;
+
+int alsa_open(struct alsa_handle **h, struct alsa_format input, struct alsa_format output, unsigned long latency, void *input_callback, void *user_data);
+int alsa_play(struct alsa_handle *h);
+int alsa_stop(struct alsa_handle *h);
+int alsa_close(struct alsa_handle *h);
 
 
 #endif
