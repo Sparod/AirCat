@@ -15,7 +15,7 @@ aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) 
 AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) -Wall
 
 EXTRA_DIST = http.h \
-	     file.h \
+	     file.h \
 	     shoutcast.h \
 	     decoder.h \
 	     decoder_aac.h \
