@@ -24,7 +24,9 @@
 struct decoder;
 
 int decoder_aac_open(struct decoder **dec, void *input_callback, void *user_data);
-int decoder_aac_read(struct decoder *dec, float *buffer, size_t size);
+unsigned long decoder_aac_get_samplerate(struct decoder *dec);
+unsigned char decoder_aac_get_channels(struct decoder *dec);
+int decoder_aac_read(struct decoder *dec, unsigned char *buffer, size_t size);
 int decoder_aac_close(struct decoder *dec);
 
 #endif

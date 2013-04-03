@@ -115,7 +115,23 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	return 0;
 }
 
-int shoutcast_read(struct shout_handle *h, float *buffer, size_t size)
+unsigned long shoutcast_get_samplerate(struct shout_handle *h)
+{
+	if(h == NULL)
+		return 0;
+
+	return decoder_get_samplerate(h->dec);
+}
+
+unsigned char shoutcast_get_channels(struct shout_handle *h)
+{
+	if(h == NULL)
+		return 0;
+
+	return decoder_get_channels(h->dec);
+}
+
+int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 {
 	return decoder_read(h->dec, buffer, size);
 }

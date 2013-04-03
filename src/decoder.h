@@ -29,7 +29,9 @@ enum {
 };
 
 int decoder_open(struct decoder_handle **h, int codec, void *input_callback, void *user_data);
-int decoder_read(struct decoder_handle *h, float *buffer, size_t size);
+unsigned long decoder_get_samplerate(struct decoder_handle *h);
+unsigned char decoder_get_channels(struct decoder_handle *h);
+int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size);
 int decoder_close(struct decoder_handle *h);
 
 #endif

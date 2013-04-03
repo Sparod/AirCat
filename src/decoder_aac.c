@@ -25,9 +25,13 @@
 
 #include "decoder_aac.h"
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #define BUFFER_SIZE 8192
 
-#if FAAD_MIN_STREAMSIZE*2 > BUFFER_SIZE
+#if FAAD_MIN_STREAMSIZE*8 > BUFFER_SIZE
 #error "Buffer size for AAC decoder is too small!"
 #endif
 
@@ -41,7 +45,7 @@ struct decoder {
 	unsigned long buffer_pos;
 	unsigned long buffer_size;
 	/* Output buffer */
-	float *pcm_buffer;
+	unsigned char *pcm_buffer;
 	unsigned long pcm_length;
 	unsigned long pcm_remain;
 	/* Infos */
@@ -50,7 +54,7 @@ struct decoder {
 };
 
 static long decoder_aac_fill(struct decoder *dec, unsigned long bytes);
-static long decoder_aac_fill_output(struct decoder *dec, float *output_buffer, size_t output_size);
+static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size);
 
 /* FIXME */
 static int decoder_aac_sync(struct decoder *dec)
@@ -96,7 +100,11 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_
 
 	/* Set the default object type and samplerate */
 	config = NeAACDecGetCurrentConfiguration(dec->hDec);
+#ifdef USE_FLOAT
 	config->outputFormat = FAAD_FMT_FLOAT;
+#else
+	config->outputFormat = FAAD_FMT_32BIT;
+#endif
 	NeAACDecSetConfiguration(dec->hDec, config);
 
 	/* PCM data remaining in output buffer */
@@ -117,6 +125,16 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_
 	NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
 
 	return 0;
+}
+
+unsigned long decoder_aac_get_samplerate(struct decoder* dec)
+{
+	return dec->samplerate;
+}
+
+unsigned char decoder_aac_get_channels(struct decoder *dec)
+{
+	return dec->nb_channel;
 }
 
 /* FIXME */
@@ -159,7 +177,7 @@ static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
 	return 0;
 }
 
-static long decoder_aac_fill_output(struct decoder *dec, float *output_buffer, size_t output_size)
+static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
 {
 	unsigned long pos;
 	unsigned long size;
@@ -171,14 +189,27 @@ static long decoder_aac_fill_output(struct decoder *dec, float *output_buffer, s
 		size = dec->pcm_remain;
 
 	/* Copy samples to output buffer */
-	memcpy(output_buffer, &dec->pcm_buffer[pos], size*sizeof(float));
+	if(dec->nb_channel > 2) /* Specific case of surround file */
+	{
+		/* Transform:
+		 * From (3 channels) FC , FL , FR
+		 *      (4 channels) FC , FL , FR , BC
+		 *      (5 channels) FC , FL , FR , BL , BR
+		 *      (6 channels) FC , FL , FR , BL , BR , LFE
+		 *      (8 channels) FC , FL , FR , SL , SR , BL , BR , LFE
+		 *      To    ->     FL , FR , SL , SR , BL , BR , FC , LFE
+		 */
+		/* TODO */
+	}
+	else
+		memcpy(output_buffer, &dec->pcm_buffer[pos*4], size*4); // 32-bit wide sample (float or 32-bit fixed)
 
 	dec->pcm_remain -= size;
 
 	return size;
 }
 
-int decoder_aac_read(struct decoder *dec, float *output_buffer, size_t output_size)
+int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
 {
 	NeAACDecFrameInfo frameInfo;
 	unsigned short size = 0;
@@ -193,7 +224,7 @@ int decoder_aac_read(struct decoder *dec, float *output_buffer, size_t output_si
 
 	/* FIXME: */
 	/* Decode a new frame */
-	dec->pcm_buffer = NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
+	dec->pcm_buffer = (unsigned char*) NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
 
         if (frameInfo.error > 0)
         {

@@ -58,7 +58,23 @@ int file_open(struct file_handle **handle, const char *name)
 	return 0;
 }
 
-int file_read(struct file_handle *h, float *buffer, size_t size)
+unsigned long file_get_samplerate(struct file_handle *h)
+{
+	if(h == NULL)
+		return 0;
+
+	return decoder_get_samplerate(h->dec);
+}
+
+unsigned char file_get_channels(struct file_handle *h)
+{
+	if(h == NULL)
+		return 0;
+
+	return decoder_get_channels(h->dec);
+}
+
+int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 {
 	return decoder_read(h->dec, buffer, size);
 }

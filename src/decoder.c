@@ -26,8 +26,12 @@
 struct decoder_handle {
 	struct decoder *dec;
 	int (*open)(struct decoder**, void*, void*);
-	int (*read)(struct decoder*, float*, size_t);
+	unsigned long (*get_samplerate)(struct decoder*);
+	unsigned char (*get_channels)(struct decoder*);
+	int (*read)(struct decoder*, unsigned char*, size_t);
 	int (*close)(struct decoder*);
+	unsigned long samplerate;
+	unsigned char nb_channel;
 };
 
 int decoder_open(struct decoder_handle **handle, int codec, void *input_callback, void *user_data)
@@ -45,12 +49,16 @@ int decoder_open(struct decoder_handle **handle, int codec, void *input_callback
 	if(codec == CODEC_MP3)
 	{
 		h->open = &decoder_mp3_open;
+		h->get_samplerate = &decoder_mp3_get_samplerate;
+		h->get_channels = &decoder_mp3_get_channels;
 		h->read = &decoder_mp3_read;
 		h->close = &decoder_mp3_close;
 	}
 	else if(codec == CODEC_AAC)
 	{
 		h->open = &decoder_aac_open;
+		h->get_samplerate = &decoder_aac_get_samplerate;
+		h->get_channels = &decoder_aac_get_channels;
 		h->read = &decoder_aac_read;
 		h->close = &decoder_aac_close;
 	}
@@ -63,7 +71,17 @@ int decoder_open(struct decoder_handle **handle, int codec, void *input_callback
 	return h->open(&h->dec, input_callback, user_data);
 }
 
-int decoder_read(struct decoder_handle *h, float *buffer, size_t size)
+unsigned long decoder_get_samplerate(struct decoder_handle *h)
+{
+	return h->get_samplerate(h->dec);
+}
+
+unsigned char decoder_get_channels(struct decoder_handle *h)
+{
+	return h->get_channels(h->dec);
+}
+
+int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size)
 {
 	return h->read(h->dec, buffer, size);
 }

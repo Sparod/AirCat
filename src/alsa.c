@@ -29,25 +29,26 @@
 #include "config.h"
 #endif
 
+#define BUFFER_SIZE 8192
+
 struct alsa_handle {
 	snd_pcm_t *alsa;
 	/* Read Callback */
-	int (*input_callback)(void *, float *, size_t);
+	int (*input_callback)(void *, unsigned char *, size_t);
 	void *user_data;
 	/* Input buffer */
-	float *buffer;
+	unsigned char *buffer;
 	size_t size;
-	/* Input format */
-	struct alsa_format input;
-	/* Output format */
-	struct alsa_format output;
+	/* Format */
+	unsigned long samplerate;
+	unsigned char nb_channel;
 	/* Thread objects */
 	pthread_t th;
 	int is_running;
 	int stop;
 };
 
-int alsa_open(struct alsa_handle **handle, struct alsa_format input, struct alsa_format output, unsigned long latency, void *input_callback, void *user_data)
+int alsa_open(struct alsa_handle **handle, unsigned long samplerate, unsigned char nb_channel, unsigned long latency, void *input_callback, void *user_data)
 {
 	struct alsa_handle *h;
 
@@ -65,20 +66,24 @@ int alsa_open(struct alsa_handle **handle, struct alsa_format input, struct alsa
 	h->stop = 0;
 
 	/* Copy input and output format */
-	h->input = input;
-	h->output = output;
+	h->samplerate = samplerate;
+	h->nb_channel = nb_channel;
 
 	/* Open alsa devide */
-	if(snd_pcm_open(&h->alsa, "default", SND_PCM_STREAM_PLAYBACK, 0) < 0) /* FIXME */
+	if(snd_pcm_open(&h->alsa, "default", SND_PCM_STREAM_PLAYBACK, 0) < 0)
 		return -1;
 
 	/* Set parameters for output */
-	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_FLOAT_LE, SND_PCM_ACCESS_RW_INTERLEAVED, h->output.nb_channel, h->output.samplerate, 1, latency) < 0)
+#ifdef USE_FLOAT
+	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_FLOAT, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency) < 0)
+#else
+	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_S32, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency) < 0)
+#endif
 		return -1;
 
 	/* Alloc buffer for samples */
-	h->size = 8192;
-	h->buffer = malloc(h->size*sizeof(float)); /* FIXME */
+	h->size = BUFFER_SIZE*h->nb_channel;
+	h->buffer = malloc(h->size*4); // 32-bit wide sample (float or long)
 	if(h->buffer == NULL)
 		return -1;
 
@@ -93,7 +98,7 @@ static void *alsa_thread(void *user_data)
 
 	while(!h->stop)
 	{
-		input_size = h->input_callback(h->user_data, h->buffer, h->size) / h->output.nb_channel;
+		input_size = h->input_callback(h->user_data, h->buffer, h->size) / h->nb_channel;
 
 		/* Play pcm sample */ /* FIXME */
 		frames = snd_pcm_writei(h->alsa, (unsigned char*)h->buffer, input_size);

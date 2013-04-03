@@ -18,9 +18,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <mad.h>
 
 #include "decoder_mp3.h"
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
 
 #define BUFFER_SIZE 8192
 
@@ -35,14 +40,14 @@ struct decoder {
 	/* Input buffer */
 	unsigned char buffer[BUFFER_SIZE+MAD_BUFFER_GUARD];
 	/* Output cursor */
-	unsigned short pcm_remain;
+	unsigned long pcm_remain;
 	/* Infos */
 	unsigned long samplerate;
-	int nb_channel;
+	unsigned char nb_channel;
 };
 
 static long decoder_mp3_fill(struct decoder *dec);
-static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, size_t output_size);
+static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size);
 
 int decoder_mp3_open(struct decoder **decoder, void *input_callback, void *user_data)
 {
@@ -100,7 +105,7 @@ unsigned long decoder_mp3_get_samplerate(struct decoder* dec)
 	return dec->samplerate;
 }
 
-int decoder_mp3_get_nb_channel(struct decoder *dec)
+unsigned char decoder_mp3_get_channels(struct decoder *dec)
 {
 	return dec->nb_channel;
 }
@@ -133,21 +138,43 @@ static long decoder_mp3_fill(struct decoder *dec)
 	return size+remaining;
 }
 
-static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, size_t output_size)
+#ifdef USE_FLOAT
+inline float mad_scale(mad_fixed_t sample)
 {
+    return (float) (sample / (float) (1L << MAD_F_FRACBITS));
+}
+#else /* FIXME */
+inline int32_t mad_scale(mad_fixed_t sample)
+{
+    if (sample >= MAD_F_ONE)
+        sample = MAD_F_ONE - 1;
+    else if (sample < -MAD_F_ONE)
+        sample = -MAD_F_ONE;
+
+    return sample << 3;
+}
+#endif
+
+static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+{
+#ifdef USE_FLOAT
+	float *p = (float*) output_buffer;
+#else
+	int32_t *p = (int32_t*) output_buffer;
+#endif
 	unsigned short pos;
 	int i;
 
 	pos = dec->Synth.pcm.length-dec->pcm_remain;
 
-	for(i = 0; pos < dec->Synth.pcm.length && i < output_size; pos++, i += 2)
+	for(i = 0; pos < dec->Synth.pcm.length && i < output_size; pos++, i += dec->nb_channel)
 	{
 		/* Left channel */
-		*(output_buffer++) = (float) (dec->Synth.pcm.samples[0][pos] / (float) (1L << MAD_F_FRACBITS));
+		*(p++) = mad_scale(dec->Synth.pcm.samples[0][pos]);
 
 		/* Right channel */
-		if(MAD_NCHANNELS(&dec->Frame.header) == 2)
-			*(output_buffer++) = (float) (dec->Synth.pcm.samples[1][pos] / (float) (1L << MAD_F_FRACBITS));
+		if(dec->nb_channel == 2)
+			*(p++) = mad_scale(dec->Synth.pcm.samples[1][pos]);
 	}
 
 	dec->pcm_remain = dec->Synth.pcm.length-pos;
@@ -155,7 +182,7 @@ static long decoder_mp3_fill_output(struct decoder *dec, float *output_buffer, s
 	return i;
 }
 
-int decoder_mp3_read(struct decoder *dec, float *output_buffer, size_t output_size)
+int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
 {
 	unsigned short size = 0;
 
