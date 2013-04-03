@@ -202,7 +202,20 @@ static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_b
 		/* TODO */
 	}
 	else
-		memcpy(output_buffer, &dec->pcm_buffer[pos*4], size*4); // 32-bit wide sample (float or 32-bit fixed)
+#ifdef USE_FLOAT
+	memcpy(output_buffer, &dec->pcm_buffer[pos*4], size*4); // 32-bit wide sample (float or 32-bit fixed)
+#else
+	{
+		int32_t *p_in = (int32_t*) &dec->pcm_buffer[pos*4];
+		int32_t *p_out = (int32_t*) output_buffer;
+		size_t i;
+		for(i = 0; i < size; i++)
+		{
+			*(p_out++) = *p_in == 0x80000000 ? 0x7FFFFFFF : *p_in;
+			p_in++;
+		}
+	}
+#endif
 
 	dec->pcm_remain -= size;
 
