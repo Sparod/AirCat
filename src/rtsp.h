@@ -41,6 +41,7 @@ unsigned char *rtsp_get_server_ip(struct rtsp_client *c);
 unsigned int rtsp_get_server_port(struct rtsp_client *c);
 int rtsp_get_request(struct rtsp_client *c);
 void *rtsp_get_user_data(struct rtsp_client *c);
+void rtsp_set_user_data(struct rtsp_client *c, void *user_data);
 
 char *rtsp_encode_base64(const char *buffer, int length);
 void rtsp_decode_base64(char *buffer);

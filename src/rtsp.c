@@ -346,8 +346,8 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 					else /* Read packet */
 					{
 						c->in_content_len = atol(ptr);
-						c->buffer_ptr = c->in_buffer;
-						c->buffer_end = c->in_buffer + c->in_len;
+						c->buffer_ptr = (char*) c->in_buffer;
+						c->buffer_end = (char*) c->in_buffer + c->in_len;
 						c->state = RTSPSTATE_WAIT_PACKET;
 					}
 					break;
@@ -409,7 +409,7 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 				}
 				else
 				{
-					c->buffer_ptr = c->in_buffer;
+					c->buffer_ptr = (char*) c->in_buffer;
 				}
 			}
 			break;
@@ -734,6 +734,11 @@ void *rtsp_get_user_data(struct rtsp_client *c)
 	if(c == NULL)
 		return NULL;
 	return c->user_data;
+}
+
+void rtsp_set_user_data(struct rtsp_client *c, void *user_data)
+{
+	c->user_data = user_data;
 }
 
 int rtsp_create_response(struct rtsp_client *c, unsigned int code, const char *value)
