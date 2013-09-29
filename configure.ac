@@ -36,6 +36,9 @@ PKG_CHECK_MODULES(libsoxr, soxr >= 0.1.0)
 # Check for libasound2 for Alsa output
 PKG_CHECK_MODULES(libasound2, alsa >= 1.0.0)
 
+# Check for libasound2 for Alsa output
+PKG_CHECK_MODULES(libavahi, avahi-client >= 0.6.31)
+
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
 		 src/Makefile])

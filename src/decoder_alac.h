@@ -1,5 +1,5 @@
 /*
- * decoder.h - Decoder base
+ * decoder_alac.h - A AppleLossless Decoder
  *
  * Copyright (c) 2013   A. Dilly
  *
@@ -16,24 +16,18 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _DECODER_H
-#define _DECODER_H
+#ifndef _DECODER_ALAC_H
+#define _DECODER_ALAC_H
 
-/* Generic handle */
-struct decoder_handle;
+#include "decoder.h"
 
-enum {
-	CODEC_NO,
-	CODEC_ALAC,
-	CODEC_MP3,
-	CODEC_AAC
-};
+struct decoder;
 
-int decoder_open(struct decoder_handle **h, int codec, void *input_callback, void *user_data);
-unsigned long decoder_get_samplerate(struct decoder_handle *h);
-unsigned char decoder_get_channels(struct decoder_handle *h);
-int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size);
-int decoder_close(struct decoder_handle *h);
+int decoder_alac_open(struct decoder **dec, void *input_callback, void *user_data);
+unsigned long decoder_alac_get_samplerate(struct decoder *dec);
+unsigned char decoder_alac_get_channels(struct decoder *dec);
+int decoder_alac_read(struct decoder *dec, unsigned char *buffer, size_t size);
+int decoder_alac_close(struct decoder *dec);
 
 #endif
 

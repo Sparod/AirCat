@@ -20,6 +20,7 @@
 #include <stdlib.h>
 
 #include "decoder.h"
+#include "decoder_alac.h"
 #include "decoder_aac.h"
 #include "decoder_mp3.h"
 
@@ -46,7 +47,15 @@ int decoder_open(struct decoder_handle **handle, int codec, void *input_callback
 		return -1;
 	h = *handle;
 
-	if(codec == CODEC_MP3)
+	if(codec == CODEC_ALAC)
+	{
+		h->open = &decoder_alac_open;
+		h->get_samplerate = &decoder_alac_get_samplerate;
+		h->get_channels = &decoder_alac_get_channels;
+		h->read = &decoder_alac_read;
+		h->close = &decoder_alac_close;
+	}
+	else if(codec == CODEC_MP3)
 	{
 		h->open = &decoder_mp3_open;
 		h->get_samplerate = &decoder_mp3_get_samplerate;
