@@ -45,6 +45,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 {
 	struct shout_handle *h;
 	int code = 0;
+	int type;
 	char *p;
 
 	/* Alloc structure */
@@ -110,7 +111,11 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->remaining = h->metaint;
 
 	/* Open decoder */
-	decoder_open(&h->dec, h->info.type, &shoutcast_read_stream, h);
+	if(h->info.type == MPEG_STREAM)
+		type = CODEC_MP3;
+	else
+		type = CODEC_AAC;
+	decoder_open(&h->dec, type, &shoutcast_read_stream, h);
 
 	return 0;
 }
