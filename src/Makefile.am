@@ -8,6 +8,8 @@ aircat_SOURCES = main.c \
 		 rtsp.c \
 		 rtp.c \
 		 sdp.c \
+		 raop_tcp.c \
+		 raop.c \
 		 decoder.c \
 	 	 decoder_aac.c \
 		 decoder_mp3.c \
@@ -26,6 +28,8 @@ EXTRA_DIST = http.h \
 	     rtsp.h \
 	     rtp.h \
 	     sdp.h \
+	     raop_tcp.h \
+	     raop.h \
 	     decoder.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
