@@ -210,7 +210,7 @@ int avahi_add_service(struct avahi_handle *h, const char *name, const char *type
 
 int avahi_remove_service(struct avahi_handle *h, const char *name, unsigned int port)
 {
-	struct avahi_service *s, *s_prev;
+	struct avahi_service *s, *s_prev = NULL;
 
 	if(h == NULL)
 		return -1;
