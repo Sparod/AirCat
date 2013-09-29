@@ -325,7 +325,7 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 
 					/* Prepare response */
 					ptr = rtsp_get_header(c, "Content-Length", 1);
-					if(ptr == NULL)
+					if(ptr == NULL || atol(ptr) == 0)
 					{
 						if(c->resp_buffer == NULL)
 						{
