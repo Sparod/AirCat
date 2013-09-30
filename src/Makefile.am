@@ -1,6 +1,7 @@
 bin_PROGRAMS = aircat
 
 aircat_SOURCES = main.c \
+		 airtunes.c \
 		 avahi.c \
 		 http.c \
 		 file.c \
@@ -22,6 +23,7 @@ aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) 
 AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) -Wall
 
 EXTRA_DIST = http.h \
+	     airtunes.h \
 	     avahi.h \
 	     file.h \
 	     shoutcast.h \
