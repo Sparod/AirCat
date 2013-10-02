@@ -43,6 +43,13 @@ int rtsp_get_request(struct rtsp_client *c);
 void *rtsp_get_user_data(struct rtsp_client *c);
 void rtsp_set_user_data(struct rtsp_client *c, void *user_data);
 
+/* Authentication part */
+const char *rtsp_basic_auth_get_username_password(struct rtsp_client *c, const char **password);
+int rtsp_create_basic_auth_response(struct rtsp_client *c, const char *realm);
+const char *rtsp_digest_auth_get_username(struct rtsp_client *c);
+int rtsp_digest_auth_check(struct rtsp_client *c, const char *username, const char *password);
+int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm, const char *opaque, int signal_stale);
+
 char *rtsp_encode_base64(const char *buffer, int length);
 void rtsp_decode_base64(char *buffer);
 

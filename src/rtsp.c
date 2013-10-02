@@ -810,6 +810,123 @@ int rtsp_set_packet(struct rtsp_client *c, unsigned char *buffer, size_t len)
 	return 0;
 }
 
+/* Authentication part */
+const char *rtsp_basic_auth_get_username_password(struct rtsp_client *c, const char **password)
+{
+	char *p;
+	char *decoded;
+	char *username;
+
+	if(c == NULL)
+		return NULL;
+
+	/* Get value from header */
+	p = rtsp_get_header(c, "Authorization", 0);
+	if(p == NULL)
+		return NULL;
+
+	if(strncmp(p, "Basic ", 6) != 0)
+		return NULL;
+
+	/* Decode string */
+	decoded = strdup(p+6);
+	rtsp_decode_base64(decoded);
+
+	/* Find ':' */
+	p = strchr(decoded, ':');
+	if(p == NULL)
+	{
+		free(decoded);
+		return NULL;
+	}
+	/* Change ':' by a '\0' */
+	*p++ = '\0';
+
+	/* Set username and password */
+	username = strdup(decoded);
+	*password = strdup(p);
+
+	/* Free decoded string */
+	free(decoded);
+
+	return username;
+}
+
+int rtsp_create_basic_auth_response(struct rtsp_client *c, const char *realm)
+{
+	char buffer[256];
+
+	if(c == NULL)
+		return -1;
+
+	rtsp_create_response(c, 401, "Unauthorized");
+
+	snprintf(buffer, 255, "Basic realm=\"%s\"", realm);
+	rtsp_add_response(c, "WWW-Authenticate", buffer);
+
+	return 0;
+}
+
+const char *rtsp_digest_auth_get_username(struct rtsp_client *c)
+{
+	char *p;
+	char *end;
+	char *username;
+
+	if(c == NULL)
+		return NULL;
+
+	/* Get value from header */
+	p = rtsp_get_header(c, "Authorization", 0);
+	if(p == NULL)
+		return NULL;
+
+	/* Find username */
+	p = strstr(p, "username=\"");
+	if(p == NULL)
+		return NULL;
+
+	/* Find next '"' */
+	end = strchr(p, '"');
+	if(end == NULL)
+		return NULL;
+
+	/* Allocate return string */
+	username = malloc(end-p+1);
+	strncpy(username, p, end-p);
+	username[end-p] = 0;
+
+	return username;
+}
+
+int rtsp_digest_auth_check(struct rtsp_client *c, const char *username, const char *password)
+{
+	if(c == NULL)
+		return -1;
+
+	return 0;
+}
+
+int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm, const char *opaque, int signal_stale)
+{
+	char buffer[256];
+	char *nonce;
+
+	if(c == NULL)
+		return -1;
+
+	/* Generate a nonce */
+	nonce = NULL; /* TODO */
+
+	/* Create response */
+	rtsp_create_response(c, 401, "Unauthorized");
+
+	snprintf(buffer, 255, "Digest realm=\"%s\",qop=\"auth\",nonce=\"%s\",opaque=\"%s\"%s", realm, nonce, opaque, signal_stale ? ",stale=\"true\"" : "");
+	rtsp_add_response(c, "WWW-Authenticate", buffer);
+
+	return 0;
+}
+
 int rtsp_close(struct rtsp_handle *h)
 {
 
