@@ -69,6 +69,7 @@ static RSA *rsa = NULL;
 
 struct airtunes_server_data {
 	unsigned char hw_addr[6];
+	char *password;
 };
 
 struct airtunes_client_data {
@@ -146,6 +147,7 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a)
 
 	/* Get HW MAC */
 	memcpy(h->rtsp_data.hw_addr, buf, 6);
+	h->rtsp_data.password = h->password;
 
 	return 0;
 }
@@ -181,6 +183,8 @@ void airtunes_set_password(struct airtunes_handle *h, const char *password)
 		h->password = strdup(password);
 	else
 		h->password = NULL;
+
+	h->rtsp_data.password = h->password;
 }
 
 void *airtunes_thread(void *user_data)
@@ -365,6 +369,19 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	int transport = RAOP_UDP;
 	char buffer[BUFFER_SIZE];
 
+	/* Allocate structure to handle session */
+	if(cdata == NULL)
+	{
+		cdata = malloc(sizeof(struct airtunes_client_data));
+		memset(cdata, 0, sizeof(struct airtunes_client_data));
+		rtsp_set_user_data(c, cdata);
+	}
+
+	/* Verify password */
+	if(sdata->password != NULL)
+	{
+	}
+
 	switch(request)
 	{
 		case RTSP_OPTIONS:
@@ -372,13 +389,6 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			rtsp_add_response(c, "Public", "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
 			break;
 		case RTSP_ANNOUNCE:
-			/* Allocate structure to handle session */
-			if(cdata != NULL)
-				free(cdata);
-			cdata = malloc(sizeof(struct airtunes_client_data));
-			memset(cdata, 0, sizeof(struct airtunes_client_data));
-			rtsp_set_user_data(c, cdata);
-
 			/* Prepare answer */
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
@@ -422,12 +432,6 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			//resample_close(cdata->res);
 			raop_close(cdata->raop);
 
-			/* Free client user data structure */
-			if(cdata != NULL)
-			{
-				free(cdata);
-				rtsp_set_user_data(c, NULL);
-			}
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
 		default:
