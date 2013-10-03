@@ -69,6 +69,7 @@ static RSA *rsa = NULL;
 
 struct airtunes_server_data {
 	unsigned char hw_addr[6];
+	char *name;
 	char *password;
 };
 
@@ -147,6 +148,7 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a)
 
 	/* Get HW MAC */
 	memcpy(h->rtsp_data.hw_addr, buf, 6);
+	h->rtsp_data.name = h->name;
 	h->rtsp_data.password = h->password;
 
 	return 0;
@@ -161,6 +163,7 @@ void airtunes_set_name(struct airtunes_handle *h, const char *name)
 		free(h->name);
 
 	h->name = strdup(name);
+	h->rtsp_data.name = h->name;
 }
 
 void airtunes_set_port(struct airtunes_handle *h, unsigned int port)
@@ -368,6 +371,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	unsigned int port = 6000;
 	int transport = RAOP_UDP;
 	char buffer[BUFFER_SIZE];
+	char *username;
 
 	/* Allocate structure to handle session */
 	if(cdata == NULL)
@@ -380,6 +384,15 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	/* Verify password */
 	if(sdata->password != NULL)
 	{
+		username = rtsp_digest_auth_get_username(c);
+		if(username == NULL || rtsp_digest_auth_check(c, username, sdata->password, sdata->name) != 0)
+		{
+			rtsp_create_digest_auth_response(c, sdata->name, "", 0);
+			airtunes_do_apple_response(c, sdata->hw_addr);
+			rtsp_add_response(c, "Server", "AirCat/1.0");
+			rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq", 1));
+			return 0;
+		}
 	}
 
 	switch(request)
