@@ -27,14 +27,20 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <time.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
+#ifdef HAVE_OPENSSL
+#include <openssl/md5.h>
+#endif
+
 #include "rtsp.h"
 
 #define BUFFER_SIZE 8192
+#define REQUEST_STRING_LENGTH 32
 
 #define min(x,y) x <= y ? x : y
 
@@ -77,12 +83,17 @@ struct rtsp_client {
 	/* RTSP variables */
 	unsigned int seq;
 	int request;
+	char request_string[REQUEST_STRING_LENGTH];
 	char *url;
 	struct rtsp_header *headers;
 	/* User data */
 	void *user_data;
 	/* Next element */
 	struct rtsp_client *next;
+#ifdef HAVE_OPENSSL
+	/* Digest auth */
+	char nonce[(MD5_DIGEST_LENGTH*2)+1];
+#endif
 };
 
 struct rtsp_handle {
@@ -138,6 +149,7 @@ static void rtsp_accept(struct rtsp_handle *h)
 	}
 
 	/* Fill client structure */
+	memset(c, 0, sizeof(struct rtsp_client));
 	c->sock = sock;
 	c->poll_entry = NULL;
         c->state = RTSPSTATE_WAIT_REQUEST;
@@ -222,6 +234,9 @@ static int rtsp_parse_request(struct rtsp_client *c)
 		c->request = RTSP_TEARDOWN;
 	else
 		c->request = RTSP_UNKNOWN;
+
+	/* Copy request string */
+	strncpy(c->request_string, p, REQUEST_STRING_LENGTH);
 
 	/* Read url */
 	p = p_end+1;
@@ -811,7 +826,7 @@ int rtsp_set_packet(struct rtsp_client *c, unsigned char *buffer, size_t len)
 }
 
 /* Authentication part */
-const char *rtsp_basic_auth_get_username_password(struct rtsp_client *c, const char **password)
+char *rtsp_basic_auth_get_username_password(struct rtsp_client *c, char **password)
 {
 	char *p;
 	char *decoded;
@@ -867,11 +882,40 @@ int rtsp_create_basic_auth_response(struct rtsp_client *c, const char *realm)
 	return 0;
 }
 
-const char *rtsp_digest_auth_get_username(struct rtsp_client *c)
+static char *rtsp_digest_get_sub_value(const char *str, const char *name)
+{
+	char *str_end;
+	char *p, *end;
+	int len;
+
+	/* Verify arguments */
+	if(str == NULL || name == NULL)
+		return NULL;
+
+	str_end = (char*)str + strlen(str);
+	len = strlen(name);
+
+	/* Find name */
+	p = (char*)str;
+	do {
+		p = strstr(p, name);
+		if(p == NULL || p+2 >= str_end)
+			return NULL;
+	} while(p[len] != '=' || p[len+1] != '\"');
+	p+=len+2;
+
+	/* Find next '"' */
+	end = strchr(p, '\"'); 
+	if(end == NULL)
+		return NULL;
+
+	/* Copy string */
+	return strndup(p, end-p);
+}
+
+char *rtsp_digest_auth_get_username(struct rtsp_client *c)
 {
 	char *p;
-	char *end;
-	char *username;
 
 	if(c == NULL)
 		return NULL;
@@ -882,46 +926,150 @@ const char *rtsp_digest_auth_get_username(struct rtsp_client *c)
 		return NULL;
 
 	/* Find username */
-	p = strstr(p, "username=\"");
-	if(p == NULL)
-		return NULL;
-
-	/* Find next '"' */
-	end = strchr(p, '"');
-	if(end == NULL)
-		return NULL;
-
-	/* Allocate return string */
-	username = malloc(end-p+1);
-	strncpy(username, p, end-p);
-	username[end-p] = 0;
-
-	return username;
+	return rtsp_digest_get_sub_value(p, "username");
 }
 
-int rtsp_digest_auth_check(struct rtsp_client *c, const char *username, const char *password)
+static void rtsp_bin2hex(const unsigned char *bin, size_t len, char *hex)
 {
+	size_t i;
+	unsigned int j;
+
+	for (i = 0; i < len; ++i) 
+	{
+		j = (bin[i] >> 4) & 0x0f;      
+		hex[i * 2] = j <= 9 ? (j + '0') : (j + 'A' - 10);    
+		j = bin[i] & 0x0f;    
+		hex[i * 2 + 1] = j <= 9 ? (j + '0') : (j + 'A' - 10);
+	}
+	hex[len * 2] = '\0';
+}
+
+int rtsp_digest_auth_check(struct rtsp_client *c, const char *username, const char *password, const char *realm)
+{
+#ifdef HAVE_OPENSSL
+	char *p;
+	char *str;
+	size_t len;
+	int result = -1;
+	/* Values from header */
+	char *uname = NULL;
+	char *rm = NULL;
+	char *nonce = NULL;
+	char *uri = NULL;
+	char *resp = NULL;
+	/* MD5 variables */
+	unsigned char md5[MD5_DIGEST_LENGTH];
+	char ha1[(MD5_DIGEST_LENGTH*2)+1];
+	char response[(MD5_DIGEST_LENGTH*2)+1];
+
 	if(c == NULL)
 		return -1;
 
-	return 0;
+	/* Get value from header */
+	p = rtsp_get_header(c, "Authorization", 0);
+	if(p == NULL)
+		return -1;
+
+	/* Get username */
+	uname = rtsp_digest_get_sub_value(p, "username");
+	if(uname == NULL || strcmp(uname, username) != 0)
+		goto end;
+
+	/* Get realm */
+	rm = rtsp_digest_get_sub_value(p, "realm");
+	if(rm == NULL || strcmp(rm, realm) != 0)
+		goto end;
+
+	/* Get nonce */
+	nonce = rtsp_digest_get_sub_value(p, "nonce");
+	if(nonce == NULL || strcmp(nonce, c->nonce) != 0)
+		goto end;
+
+	/* Get URI */
+	uri = rtsp_digest_get_sub_value(p, "uri");
+	if(uri == NULL || strcmp(uri, c->url) != 0)
+		goto end;
+
+	/* Generate HA1 */
+	len = strlen(username)+strlen(realm)+strlen(password)+2;
+	str = malloc(len+1);
+	sprintf(str, "%s:%s:%s", username, realm, password);
+	MD5((const unsigned char*)str, len, md5);
+	rtsp_bin2hex(md5, MD5_DIGEST_LENGTH, ha1);
+	free(str);
+
+	/* Generate HA2 */
+	len = strlen(c->request_string)+strlen(uri)+1;
+	str = malloc(len+1);
+	sprintf(str, "%s:%s", c->request_string, uri);
+	MD5((const unsigned char*)str, len, md5);
+	rtsp_bin2hex(md5, MD5_DIGEST_LENGTH, response);
+	free(str);
+
+	/* Generate response */
+	len = (MD5_DIGEST_LENGTH*4)+strlen(nonce)+2;
+	str = malloc(len+1);
+	sprintf(str, "%s:%s:%s", ha1, nonce, response);
+	MD5((const unsigned char*)str, len, md5);
+	rtsp_bin2hex(md5, MD5_DIGEST_LENGTH, response);
+	free(str);
+
+	/* Get response and verify it */
+	resp = rtsp_digest_get_sub_value(p, "response");
+	if(resp == NULL || strcmp(resp, response) != 0)
+		goto end;
+
+	/* Good response */
+	result = 0;
+end:
+	if(uname != NULL)
+		free(uname);
+	if(rm != NULL)
+		free(rm);
+	if(nonce != NULL)
+		free(nonce);
+	if(uri != NULL)
+		free(uri);
+	if(resp != NULL)
+		free(resp);
+
+	return result;
+#else
+	return -1;
+#endif
 }
 
 int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm, const char *opaque, int signal_stale)
 {
+#ifdef HAVE_OPENSSL
+	unsigned char md5[MD5_DIGEST_LENGTH];
+	int i;
+#endif
 	char buffer[256];
-	char *nonce;
 
 	if(c == NULL)
 		return -1;
 
+#ifdef HAVE_OPENSSL
 	/* Generate a nonce */
-	nonce = NULL; /* TODO */
+	if(c->nonce[0] == 0)
+	{
+		/* Create a random sequence: need to be improved! */
+		srand(time(NULL));
+		for(i = 0; i < 32; i++)
+		{
+			buffer[i] = (rand() * 256) / RAND_MAX;
+		}
+		/* Convert it into md5 string */
+		MD5((const unsigned char*)buffer, 32, md5);
+		rtsp_bin2hex(md5, MD5_DIGEST_LENGTH, c->nonce);
+	}
+#endif
 
 	/* Create response */
 	rtsp_create_response(c, 401, "Unauthorized");
 
-	snprintf(buffer, 255, "Digest realm=\"%s\",qop=\"auth\",nonce=\"%s\",opaque=\"%s\"%s", realm, nonce, opaque, signal_stale ? ",stale=\"true\"" : "");
+	snprintf(buffer, 255, "Digest realm=\"%s\",nonce=\"%s\",opaque=\"%s\"%s", realm, c->nonce, opaque, signal_stale ? ",stale=\"true\"" : "");
 	rtsp_add_response(c, "WWW-Authenticate", buffer);
 
 	return 0;
