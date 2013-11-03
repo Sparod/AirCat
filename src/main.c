@@ -22,6 +22,7 @@
 #include <getopt.h>
 
 #include "config_file.h"
+#include "httpd.h"
 #include "airtunes.h"
 #include "avahi.h"
 
@@ -37,8 +38,6 @@
 	#define VERSION "1.0.0"
 #endif
 
-static struct avahi_handle *avahi = NULL;	/* Avahi client handler */
-static struct airtunes_handle *airtunes = NULL;	/* Airtunes / RAOP handler */
 static char *config_file = NULL;		/* Alternative configuration file */
 static int verbose = 0;				/* Verbosity */
 
@@ -128,6 +127,10 @@ static void parse_opt(int argc, char * const argv[])
 
 int main(int argc, char* argv[])
 {
+	struct avahi_handle *avahi;
+	struct airtunes_handle *airtunes;
+	struct httpd_handle *httpd;
+
 	/* Default AirCat configuration: overwritten by config_load() */
 	set_default_config();
 
@@ -147,13 +150,26 @@ int main(int argc, char* argv[])
 	airtunes_open(&airtunes, avahi);
 
 	/* Start Airtunes Server */
-	airtunes_start(airtunes);
+	if(config.raop_enabled)
+		airtunes_start(airtunes);
+
+	/* Open HTTP Server */
+	httpd_open(&httpd, NULL, airtunes);
+
+	/* Start HTTP Server */
+	httpd_start(httpd);
 
 	/* Wait an input on stdin (only for test purpose) */
 	(void) getc(stdin);
 
+	/* Stop HTTP Server */
+	httpd_stop(httpd);
+
 	/* Stop Airtunes Server */
 	airtunes_stop(airtunes);
+
+	/* Close HTTP Server */
+	httpd_close(httpd);
 
 	/* Close Airtunes Server */
 	airtunes_close(airtunes);

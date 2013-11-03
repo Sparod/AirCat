@@ -2,6 +2,7 @@ bin_PROGRAMS = aircat
 
 aircat_SOURCES = main.c \
 		 config_file.c \
+		 httpd.c \
 		 airtunes.c \
 		 avahi.c \
 		 http.c \
@@ -19,12 +20,13 @@ aircat_SOURCES = main.c \
 		 resample.c \
 		 alsa.c
 
-aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) -lpthread
+aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) $(libmicrohttpd_LIBS) -lpthread
 
-AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) -Wall
+AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) $(libmicrohttpd_CFLAGS) -Wall
 
 EXTRA_DIST = http.h \
 	     config_file.h \
+	     httpd.h \
 	     airtunes.h \
 	     avahi.h \
 	     file.h \
