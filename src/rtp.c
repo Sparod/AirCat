@@ -45,6 +45,7 @@
 #endif
 
 #define DEFAULT_CACHE_SIZE 32
+#define DEFAULT_CACHE_LOST 24
 #define MAX_IOVECS 16
 
 /**
@@ -76,7 +77,8 @@ struct rtp_handle {
 	int rtp_port;
 	unsigned int timeout;
 	/* RTP params */
-	int cache_size;
+	unsigned int cache_size;
+	unsigned int cache_lost;
 	uint32_t ssrc;
 	unsigned char payload;
 //	uint32_t timestamp;
@@ -89,7 +91,7 @@ static void rtp_cache_reset(struct rtp_handle *h, uint16_t seq)
 {
 	int i = 0;
 
-	//h->cache[0].seq = ++seq;
+	h->cache_pos = 0;
 
 	for(i = 0; i < h->cache_size; i++)
 	{
@@ -98,15 +100,19 @@ static void rtp_cache_reset(struct rtp_handle *h, uint16_t seq)
 	}
 }
 
-int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_size, unsigned long ssrc, unsigned char payload, unsigned int timeout)
+int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_size, unsigned int cache_lost, unsigned long ssrc, unsigned char payload, unsigned int timeout)
 {
 	struct rtp_handle *h;
 	struct sockaddr_in addr;
 	int opt;
 
-	/* Set a default cache size */
+	/* Set a default cache size and cache lost */
 	if(cache_size == 0)
 		cache_size = DEFAULT_CACHE_SIZE;
+	if(cache_lost == 0)
+		cache_lost = DEFAULT_CACHE_LOST;
+	if(cache_lost > cache_size)
+		cache_lost = cache_size;
 
 	/* Allocate structure */
 	*handle = malloc(sizeof(struct rtp_handle));
@@ -117,6 +123,7 @@ int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_s
 	/* Init variables */
 	h->rtp_port = port;
 	h->cache_size = cache_size;
+	h->cache_lost = cache_lost;
 	h->cache = NULL;
 	h->cache_pos = 0;
 	h->ssrc = ssrc;
@@ -246,6 +253,7 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, int len)
 	int pos = 0;
 	int32_t seqdiff = 0;
 	uint16_t seq;
+	unsigned int i;
 
 	if(h == NULL)
 		return -1;
@@ -285,28 +293,27 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, int len)
 			/* Verify payload */
 			if(h->payload != 0 && header.payload != h->payload)
 				continue;
-			
+
 			/* Calculate sequence number difference */
 			seq = header.sequence;
 			seqdiff = seq - h->cache[h->cache_pos].seq;
 
-			/* If expected packet: feed */
 			if(seqdiff == 0)
 			{
+				/* Expected packet */
 				h->cache_pos = ( 1 + h->cache_pos ) % h->cache_size;
 				h->cache[h->cache_pos].seq = ++seq;
 				goto feed;
 			}
 			else if (seqdiff > h->cache_size)
 			{
+				/* Reset cache */
 				rtp_cache_reset(h, seq);
 				fprintf(stderr, "RTP cache: Overrun! %u\n", seq);
 				goto feed;
 			}
 			else if (seqdiff < 0)
 			{
-				int i;
-
 				// Is it a stray packet re-sent to network?
 				for (i = 0; i < h->cache_size; i++)
 					if (h->cache[i].seq == seq)
@@ -322,14 +329,34 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, int len)
 					continue;
 				}
 
+				/* Reset cache */
+				fprintf(stderr, "RTP cache: Very old packet arrived: reset!\n");
 				rtp_cache_reset(h, seq);
 				goto feed;
 			}
 
-			seqdiff = ( seqdiff + h->cache_pos ) % h->cache_size;
-			memcpy(h->cache[seqdiff].buffer, recv_buf+pos, recv_len);
-			h->cache[seqdiff].len = recv_len;
-			h->cache[seqdiff].seq = seq;
+			/* Add packet to cache */
+			i = ( seqdiff + h->cache_pos ) % h->cache_size;
+			memcpy(h->cache[i].buffer, recv_buf+pos, recv_len);
+			h->cache[i].len = recv_len;
+			h->cache[i].seq = seq;
+
+			if(seqdiff >= h->cache_lost)
+			{
+				/* First packet is lost */
+				fprintf(stderr, "RTP cache: Lost packet!\n");
+
+				/* Search next packet available */
+				for(i = 0; i < h->cache_size; i++)
+				{
+					h->cache_pos = ( 1 + h->cache_pos ) % h->cache_size;
+					if(h->cache[h->cache_pos].len > 0)
+						break;
+				}
+
+				/* return next available packet */
+				return rtp_read(h, buffer, len);
+			}
 		}
 		return 0;
 	}

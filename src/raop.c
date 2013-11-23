@@ -42,6 +42,10 @@
 	#define RTP_CACHE_SIZE 32
 #endif
 
+#ifndef RTP_CACHE_LOST
+	#define RTP_CACHE_LOST 24
+#endif
+
 struct raop_handle {
 	/* Protocol handler */
 	int transport;			// Type of socket (TCP or UDP (=RTP))
@@ -142,7 +146,7 @@ int raop_open(struct raop_handle **handle, int transport, unsigned int *port, un
 	else
 	{
 		/* Open RTP server */
-		while(rtp_open(&h->rtp, *port, RTP_CACHE_SIZE, 0, 0x60, 100) != 0)
+		while(rtp_open(&h->rtp, *port, RTP_CACHE_SIZE, RTP_CACHE_LOST, 0, 0x60, 100) != 0)
 		{
 			(*port) += 2;
 			if(*port >= 7000)
