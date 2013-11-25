@@ -44,8 +44,8 @@
 	#define MAX_RTP_PACKET_SIZE 1500
 #endif
 
-#define DEFAULT_CACHE_SIZE 32
-#define DEFAULT_CACHE_LOST 24
+#define DEFAULT_CACHE_SIZE 64
+#define DEFAULT_CACHE_LOST 48
 #define MAX_IOVECS 16
 
 /**
@@ -296,7 +296,10 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, int len)
 
 			/* Calculate sequence number difference */
 			seq = header.sequence;
-			seqdiff = seq - h->cache[h->cache_pos].seq;
+			if(h->cache[h->cache_pos].seq + h->cache_size >= 0xFFFF && seq < 0x7FFF)
+				seqdiff = seq + (0xFFFF - h->cache[h->cache_pos].seq);
+			else
+				seqdiff = seq - h->cache[h->cache_pos].seq;
 
 			if(seqdiff == 0)
 			{
