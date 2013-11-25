@@ -75,9 +75,9 @@ int alsa_open(struct alsa_handle **handle, unsigned long samplerate, unsigned ch
 
 	/* Set parameters for output */
 #ifdef USE_FLOAT
-	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_FLOAT, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency*100) < 0)
+	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_FLOAT, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency*1000) < 0)
 #else
-	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_S32, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency*100) < 0)
+	if(snd_pcm_set_params(h->alsa, SND_PCM_FORMAT_S32, SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel, h->samplerate, 1, latency*1000) < 0)
 #endif
 		return -1;
 
