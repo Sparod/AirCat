@@ -204,13 +204,6 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 		return -1;
 	}
 
-	/* Verify payload */
-	if(rtp_get_payload(packet) != h->payload)
-	{
-		fprintf(stderr, "Bad RTP payload!");
-		return -1;
-	}
-
 	/* Remove packet padding */
 	if(packet->buffer[0] & 0x20)
 	{
@@ -234,6 +227,7 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	struct rtp_packet *cur;
 //	uint32_t timestamp;
 	int16_t delta;
+	uint16_t lost_delta;
 	uint16_t seq;
 
 	if(h == NULL || packet == NULL)
@@ -264,13 +258,25 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 		goto drop;
 	}
 
-	/* Check sequence number */
-	delta = seq - h->next_seq;
-	/*
-	 * /!\ OVERFLOW
+	/* Calculate difference between sequence number of received packet
+	 * and the next expected. If this difference is < 0, it means that it is
+	 * a late packet and we drop it. Else, if the difference is > to cache
+	 * size, we wait two case with a difference bigger than cache size and
+	 * we flush the packet cache and begin a new reordering process.
+	 * Note: overflow is handled by the signed type of delta.
 	 */
-	if(delta > h->cache_size)
+	delta = seq - h->next_seq;
+
+	/* Check sequence number */
+	if(delta < 0)
 	{
+		/* Late packet: drop it */
+		fprintf(stderr, "Late RTP packet!\n");
+		goto drop;
+	}
+	else if(delta > h->cache_size)
+	{
+		/* Handle RTP packet jump */
 		if(h->bad_seq+1 == seq)
 		{
 			fprintf(stderr, "RTP jump: flush the cache\n");
@@ -283,8 +289,7 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 			goto drop;
 		}
 	}
-	else if (delta >= 0)
-		h->max_seq = seq;
+	h->max_seq = seq;
 
 	/* Add packet to queue */
 	root = &h->packets;
@@ -316,11 +321,17 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	/* Check next available packet in queue */
 	if(rtp_get_sequence(h->packets) != h->next_seq)
 	{
-		/*
-		 * /!\ OVERFLOW
+		/* Calculate delta between next sequence number and the max
+		 * sequence number received.
+		 * If this delta is bigger than cache_lost value, the packet is
+		 * considered as lost and next dequeue is called.
+		 * Else, we continue waiting the expected packet in reordering 
+		 * others.
+		 * Note: overflow is handled by unsigned type of lost_delta.
 		 */
-		if(h->next_seq + h->cache_lost > h->max_seq)
-			return -1; /* Wait for packet */
+		lost_delta = h->max_seq - h->next_seq;
+		if(lost_delta < h->cache_lost)
+			return -1; /* Wait for packet and get next */
 	}
 
 	return 0;
@@ -334,7 +345,7 @@ static int rtp_dequeue(struct rtp_handle *h, unsigned char *buffer, size_t len)
 {
 	struct rtp_packet *packet;
 	size_t offset;
-	int32_t delta;
+	uint16_t delta;
 
 	if(h == NULL)
 		return -1;
@@ -346,26 +357,40 @@ static int rtp_dequeue(struct rtp_handle *h, unsigned char *buffer, size_t len)
 	/* Get next valid packet in queue */
 	while((packet = h->packets) != NULL)
 	{
-		/* Calculate delta in sequence */
-		delta = rtp_get_sequence(packet) - h->next_seq;
-		/*
-		 * /!\ OVERFLOW
+		/* Calculate delta in sequence 
+		 * Note: if delta is different from 0, the packet is lost
+		 * (even if overflow)!
 		 */
-		if(delta < 0)
+		delta = rtp_get_sequence(packet) - h->next_seq;
+
+		if(delta >= 0x8000)
 		{
-			/* Late packet: strange but drop it and get next */
+			/* Late packet: drop it and get next
+			 * Note: In normal case, this code part is never
+			 * reached, because we drop late RTP packet in queue
+			 * process. However, to be sure this code is kept.
+			 */
 			fprintf(stderr, "Late RTP packet!\n");
 			h->packets = packet->next;
 			free(packet);
 			continue;
 		}
-		else if(delta > 0)
+		else if(delta != 0)
 		{
 			/* Lost packet */
 			fprintf(stderr, "Lost RTP packet!\n");
 			h->next_seq++;
 			h->pending = 1;
 			return 0;
+		}
+
+		/* Verify payload */
+		if(rtp_get_payload(packet) != h->payload)
+		{
+			fprintf(stderr, "Bad RTP payload!");
+			h->packets = packet->next;
+			free(packet);
+			continue;
 		}
 
 		/* Dequeue next packet */
