@@ -95,10 +95,14 @@ static void *alsa_thread(void *user_data)
 	struct alsa_handle *h = (struct alsa_handle*) user_data;
 	snd_pcm_sframes_t frames;
 	size_t input_size;
+	size_t previous_size = 0;
 
 	while(!h->stop)
 	{
 		input_size = h->input_callback(h->user_data, h->buffer, h->size) / h->nb_channel;
+		if(input_size == 0)
+			input_size = previous_size;
+		previous_size = input_size;
 
 		/* Play pcm sample */ /* FIXME */
 		frames = snd_pcm_writei(h->alsa, (unsigned char*)h->buffer, input_size);

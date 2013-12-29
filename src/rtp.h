@@ -25,8 +25,8 @@
 struct rtp_handle;
 
 int rtp_open(struct rtp_handle **h, unsigned int port, unsigned int cache_size, unsigned int cache_lost, unsigned long ssrc, unsigned char payload, unsigned int timeout);
-int rtp_read(struct rtp_handle *h, unsigned char *buffer, int len);
-void rtp_flush(struct rtp_handle *h);
+int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len);
+void rtp_flush(struct rtp_handle *h, unsigned int seq);
 int rtp_close(struct rtp_handle *h);
 
 //TODO: Callback for RTCP
