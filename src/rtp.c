@@ -289,7 +289,6 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 			goto drop;
 		}
 	}
-	h->max_seq = seq;
 
 	/* Add packet to queue */
 	root = &h->packets;
@@ -317,6 +316,13 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	}
 	packet->next = *root;
 	*root = packet;
+
+	/* Update greatest sequence number (last in queue)
+	 * Note: overflow is handled by signed short.
+	 */
+	delta = seq - h->max_seq;
+	if(delta >= 0)
+		h->max_seq = seq;
 
 	/* Check next available packet in queue */
 	if(rtp_get_sequence(h->packets) != h->next_seq)
