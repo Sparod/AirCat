@@ -45,8 +45,9 @@
 	#define MAX_RTP_PACKET_SIZE 1500
 #endif
 
-#define DEFAULT_CACHE_SIZE 200
-#define DEFAULT_CACHE_LOST 20
+#define DEFAULT_CACHE_SIZE 100
+#define DEFAULT_CACHE_RESENT 4
+#define DEFAULT_CACHE_LOST 80
 
 /**
  * RTP Header structure
@@ -66,6 +67,7 @@ struct rtp_handle {
 	unsigned int timeout;
 	/* RTP parameters */
 	unsigned int cache_size;
+	unsigned int cache_resent;
 	unsigned int cache_lost;
 	unsigned char payload;
 	uint32_t ssrc;
@@ -76,21 +78,26 @@ struct rtp_handle {
 	uint16_t bad_seq; // Used to detect sequence jump
 	unsigned char initialized; // Flag to detect first packet
 	unsigned char pending; // Flag to notice packets are waiting in queue
+	/* Resent Callback */
+	void (*resent_cb)(void *, unsigned int, unsigned int);
+	void *resent_data;
 };
 
-int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_size, unsigned int cache_lost, unsigned long ssrc, unsigned char payload, unsigned int timeout)
+int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 {
 	struct rtp_handle *h;
 	struct sockaddr_in addr;
 	int opt;
 
 	/* Set a default cache size and cache lost */
-	if(cache_size == 0)
-		cache_size = DEFAULT_CACHE_SIZE;
-	if(cache_lost == 0)
-		cache_lost = DEFAULT_CACHE_LOST;
-	if(cache_lost > cache_size)
-		cache_lost = cache_size;
+	if(attr->cache_size == 0)
+		attr->cache_size = DEFAULT_CACHE_SIZE;
+	if(attr->cache_lost == 0)
+		attr->cache_lost = DEFAULT_CACHE_LOST;
+	if(attr->cache_lost > attr->cache_size)
+		attr->cache_lost = attr->cache_size;
+	if(attr->cache_resent > attr->cache_lost)
+		attr->cache_resent = attr->cache_lost;
 
 	/* Allocate structure */
 	*handle = malloc(sizeof(struct rtp_handle));
@@ -99,12 +106,15 @@ int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_s
 	h = *handle;
 
 	/* Init variables */
-	h->port = port;
-	h->ssrc = ssrc;
-	h->payload = payload;
-	h->timeout = timeout;
-	h->cache_size = cache_size;
-	h->cache_lost = cache_lost;
+	h->port = attr->port;
+	h->ssrc = attr->ssrc;
+	h->payload = attr->payload;
+	h->timeout = attr->timeout;
+	h->cache_size = attr->cache_size;
+	h->cache_resent = attr->cache_resent;
+	h->cache_lost = attr->cache_lost;
+	h->resent_cb = attr->resent_cb;
+	h->resent_data = attr->resent_data;
 	h->packets = NULL;
 	h->initialized = 0;
 	h->pending = 0;
@@ -140,7 +150,7 @@ int rtp_open(struct rtp_handle **handle, unsigned int port, unsigned int cache_s
 	/* Bind */
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(port);
+	addr.sin_port = htons(h->port);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 	if(bind(h->sock, (struct sockaddr *) &addr, sizeof(addr)) != 0)
 		return -1;
@@ -220,12 +230,53 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 	return 0;
 }
 
+static void rtp_parse_resent(struct rtp_handle *h, uint16_t seq)
+{
+	uint16_t nb_packets;
+	uint16_t lost_seq;
+	uint16_t s;
+	int16_t delta, new_delta;
+	struct rtp_packet *packet;
+
+	s = h->next_seq;
+	nb_packets = 0;
+	packet = h->packets;
+
+	while(packet != NULL)
+	{
+		delta = s - h->max_seq;
+		new_delta = s - seq;
+
+		if(delta < h->cache_resent && new_delta < h->cache_resent)
+			break;
+
+		if(rtp_get_sequence(packet) != s)
+		{
+			if(delta <= h->cache_resent && new_delta >= h->cache_resent)
+			{
+				if(nb_packets == 0)
+					lost_seq = s;
+				nb_packets++;
+			}
+		}
+		else
+			packet = packet->next;
+
+		s++;
+	}
+
+	if(nb_packets > 0)
+	{
+		h->resent_cb(h->resent_data, lost_seq, nb_packets);
+		fprintf(stderr, "Asked for a resent packet (%d -> %d)\n", lost_seq, lost_seq + nb_packets - 1);
+	}
+}
+
 /* Drop and Free packet if not valid */
 static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 {
 	struct rtp_packet **root;
 	struct rtp_packet *cur;
-//	uint32_t timestamp;
 	int16_t delta;
 	uint16_t lost_delta;
 	uint16_t seq;
@@ -234,7 +285,6 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 		return -1;
 
 	/* Get packet infos */
-//	timestamp = rtp_get_timestamp(packet);
 	seq = rtp_get_sequence(packet);
 
 	/* First packet received */
@@ -242,6 +292,7 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	{
 		h->next_seq = seq;
 		h->bad_seq = seq-1;
+		h->max_seq = seq;
 
 		/* Get SSRC if not specified */
 		if(h->ssrc == 0)
@@ -321,8 +372,14 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	 * Note: overflow is handled by signed short.
 	 */
 	delta = seq - h->max_seq;
-	if(delta >= 0)
+	if(delta > 0)
+	{
+		if(h->resent_cb != NULL)
+			rtp_parse_resent(h, seq);
+
+		/* Update value */
 		h->max_seq = seq;
+	}
 
 	/* Check next available packet in queue */
 	if(rtp_get_sequence(h->packets) != h->next_seq)
@@ -386,14 +443,15 @@ static int rtp_dequeue(struct rtp_handle *h, unsigned char *buffer, size_t len)
 			/* Lost packet */
 			fprintf(stderr, "Lost RTP packet!\n");
 			h->next_seq++;
-			h->pending = 1;
+			if(rtp_get_sequence(packet) == h->next_seq)
+				h->pending = 1;
 			return 0;
 		}
 
 		/* Verify payload */
 		if(rtp_get_payload(packet) != h->payload)
 		{
-			fprintf(stderr, "Bad RTP payload!");
+			fprintf(stderr, "Bad RTP payload!\n");
 			h->packets = packet->next;
 			free(packet);
 			continue;

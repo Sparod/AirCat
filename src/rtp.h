@@ -18,17 +18,27 @@
 #ifndef TINY_RTP_H
 #define TINY_RTP_H
 
-#include <inttypes.h>
-#include <sys/socket.h>
-#include <sys/types.h>
+struct rtp_attr{
+	/* RTP config */
+	unsigned int port;
+	unsigned long ssrc;
+	unsigned char payload;
+	/* Cache settings */
+	unsigned int cache_size;
+	unsigned int cache_resent;
+	unsigned int cache_lost;
+	/* Resent callback */
+	void (*resent_cb)(void *, unsigned int, unsigned int);
+	void *resent_data;
+	/* Timeout for recv() */
+	unsigned int timeout;
+};
 
 struct rtp_handle;
 
-int rtp_open(struct rtp_handle **h, unsigned int port, unsigned int cache_size, unsigned int cache_lost, unsigned long ssrc, unsigned char payload, unsigned int timeout);
+int rtp_open(struct rtp_handle **h, struct rtp_attr *attr);
 int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len);
 void rtp_flush(struct rtp_handle *h, unsigned int seq);
 int rtp_close(struct rtp_handle *h);
-
-//TODO: Callback for RTCP
 
 #endif

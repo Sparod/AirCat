@@ -39,11 +39,15 @@
 #endif
 
 #ifndef RTP_CACHE_SIZE
-	#define RTP_CACHE_SIZE 32
+	#define RTP_CACHE_SIZE 100
+#endif
+
+#ifndef RTP_CACHE_RESENT
+	#define RTP_CACHE_RESENT 4
 #endif
 
 #ifndef RTP_CACHE_LOST
-	#define RTP_CACHE_LOST 24
+	#define RTP_CACHE_LOST 80
 #endif
 
 struct raop_handle {
@@ -118,6 +122,7 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 int raop_open(struct raop_handle **handle, int transport, unsigned int *port, unsigned char *aes_key, unsigned char *aes_iv, int codec, char *format)
 {
 	struct raop_handle *h;
+	struct rtp_attr attr;
 
 	/* Alloc structure */
 	*handle = malloc(sizeof(struct raop_handle));
@@ -146,12 +151,23 @@ int raop_open(struct raop_handle **handle, int transport, unsigned int *port, un
 	else
 	{
 		/* Open RTP server */
-		while(rtp_open(&h->rtp, *port, RTP_CACHE_SIZE, RTP_CACHE_LOST, 0, 0x60, 100) != 0)
+		attr.port = *port;
+		attr.ssrc = 0;
+		attr.payload = 0x60;
+		attr.cache_size = RTP_CACHE_SIZE;
+		attr.cache_resent = 0;
+		attr.cache_lost = RTP_CACHE_LOST;
+		attr.resent_cb = NULL;
+		attr.resent_data = NULL;
+		attr.timeout = 25;
+
+		while(rtp_open(&h->rtp, &attr) != 0)
 		{
-			(*port) += 2;
-			if(*port >= 7000)
+			attr.port += 2;
+			if(attr.port >= 7000)
 				return -1;
 		}
+		*port = attr.port;
 	}
 
 	if(codec == RAOP_ALAC)
