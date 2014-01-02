@@ -27,6 +27,9 @@ struct rtp_attr{
 	unsigned int cache_size;
 	unsigned int cache_resent;
 	unsigned int cache_lost;
+	/* RTCP packet callback */
+	void (*rtcp_cb)(void *, unsigned char *, size_t);
+	void *rtcp_data;
 	/* Resent callback */
 	void (*resent_cb)(void *, unsigned int, unsigned int);
 	void *resent_data;

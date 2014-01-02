@@ -78,6 +78,9 @@ struct rtp_handle {
 	uint16_t bad_seq; // Used to detect sequence jump
 	unsigned char initialized; // Flag to detect first packet
 	unsigned char pending; // Flag to notice packets are waiting in queue
+	/* RTCP packet callback */
+	void (*rtcp_cb)(void *, unsigned char *, size_t);
+	void *rtcp_data;
 	/* Resent Callback */
 	void (*resent_cb)(void *, unsigned int, unsigned int);
 	void *resent_data;
@@ -115,6 +118,8 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	h->cache_lost = attr->cache_lost;
 	h->resent_cb = attr->resent_cb;
 	h->resent_data = attr->resent_data;
+	h->rtcp_cb = attr->rtcp_cb;
+	h->rtcp_data = attr->rtcp_data;
 	h->packets = NULL;
 	h->initialized = 0;
 	h->pending = 0;
@@ -184,6 +189,7 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 {
 	socklen_t sockaddr_size;
 	struct sockaddr src_addr;
+	unsigned char payload;
 	int size;
 
 	if(h == NULL || packet == NULL)
@@ -211,6 +217,15 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 	if((packet->buffer[0] >> 6) != 2)
 	{
 		fprintf(stderr, "Unsupported RTP protocol version!\n");
+		return -1;
+	}
+
+	/* Verify payload: RTCP */
+	payload = rtp_get_payload(packet);
+	if(payload >= 72 && payload <= 76)
+	{
+		if(h->rtcp_cb !=  NULL)
+			h->rtcp_cb(h->rtcp_data, packet->buffer, size);
 		return -1;
 	}
 
