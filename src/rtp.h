@@ -30,6 +30,10 @@ struct rtp_attr{
 	/* RTCP packet callback */
 	void (*rtcp_cb)(void *, unsigned char *, size_t);
 	void *rtcp_data;
+	/* Custom received callback */
+	size_t (*cust_cb)(void *, unsigned char *, size_t);
+	void *cust_data;
+	unsigned char cust_payload;
 	/* Resent callback */
 	void (*resent_cb)(void *, unsigned int, unsigned int);
 	void *resent_data;

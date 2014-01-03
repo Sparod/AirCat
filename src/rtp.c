@@ -81,6 +81,10 @@ struct rtp_handle {
 	/* RTCP packet callback */
 	void (*rtcp_cb)(void *, unsigned char *, size_t);
 	void *rtcp_data;
+	/* Custom received callback */
+	size_t (*cust_cb)(void *, unsigned char *, size_t);
+	void *cust_data;
+	unsigned char cust_payload;
 	/* Resent Callback */
 	void (*resent_cb)(void *, unsigned int, unsigned int);
 	void *resent_data;
@@ -120,6 +124,9 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	h->resent_data = attr->resent_data;
 	h->rtcp_cb = attr->rtcp_cb;
 	h->rtcp_data = attr->rtcp_data;
+	h->cust_cb = attr->cust_cb;
+	h->cust_data = attr->cust_data;
+	h->cust_payload = attr->cust_payload;
 	h->packets = NULL;
 	h->initialized = 0;
 	h->pending = 0;
@@ -206,6 +213,7 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 		return size;
 	}
 
+check:
 	/* Verify packet size */
 	if(size < 12)
 	{
@@ -227,6 +235,13 @@ static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
 		if(h->rtcp_cb !=  NULL)
 			h->rtcp_cb(h->rtcp_data, packet->buffer, size);
 		return -1;
+	}
+
+	/* Custom process on packet if custom payload */
+	if(h->cust_cb != NULL && payload == h->cust_payload)
+	{
+		size = h->cust_cb(h->cust_data, packet->buffer, size);
+		goto check; // FIXME: possible infinite loop!
 	}
 
 	/* Remove packet padding */
