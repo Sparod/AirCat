@@ -29,7 +29,6 @@
 #include "rtsp.h"
 #include "raop.h"
 #include "sdp.h"
-#include "resample.h"
 #include "alsa.h"
 
 #ifdef HAVE_CONFIG_H
@@ -76,13 +75,17 @@ struct airtunes_server_data {
 struct airtunes_client_data {
 	/* Audio output handlers */
 	struct raop_handle *raop;
-	struct resample_handle *res;
 	struct alsa_handle *alsa;
 	/* AES key and IV */
 	unsigned char *aes_key;
 	unsigned char aes_iv[16];
 	/* Format */
+	int codec;
 	char *format;
+	/* RAOP transport protocol */
+	int transport;
+	/* RAOP server port */
+	unsigned int port;
 	/* RTCP ports */
 	unsigned int control_port;
 	unsigned int timing_port;
@@ -368,10 +371,10 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 {
 	struct airtunes_server_data *sdata = (struct airtunes_server_data*) user_data;
 	struct airtunes_client_data *cdata = (struct airtunes_client_data*) rtsp_get_user_data(c);
-	unsigned int port = 6000;
-	int transport = RAOP_UDP;
+	struct raop_attr attr;
 	char buffer[BUFFER_SIZE];
 	char *username;
+	char *str, *p;
 
 	/* Allocate structure to handle session */
 	if(cdata == NULL)
@@ -407,20 +410,46 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			break;
 		case RTSP_SETUP:
 			/* Get port configuration from Transport */
-			if(strstr(rtsp_get_header(c, "Transport", 0), "TCP") != NULL)
-				transport = RAOP_TCP;
+			str = rtsp_get_header(c, "Transport", 0);
 
-			/* Launch RTP Server */
-			raop_open(&cdata->raop, transport, &port, cdata->aes_key, cdata->aes_iv, RAOP_ALAC, cdata->format);
-			//resample_open(&cdata->res, raop_get_samplerate(cdata->raop), raop_get_channels(cdata->raop), 44100, 2, &raop_read, cdata->raop);
-			//alsa_open(&cdata->alsa, 44100, 2, 200000, &resample_read, cdata->res);
-			alsa_open(&cdata->alsa, 44100, 2, 100000, &raop_read, cdata->raop);
+			/* Transport type: TCP or UDP */
+			if(strstr(str, "TCP") != NULL)
+				cdata->transport = RAOP_TCP;
+			else
+				cdata->transport = RAOP_UDP;
+
+			/* Control port */
+			p = strstr(str, "control_port=");
+			if(p != NULL)
+				cdata->control_port = strtoul(p+13, NULL, 10);
+
+			/* Timing port */
+			p = strstr(str, "timing_port=");
+			if(p != NULL)
+				cdata->timing_port = strtoul(p+12, NULL, 10);
+
+			/* Prepare RAOP Server */
+			attr.transport = cdata->transport;
+			attr.port = cdata->port = 6000;
+			attr.control_port = cdata->control_port;
+			attr.timing_port = cdata->timing_port;
+			attr.aes_key = cdata->aes_key;
+			attr.aes_iv = cdata->aes_iv;
+			attr.codec = cdata->codec;
+			attr.format = cdata->format;
+			attr.ip = rtsp_get_ip(c);
+
+			/* Launch RAOP Server */
+			raop_open(&cdata->raop, &attr);
+			cdata->port = attr.port;
+
+			/* Create audio stream output */
+			alsa_open(&cdata->alsa, 44100, 2, 500, &raop_read, cdata->raop);
 
 			/* Send answer */
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			rtsp_add_response(c, "Audio-Jack-Status", "connected; type=analog");
-			strcpy(buffer, rtsp_get_header(c, "Transport", 0));
-			strcat(buffer, ";server_port=6000;");
+			snprintf(buffer, BUFFER_SIZE, "%s;server_port=%d;", rtsp_get_header(c, "Transport", 0), cdata->port);
 			rtsp_add_response(c, "Transport", buffer);
 			rtsp_add_response(c, "Session", "1");
 			break;
@@ -442,7 +471,6 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			/* Stop stream and close raop */
 			alsa_stop(cdata->alsa);
 			alsa_close(cdata->alsa);
-			//resample_close(cdata->res);
 			raop_close(cdata->raop);
 
 			RESPONSE_BEGIN(c, sdata->hw_addr);

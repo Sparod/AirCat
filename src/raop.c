@@ -67,6 +67,11 @@ struct raop_handle {
 /* Callback for decoder */
 static int raop_read_stream(void * user_data, unsigned char *buffer, size_t size);
 
+/* Callbacks for RTP */
+static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len);
+static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len);
+static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count);
+
 static void raop_prepare_alac(unsigned char *header, char *format)
 {
 	char *fmt[12];
@@ -119,10 +124,11 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 	*((uint32_t*)header) = htonl(atol(fmt[11]));
 }
 
-int raop_open(struct raop_handle **handle, int transport, unsigned int *port, unsigned char *aes_key, unsigned char *aes_iv, int codec, char *format)
+int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 {
 	struct raop_handle *h;
-	struct rtp_attr attr;
+	struct rtp_attr r_attr;
+	int codec;
 
 	/* Alloc structure */
 	*handle = malloc(sizeof(struct raop_handle));
@@ -131,52 +137,59 @@ int raop_open(struct raop_handle **handle, int transport, unsigned int *port, un
 	h = *handle;
 
 	/* Init structure */
-	h->transport = transport;
+	h->transport = attr->transport;
 
 	/* Prepare openssl for AES */
-	AES_set_decrypt_key(aes_key, 128, &h->aes);
-	memcpy(h->aes_iv, aes_iv, sizeof(h->aes_iv));
+	AES_set_decrypt_key(attr->aes_key, 128, &h->aes);
+	memcpy(h->aes_iv, attr->aes_iv, sizeof(h->aes_iv));
 
 	/* Socket */
-	if(transport == RAOP_TCP)
+	if(attr->transport == RAOP_TCP)
 	{
 		/* Open TCP server */
-		while(raop_tcp_open(&h->tcp, *port, 100) != 0)
+		while(raop_tcp_open(&h->tcp, attr->port, 100) != 0)
 		{
-			(*port)++;
-			if(*port >= 7000)
+			attr->port++;
+			if(attr->port >= 7000)
 				return -1;
 		}
 	}
 	else
 	{
 		/* Open RTP server */
-		attr.port = *port;
-		attr.ssrc = 0;
-		attr.payload = 0x60;
-		attr.cache_size = RTP_CACHE_SIZE;
-		attr.cache_resent = 0;
-		attr.cache_lost = RTP_CACHE_LOST;
-		attr.resent_cb = NULL;
-		attr.resent_data = NULL;
-		attr.timeout = 25;
+		r_attr.port = attr->port;
+		r_attr.rtcp_port = attr->control_port;
+		r_attr.ip = attr->ip;
+		r_attr.ssrc = 0;
+		r_attr.payload = 0x60;
+		r_attr.cache_size = RTP_CACHE_SIZE;
+		r_attr.cache_resent = RTP_CACHE_RESENT;
+		r_attr.cache_lost = RTP_CACHE_LOST;
+		r_attr.cust_cb = &raop_cust_cb;
+		r_attr.cust_data = NULL;
+		r_attr.cust_payload = 0x56;
+		r_attr.rtcp_cb = &raop_rtcp_cb;
+		r_attr.rtcp_data = h;
+		r_attr.resent_cb = &raop_resent_cb;
+		r_attr.resent_data = h;
+		r_attr.timeout = 25;
 
-		while(rtp_open(&h->rtp, &attr) != 0)
+		while(rtp_open(&h->rtp, &r_attr) != 0)
 		{
-			attr.port += 2;
-			if(attr.port >= 7000)
+			r_attr.port += 2;
+			if(r_attr.port >= 7000)
 				return -1;
 		}
-		*port = attr.port;
+		attr->port = r_attr.port;
 	}
 
-	if(codec == RAOP_ALAC)
+	if(attr->codec == RAOP_ALAC)
 	{
 		codec = CODEC_ALAC;
-		raop_prepare_alac(h->alac_header, format);
+		raop_prepare_alac(h->alac_header, attr->format);
 		h->first = 1;
 	}
-	else if(codec == RAOP_AAC)
+	else if(attr->codec == RAOP_AAC)
 		codec = CODEC_AAC;
 
 	/* Open decoder */
@@ -232,6 +245,60 @@ int raop_close(struct raop_handle *h)
 	free(h);
 
 	return 0;
+}
+
+static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len)
+{
+	(void) user_data;
+
+	/* The minimal size of packet RTP header + 4 */
+	if(len < 16)
+		return -1;
+
+	/* Remove first RTP header */
+	len -= 4;
+	memmove(buffer, buffer+4, len);
+
+	return len;
+}
+
+static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len)
+{
+	struct raop_handle *h = (struct raop_handle *) user_data;
+
+	/* Verify payload */
+	if(buffer[1] != 0xD6)
+		return;
+
+	/* The minimal size of packet RTP header + 4 */
+	if(len < 16)
+		return;
+
+	/* Remove first RTP header */
+	len -= 4;
+	memmove(buffer, buffer+4, len);
+
+	/* Send packet to RTP module */
+	rtp_add_packet(h->rtp, buffer, len);
+}
+
+static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count)
+{
+	struct raop_handle *h = (struct raop_handle *) user_data;
+	unsigned char request[8];
+
+	if(h == NULL || h->rtp == NULL)
+		return;
+
+	/* Prepare Resent packet */
+	request[0] = 0x80; // RTP header 
+	request[1] = 0xD5; // Payload 0x85 with marker bit
+	*(uint16_t*)(request+2) = htons(1); // Sequence number of RTCP packet
+	*(uint16_t*)(request+4) = htons(seq); // First needed packet
+	*(uint16_t*)(request+6) = htons(count); // Count of packet needed
+
+	/* Send the resent packet request */
+	rtp_send_rtcp(h->rtp, request, 8);
 }
 
 static int raop_read_stream(void * user_data, unsigned char *buffer, size_t size)

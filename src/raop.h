@@ -22,9 +22,28 @@
 enum {RAOP_PCM, RAOP_ALAC, RAOP_AAC};
 enum {RAOP_TCP, RAOP_UDP};
 
+struct raop_attr{
+	/* Transport method: TCP or UDP */
+	int transport;
+	/* Server port: incremented by RAOP if port already used */
+	unsigned int port;
+	/* Client ip address */
+	unsigned char *ip;
+	/* RTCP ports: not used if 0 */
+	unsigned int control_port;
+	unsigned int timing_port;
+	/* AES key and IV to decrypt audio */
+	unsigned char *aes_key;
+	unsigned char *aes_iv;
+	/* Audio codec: PCM, ALAC or AAC */
+	int codec;
+	/* Format string for codec parameters: provided by RTSP */
+	char *format;
+};
+
 struct raop_handle;
 
-int raop_open(struct raop_handle **h, int transport, unsigned int *port, unsigned char *aes_key, unsigned char *aes_iv, int codec, char *format);
+int raop_open(struct raop_handle **h, struct raop_attr *attr);
 
 int raop_read(struct raop_handle *h, unsigned char *buffer, size_t size);
 
