@@ -93,6 +93,7 @@ int launch_rtp_proxy(unsigned int in_port,
             printf("Pick a packet...\n");
             memcpy(mis, buffer, size);
             mis_size = size;
+            l = 0;
             k = 0;
             continue;
         }
