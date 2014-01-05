@@ -21,6 +21,8 @@
 struct rtp_attr{
 	/* RTP config */
 	unsigned int port;
+	unsigned int rtcp_port;
+	unsigned char *ip;
 	unsigned long ssrc;
 	unsigned char payload;
 	/* Cache settings */
@@ -45,6 +47,8 @@ struct rtp_handle;
 
 int rtp_open(struct rtp_handle **h, struct rtp_attr *attr);
 int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len);
+int rtp_add_packet(struct rtp_handle *h, unsigned char *buffer, size_t len);
+size_t rtp_send_rtcp(struct rtp_handle *h, unsigned char *buffer, size_t len);
 void rtp_flush(struct rtp_handle *h, unsigned int seq);
 int rtp_close(struct rtp_handle *h);
 

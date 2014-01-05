@@ -61,9 +61,13 @@ struct rtp_packet {
 };
 
 struct rtp_handle {
-	/* UDP socket */
+	/* RTP socket */
 	int sock;
 	int port;
+	/* RTCP socket */
+	int rtcp_sock;
+	struct sockaddr_in rtcp_addr;
+	/* Poll timeout */
 	unsigned int timeout;
 	/* RTP parameters */
 	unsigned int cache_size;
@@ -114,6 +118,7 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 
 	/* Init variables */
 	h->port = attr->port;
+	h->rtcp_sock = -1;
 	h->ssrc = attr->ssrc;
 	h->payload = attr->payload;
 	h->timeout = attr->timeout;
@@ -167,6 +172,45 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	if(bind(h->sock, (struct sockaddr *) &addr, sizeof(addr)) != 0)
 		return -1;
 
+	/* Open RTCP socket */
+	if(attr->rtcp_port != 0)
+	{
+		/* Prepare socket address */
+		memset(&h->rtcp_addr, 0, sizeof(h->rtcp_addr));
+		h->rtcp_addr.sin_family = AF_INET;
+		h->rtcp_addr.sin_port = htons(attr->rtcp_port);
+		memcpy(&h->rtcp_addr.sin_addr, attr->ip, 4);
+
+		/* Open a new socket if RTCP port different from RTP port */
+		if(attr->rtcp_port != attr->port)
+		{
+			/* Open socket */
+			if((h->rtcp_sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+				return 0;
+
+			/* Force socket to bind */
+			opt = 1;
+			if(setsockopt(h->rtcp_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+			{
+				close(h->rtcp_sock);
+				h->rtcp_sock = -1;
+				return 0;
+			}
+
+			/* Bind */
+			memset(&addr, 0, sizeof(addr));
+			addr.sin_family = AF_INET;
+			addr.sin_port = htons(attr->rtcp_port);
+			addr.sin_addr.s_addr = htonl(INADDR_ANY);
+			if(bind(h->rtcp_sock, (struct sockaddr *) &addr, sizeof(addr)) != 0)
+			{
+				close(h->rtcp_sock);
+				h->rtcp_sock = -1;
+				return 0;
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -190,6 +234,40 @@ static uint32_t inline rtp_get_ssrc(struct rtp_packet *p)
 {
 	uint32_t *u = (uint32_t*)p->buffer;
 	return ntohl(u[2]);
+}
+
+static void rtp_recv_rtcp(struct rtp_handle *h)
+{
+	unsigned char buffer[MAX_RTP_PACKET_SIZE];
+	struct sockaddr src_addr;
+	socklen_t sockaddr_size;
+	size_t size;
+
+	if(h == NULL)
+		return;
+
+	/* Fill buffer with 0 */
+	memset(buffer, 0, sizeof(buffer));
+
+	/* Get RTCP packet from socket */
+	sockaddr_size = sizeof(src_addr);
+	if((size = recvfrom(h->rtcp_sock, buffer, sizeof(buffer), 0, &src_addr, &sockaddr_size)) <= 0)
+	{
+		fprintf(stderr, "recvfrom() error!\n");
+		return;
+	}
+
+	/* Verify packet size */
+	if(size < 4)
+		return;
+
+	/* Verify protocol version (accept only version 2) */
+	if((buffer[0] >> 6) != 2)
+		return;
+
+	/* Process packet with external callback */
+	if(h->rtcp_cb)
+		h->rtcp_cb(h->rtcp_data, buffer, size);
 }
 
 static int rtp_recv(struct rtp_handle *h, struct rtp_packet *packet)
@@ -329,7 +407,6 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 			h->ssrc = rtp_get_ssrc(packet);
 
 		h->initialized = 1;
-//		printf("First packet is %d\n", seq);
 	}
 
 	/* Check SSRC */
@@ -540,7 +617,8 @@ drop:
 int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len)
 {
 	struct rtp_packet *packet;
-	struct pollfd pfd;
+	struct pollfd pfd[2];
+	int n_poll = 1;
 	int ret;
 
 	if(h == NULL)
@@ -551,14 +629,20 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len)
 		goto dequeue;
 
 	/* Prepare poll for receiver */
-	pfd.fd = h->sock;
-	pfd.events = POLLIN;
+	pfd[0].fd = h->sock;
+	pfd[0].events = POLLIN;
+	if(h->rtcp_sock > 0)
+	{
+		pfd[1].fd = h->rtcp_sock;
+		pfd[1].events = POLLIN;
+		n_poll++;
+	}
 
 	/* Receive next valid packet */
 	while(1)
 	{
 		/* Wait for next incoming packet */
-		ret = poll(&pfd, 1, h->timeout);
+		ret = poll(pfd, n_poll, h->timeout);
 		if(ret < 0)
 		{
 			/* A signal has been received */
@@ -578,8 +662,12 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len)
 			break;
 		}
 
+		/* New RTCP packet received */
+		if(n_poll > 1 && pfd[1].revents)
+			rtp_recv_rtcp(h);
+
 		/* New packet received */
-		if (pfd.revents)
+		if(pfd[0].revents)
 		{
 			/* Allocate a new packet */
 			packet = malloc(sizeof(struct rtp_packet));
@@ -602,9 +690,8 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len)
 			if(rtp_queue(h, packet) < 0)
 			{
 				/* The packet is not valid or is not next 
-				 * packet to dequeue and return
+				 * packet to dequeue
 				 */
-//				printf("Not valid queued packet %d\n", rtp_get_sequence(packet));
 				continue;
 			}
 
@@ -618,6 +705,35 @@ int rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t len)
 dequeue:
 	/* Get next packet in queue */
 	return rtp_dequeue(h, buffer, len);
+}
+
+int rtp_add_packet(struct rtp_handle *h, unsigned char *buffer, size_t len)
+{
+	struct rtp_packet *packet;
+
+	/* Allocate a new packet */
+	packet = malloc(sizeof(struct rtp_packet));
+	if(packet == NULL)
+		return -1;
+
+	/* Copy buffer to packet */
+	if(len > MAX_RTP_PACKET_SIZE)
+		packet->len = MAX_RTP_PACKET_SIZE;
+	else
+		packet->len = len;
+	memcpy(packet->buffer, buffer, packet->len);
+
+	/* Add the packet to queue */
+	return rtp_queue(h, packet);
+}
+
+size_t rtp_send_rtcp(struct rtp_handle *h, unsigned char *buffer, size_t len)
+{
+	if(h == NULL || h->rtcp_sock < 0)
+		return -1;
+
+	/* Send packet */
+	return sendto(h->rtcp_sock, buffer, len, 0, (struct sockaddr *) &h->rtcp_addr, sizeof(h->rtcp_addr));
 }
 
 void rtp_flush(struct rtp_handle *h, unsigned int seq)
