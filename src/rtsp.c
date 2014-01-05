@@ -1,5 +1,6 @@
 /*
  * rtsp.c - A Tiny RTSP Server
+ * Inspired by ffserver
  *
  * Copyright (c) 2013   A. Dilly
  *
@@ -286,7 +287,7 @@ static int rtsp_parse_request(struct rtsp_client *c)
 		name = p_end+1;
 	}
 
-	return 0;	
+	return 0;
 }
 
 static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
