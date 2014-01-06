@@ -435,7 +435,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			attr.timing_port = cdata->timing_port;
 			attr.aes_key = cdata->aes_key;
 			attr.aes_iv = cdata->aes_iv;
-			attr.codec = cdata->codec;
+			attr.codec = cdata->codec = RAOP_ALAC;
 			attr.format = cdata->format;
 			attr.ip = rtsp_get_ip(c);
 
