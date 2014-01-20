@@ -207,6 +207,15 @@ int decoder_alac_close(struct decoder *dec)
 	return 0;
 }
 
+struct decoder_handle decoder_alac = {
+	.dec = NULL,
+	.open = &decoder_alac_open,
+	.get_samplerate = &decoder_alac_get_samplerate,
+	.get_channels = &decoder_alac_get_channels,
+	.read = &decoder_alac_read,
+	.close = &decoder_alac_close,
+};
+
 static int decoder_alac_init(struct alac_decoder *alac, unsigned char *in_buffer)
 {
 	unsigned char *ptr = in_buffer;

@@ -21,13 +21,7 @@
 
 #include "decoder.h"
 
-struct decoder;
-
-int decoder_mp3_open(struct decoder **dec, void *input_callback, void *user_data);
-unsigned long decoder_mp3_get_samplerate(struct decoder *dec);
-unsigned char decoder_mp3_get_channels(struct decoder *dec);
-int decoder_mp3_read(struct decoder *dec, unsigned char *buffer, size_t size);
-int decoder_mp3_close(struct decoder *dec);
+struct decoder_handle decoder_mp3;
 
 #endif
 

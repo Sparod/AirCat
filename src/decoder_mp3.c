@@ -240,3 +240,12 @@ int decoder_mp3_close(struct decoder *dec)
 	return 0;
 }
 
+struct decoder_handle decoder_mp3 = {
+	.dec = NULL,
+	.open = &decoder_mp3_open,
+	.get_samplerate = &decoder_mp3_get_samplerate,
+	.get_channels = &decoder_mp3_get_channels,
+	.read = &decoder_mp3_read,
+	.close = &decoder_mp3_close,
+};
+

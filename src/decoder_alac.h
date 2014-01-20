@@ -21,13 +21,7 @@
 
 #include "decoder.h"
 
-struct decoder;
-
-int decoder_alac_open(struct decoder **dec, void *input_callback, void *user_data);
-unsigned long decoder_alac_get_samplerate(struct decoder *dec);
-unsigned char decoder_alac_get_channels(struct decoder *dec);
-int decoder_alac_read(struct decoder *dec, unsigned char *buffer, size_t size);
-int decoder_alac_close(struct decoder *dec);
+struct decoder_handle decoder_alac;
 
 #endif
 

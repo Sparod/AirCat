@@ -275,3 +275,12 @@ int decoder_aac_close(struct decoder *dec)
 	return 0;
 }
 
+struct decoder_handle decoder_aac = {
+	.dec = NULL,
+	.open = &decoder_aac_open,
+	.get_samplerate = &decoder_aac_get_samplerate,
+	.get_channels = &decoder_aac_get_channels,
+	.read = &decoder_aac_read,
+	.close = &decoder_aac_close,
+};
+

@@ -20,7 +20,14 @@
 #define _DECODER_H
 
 /* Generic handle */
-struct decoder_handle;
+struct decoder_handle {
+	struct decoder *dec;
+	int (*open)(struct decoder**, void*, void*);
+	unsigned long (*get_samplerate)(struct decoder*);
+	unsigned char (*get_channels)(struct decoder*);
+	int (*read)(struct decoder*, unsigned char*, size_t);
+	int (*close)(struct decoder*);
+};
 
 enum {
 	CODEC_NO,
