@@ -113,7 +113,7 @@ int config_save(const char *file)
 
 	/* Create a temporary file name */
 	tmp_file = malloc(strlen(file)+2);
-	sprintf(tmp_file, ".%s", file);
+	sprintf(tmp_file, "%s_", file);
 
 	/* Create temporary file */
 	fp = fopen(tmp_file, "w");
