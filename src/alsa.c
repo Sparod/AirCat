@@ -101,7 +101,10 @@ static void *alsa_thread(void *user_data)
 	{
 		input_size = h->input_callback(h->user_data, h->buffer, h->size) / h->nb_channel;
 		if(input_size == 0)
+		{
 			input_size = previous_size;
+			memset(h->buffer, 0, input_size*h->nb_channel*4);
+		}
 		previous_size = input_size;
 
 		/* Play pcm sample */ /* FIXME */
