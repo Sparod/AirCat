@@ -36,5 +36,7 @@ extern struct config config;
 
 int config_load(const char *file);
 int config_save(const char *file);
+void config_default(void);
 
 #endif
+

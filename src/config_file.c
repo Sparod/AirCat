@@ -159,3 +159,15 @@ int config_save(const char *file)
 
 	return 0;
 }
+
+void config_default(void)
+{
+	config.name = strdup("AirCat");
+	config.password = NULL;
+	config.port = 8080;
+	config.radio_enabled = 1;
+	config.raop_enabled = 1;
+	config.raop_name = NULL;
+	config.raop_password = NULL;
+}
+

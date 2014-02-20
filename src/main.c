@@ -43,17 +43,6 @@ static char *config_file = NULL;	/* Alternative configuration file */
 static int verbose = 0;			/* Verbosity */
 static int stop_signal = 0;		/* Stop signal */
 
-static void set_default_config(void)
-{
-	config.name = strdup("AirCat");
-	config.password = NULL;
-	config.port = 8080;
-	config.radio_enabled = 1;
-	config.raop_enabled = 1;
-	config.raop_name = NULL;
-	config.raop_password = NULL;
-}
-
 static void print_usage(const char *name)
 {
 	printf("Usage: %s [OPTIONS]\n"
@@ -109,7 +98,7 @@ static void parse_opt(int argc, char * const argv[])
 				break;
 			case 'c':
 				/* Config file */
-				config_file = optarg;
+				config_file = strdup(optarg);
 				break;
 			case 'v':
 				/* Verbose */
@@ -145,16 +134,15 @@ int main(int argc, char* argv[])
 	fd_set fds;
 
 	/* Default AirCat configuration: overwritten by config_load() */
-	set_default_config();
+	config_default();
 
 	/* Parse options */
 	parse_opt(argc, argv);
 
 	/* Load configuration file */
-	if(config_file != NULL)
-		config_load(config_file);
-	else
-		config_load(CONFIG_PATH "/aircat.conf");
+	if(config_file == NULL)
+		config_file = strdup(CONFIG_PATH "/aircat.conf");
+	config_load(config_file);
 
 	/* Setup signal handler */
 	signal(SIGINT, signal_handler);
@@ -208,6 +196,9 @@ int main(int argc, char* argv[])
 
 	/* Close Avahi Client */
 	avahi_close(avahi);
+
+	if(config_file != NULL)
+		free(config_file);
 
 	return EXIT_SUCCESS;
 }
