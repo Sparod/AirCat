@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <signal.h>
 
 #include "config_file.h"
 #include "httpd.h"
@@ -38,8 +39,9 @@
 	#define VERSION "1.0.0"
 #endif
 
-static char *config_file = NULL;		/* Alternative configuration file */
-static int verbose = 0;				/* Verbosity */
+static char *config_file = NULL;	/* Alternative configuration file */
+static int verbose = 0;			/* Verbosity */
+static int stop_signal = 0;		/* Stop signal */
 
 static void set_default_config(void)
 {
@@ -125,11 +127,22 @@ static void parse_opt(int argc, char * const argv[])
 	}
 }
 
+void signal_handler(int signum)
+{
+	if(signum == SIGINT || signum == SIGTERM)
+	{
+		printf("Received Stop signal...\n");
+		stop_signal = 1;
+	}
+}
+
 int main(int argc, char* argv[])
 {
 	struct avahi_handle *avahi;
 	struct airtunes_handle *airtunes;
 	struct httpd_handle *httpd;
+	struct timeval timeout;
+	fd_set fds;
 
 	/* Default AirCat configuration: overwritten by config_load() */
 	set_default_config();
@@ -142,6 +155,10 @@ int main(int argc, char* argv[])
 		config_load(config_file);
 	else
 		config_load(CONFIG_PATH "/aircat.conf");
+
+	/* Setup signal handler */
+	signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
 
 	/* Open Avahi Client */
 	avahi_open(&avahi);
@@ -160,7 +177,22 @@ int main(int argc, char* argv[])
 	httpd_start(httpd);
 
 	/* Wait an input on stdin (only for test purpose) */
-	(void) getc(stdin);
+	while(!stop_signal)
+	{
+		FD_ZERO(&fds);
+		FD_SET(0, &fds); 
+		timeout.tv_sec = 1;
+		timeout.tv_usec = 0;
+
+		if(select(1, &fds, NULL, NULL, &timeout) < 0)
+			break;
+
+		if(FD_ISSET(0, &fds))
+			break;
+
+		/* Iterate Avahi client */
+		avahi_loop(avahi, 10);
+	}
 
 	/* Stop HTTP Server */
 	httpd_stop(httpd);
