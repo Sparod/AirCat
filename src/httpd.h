@@ -21,9 +21,20 @@
 
 #include "airtunes.h"
 
+struct httpd_attr{
+	/* Audio output module */
+	//struct output_handle *output;
+	/* Radio module */
+	//struct radio_handle *radio;
+	/* Airtunes module */
+	struct airtunes_handle *airtunes;
+	/* Config file */
+	char *config_filename;
+};
+
 struct httpd_handle;
 
-int httpd_open(struct httpd_handle **handle, char *name, struct airtunes_handle *airtunes);
+int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);

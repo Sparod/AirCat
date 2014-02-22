@@ -160,8 +160,22 @@ int config_save(const char *file)
 	return 0;
 }
 
+void config_free(void)
+{
+	if(config.name != NULL)
+		free(config.name);
+	if(config.password != NULL)
+		free(config.password);
+	if(config.raop_name != NULL)
+		free(config.raop_name);
+	if(config.raop_password != NULL)
+		free(config.raop_password);
+}
+
 void config_default(void)
 {
+	config_free();
+
 	config.name = strdup("AirCat");
 	config.password = NULL;
 	config.port = 8080;
@@ -170,4 +184,3 @@ void config_default(void)
 	config.raop_name = NULL;
 	config.raop_password = NULL;
 }
-

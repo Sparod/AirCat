@@ -20,9 +20,9 @@ aircat_SOURCES = main.c \
 		 resample.c \
 		 alsa.c
 
-aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) $(libmicrohttpd_LIBS) -lpthread
+aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) $(libmicrohttpd_LIBS) $(libjsonc_LIBS) -lpthread
 
-AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) $(libmicrohttpd_CFLAGS) -Wall
+AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) $(libmicrohttpd_CFLAGS) $(libjsonc_CFLAGS) -Wall
 
 EXTRA_DIST = http.h \
 	     config_file.h \

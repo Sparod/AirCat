@@ -42,6 +42,9 @@ PKG_CHECK_MODULES(libavahi, avahi-client >= 0.6.31)
 # Check for libmicrohttpd for HTTP server
 PKG_CHECK_MODULES(libmicrohttpd, libmicrohttpd >= 0.9.0)
 
+# Check for libjson-c for JSON parsing
+PKG_CHECK_MODULES(libjsonc, json-c >= 0.11.0)
+
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
 		 src/Makefile])

@@ -129,6 +129,7 @@ int main(int argc, char* argv[])
 {
 	struct avahi_handle *avahi;
 	struct airtunes_handle *airtunes;
+	struct httpd_attr httpd_attr;
 	struct httpd_handle *httpd;
 	struct timeval timeout;
 	fd_set fds;
@@ -158,8 +159,12 @@ int main(int argc, char* argv[])
 	if(config.raop_enabled)
 		airtunes_start(airtunes);
 
+	/* Prepare attributes for HTTP Server */
+	httpd_attr.config_filename = config_file;
+	httpd_attr.airtunes = airtunes;
+
 	/* Open HTTP Server */
-	httpd_open(&httpd, NULL, airtunes);
+	httpd_open(&httpd, &httpd_attr);
 
 	/* Start HTTP Server */
 	httpd_start(httpd);
@@ -197,8 +202,10 @@ int main(int argc, char* argv[])
 	/* Close Avahi Client */
 	avahi_close(avahi);
 
+	/* Free config */
 	if(config_file != NULL)
 		free(config_file);
+	config_free();
 
 	return EXIT_SUCCESS;
 }
