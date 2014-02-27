@@ -19,6 +19,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include <microhttpd.h>
 #include <json.h>
@@ -216,6 +218,164 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
 	return ret;
 }
 
+struct dir_data {
+	DIR *dir;
+	char *url;
+};
+
+static ssize_t httpd_dir_list_cb(void *user_data, uint64_t pos, char *buffer, 
+				  size_t size)
+{
+	struct dir_data *d = (struct dir_data*) user_data;
+	struct dirent *entry;
+
+	if(d == NULL)
+		return 0;
+
+	/* Get next file in directory without . as first character */
+	do
+	{
+		entry = readdir(d->dir);
+		if(entry == NULL)
+			return MHD_CONTENT_READER_END_OF_STREAM;
+	}
+	while(entry->d_name[0] == '.');
+
+	return snprintf(buffer, size, "<a href=\"%s/%s\">%s</a><br/>",
+			d->url, entry->d_name, entry->d_name);
+}
+
+static void httpd_dir_free_cb(void *user_data)
+{
+	struct dir_data *d = (struct dir_data*) user_data;
+
+	if(d != NULL)
+	{
+		/* Close directory handler */
+		if(d->dir != NULL)
+			closedir(d->dir);
+		/* Free url string */
+		if(d->url != NULL)
+			free(d->url);
+		/* Free dir structure */
+		free(d);
+	}
+}
+
+static ssize_t httpd_file_read_cb(void *user_data, uint64_t pos, char *buffer, 
+				  size_t size)
+{
+	FILE *fp = (FILE*) user_data;
+
+	if(fp == NULL)
+		return 0;
+
+	/* Seek in file */
+	fseek(fp, pos, SEEK_SET);
+
+	/* Read from file */
+	return fread (buffer, 1, size, fp);
+}
+
+static void httpd_file_free_cb(void *user_data)
+{
+	FILE *fp = (FILE*) user_data;
+
+	/* Close file */
+	if(fp != NULL)
+		fclose(fp);
+}
+
+static int httpd_file_response(struct MHD_Connection *c, const char *url)
+{
+	struct MHD_Response *response;
+	struct dir_data *d_data;
+	struct stat s;
+	char *path;
+	FILE *fp;
+	int ret;
+
+	/* Verify web path */
+	if(config.web_path == NULL)
+		return httpd_response(c, 500, "Web path not configured!");
+
+	/* Create file path */
+	path = malloc(strlen(config.web_path) + strlen(url) + 12);
+	if(path == NULL)
+		return httpd_response(c, 500, "Internal Error");
+	sprintf(path, "%s%s", config.web_path, url);
+
+	/* Get file properties */
+	if(stat(path, &s) != 0)
+	{
+		free(path);
+		return httpd_response(c, 404, "File not found");
+	}
+	/* Check if it is a directory */
+	if(S_ISDIR(s.st_mode))
+	{
+		/* Check if file index.html is in directory */
+		strcat(path, "/index.html");
+		if(stat(path, &s) != 0)
+		{
+			/* Prepare directory structure */
+			d_data = malloc(sizeof(struct dir_data));
+			if(d_data == NULL)
+				return httpd_response(c, 500, "Internal Error");
+
+			/* List files in directory */
+			path[strlen(path)-11] = 0;
+			d_data->dir = opendir(path);
+			free(path);
+			if(d_data->dir == NULL)
+			{
+				free(d_data);
+				return httpd_response(c, 404, "No directory");
+			}
+
+			/* Copy URL */
+			ret = strlen(url);
+			if(url[ret-1] == '/')
+				ret--;
+			d_data->url = strndup(url, ret);
+
+			/* Create HTTP response with file list */
+			response = MHD_create_response_from_callback(
+							MHD_SIZE_UNKNOWN, 8192,
+							&httpd_dir_list_cb,
+							d_data,
+							&httpd_dir_free_cb);
+
+			/* Queue it */
+			ret = MHD_queue_response(c, 200, response);
+
+			/* Destroy local response */
+			MHD_destroy_response(response);
+
+			return ret;
+		}
+	}
+
+	/* Open File */
+	fp = fopen(path, "rb");
+	free(path);
+	if(fp == NULL)
+		return httpd_response(c, 404, "File not found");
+
+	/* Create HTTP response with file content */
+	response = MHD_create_response_from_callback(s.st_size, 8192,
+						     &httpd_file_read_cb, fp,
+						     &httpd_file_free_cb);
+
+	/* Queue it */
+	ret = MHD_queue_response(c, 200, response);
+
+	/* Destroy local response */
+	MHD_destroy_response(response);
+
+	return ret;
+}
+
 /*
  * /!\ This function frees the json string!
  */
@@ -231,6 +391,8 @@ static int httpd_json_response(struct MHD_Connection *c, int code, char *json,
 	/* Add header to specify JSON is type content */
 	MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE,
 				"application/json");
+	/* Add header to allow cross domain AJAX request */
+	MHD_add_response_header(response, "Access-Control-Allow-Origin", "*");
 
 	/* Queue it */
 	ret = MHD_queue_response(c, code, response);
@@ -583,6 +745,10 @@ static int httpd_raop_restart(struct request_attr *attr)
 	return httpd_json_msg(attr->connection, 200, "");
 }
 
+/******************************************************************************
+ *                          Main HTTP request parser                          *
+ ******************************************************************************/
+
 struct url_table url_table[] = {
 	{"/config/reload", 1, HTTP_PUT, &httpd_config_reload},
 	{"/config/save", 1, HTTP_PUT, &httpd_config_save},
@@ -676,7 +842,7 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 		return httpd_response(c, 406, "Method not acceptable!");
 
 	/* Response with the requested file */
-	return httpd_response(c, 200, "OK");
+	return httpd_file_response(c, url);
 }
 
 static void httpd_completed(void *user_data, struct MHD_Connection *c,

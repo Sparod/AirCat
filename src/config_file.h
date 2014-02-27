@@ -24,6 +24,7 @@ struct config {
 	char *name;
 	char *password;
 	long port;
+	char *web_path;
 	/* Radio configuration */
 	int radio_enabled;
 	/* RAOP configuration */

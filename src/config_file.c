@@ -37,6 +37,7 @@ struct config_field {
 	{"name", string, &config.name, "# Name of AirCat device (AirCat by default).\n"},
 	{"password", string, &config.password, "# Password for remote access (none by default).\n"},
 	{"port", number, &config.port, "# Listen port for remote access.\n"},
+	{"web_path", string, &config.web_path, "# Path where Web pages are stored.\n"},
 	{"radio.enabled", boolean, &config.radio_enabled, "# Enable radio module.\n"},
 	{"raop.enabled", boolean, &config.raop_enabled, "# Enable RAOP module.\n"},
 	{"raop.name", string, &config.raop_name, "# Name of RAOP device (same as general name by default).\n"},
@@ -166,6 +167,8 @@ void config_free(void)
 		free(config.name);
 	if(config.password != NULL)
 		free(config.password);
+	if(config.web_path != NULL)
+		free(config.web_path);
 	if(config.raop_name != NULL)
 		free(config.raop_name);
 	if(config.raop_password != NULL)
@@ -179,6 +182,7 @@ void config_default(void)
 	config.name = strdup("AirCat");
 	config.password = NULL;
 	config.port = 8080;
+	config.web_path = strdup("/var/aircat/www/");
 	config.radio_enabled = 1;
 	config.raop_enabled = 1;
 	config.raop_name = NULL;
