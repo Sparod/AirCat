@@ -44,6 +44,22 @@ enum {
 	HTTP_DELETE = 8
 };
 
+struct mime_type {
+	const char *ext;
+	const char *mime;
+} mime_type[] = {
+	{"html", "text/html"},
+	{"htm",  "text/html"},
+	{"gif",  "image/gif"},
+	{"jpg",  "image/jpeg"},
+	{"jpeg", "image/jpeg"},
+	{"png",  "image/png"},
+	{"svg",  "image/svg+xm"},
+	{"ico",  "image/vnd.microsoft.icon"},
+	{"bmp",  "image/x-ms-bmp"},
+	{0, 0}
+};
+
 struct request_data {
 	void *data;
 	void (*free)(void *);
@@ -292,8 +308,10 @@ static int httpd_file_response(struct MHD_Connection *c, const char *url)
 	struct dir_data *d_data;
 	struct stat s;
 	char *path;
+	char *ext;
 	FILE *fp;
 	int ret;
+	int i;
 
 	/* Verify web path */
 	if(config.web_path == NULL)
@@ -358,14 +376,34 @@ static int httpd_file_response(struct MHD_Connection *c, const char *url)
 
 	/* Open File */
 	fp = fopen(path, "rb");
-	free(path);
 	if(fp == NULL)
+	{
+		free(path);
 		return httpd_response(c, 404, "File not found");
+	}
 
 	/* Create HTTP response with file content */
 	response = MHD_create_response_from_callback(s.st_size, 8192,
 						     &httpd_file_read_cb, fp,
 						     &httpd_file_free_cb);
+
+	/* Get mime type */
+	ext = strrchr(path, '.');
+	if(ext != NULL && strlen(ext+1) <= 4)
+	{
+		for(i = 0; mime_type[i].ext != NULL; i++)
+		{
+		
+			if(strcmp(mime_type[i].ext, ext+1) == 0)
+			{
+				MHD_add_response_header(response,
+						   MHD_HTTP_HEADER_CONTENT_TYPE,
+						   mime_type[i].mime);
+				break;
+			}
+		}
+	}
+	free(path);
 
 	/* Queue it */
 	ret = MHD_queue_response(c, 200, response);
