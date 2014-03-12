@@ -3,6 +3,7 @@ bin_PROGRAMS = aircat
 aircat_SOURCES = main.c \
 		 config_file.c \
 		 httpd.c \
+		 radio.c \
 		 airtunes.c \
 		 avahi.c \
 		 http.c \
@@ -27,6 +28,7 @@ AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_
 EXTRA_DIST = http.h \
 	     config_file.h \
 	     httpd.h \
+	     radio.h \
 	     airtunes.h \
 	     avahi.h \
 	     file.h \

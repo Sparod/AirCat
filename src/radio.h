@@ -1,7 +1,7 @@
 /*
- * config_file.h - Configuration file reader/writer
+ * radio.h - A Radio module
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,30 +16,15 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _CONFIG_FILE_H
-#define _CONFIG_FILE_H
+#ifndef _RADIO_H
+#define _RADIO_H
 
-struct config {
-	/* General configuration */
-	char *name;
-	char *password;
-	long port;
-	char *web_path;
-	/* Radio configuration */
-	int radio_enabled;
-	char *radio_list_file;
-	/* RAOP configuration */
-	int raop_enabled;
-	char *raop_name;
-	char *raop_password;
-} config;
+struct radio_handle;
 
-extern struct config config;
-
-int config_load(const char *file);
-int config_save(const char *file);
-void config_default(void);
-void config_free(void);
+int radio_open(struct radio_handle **handle);
+int radio_load_list(struct radio_handle *h, const char *json_str);
+int radio_load_list_from_file(struct radio_handle *h, const char *filename);
+int radio_close(struct radio_handle *h);
 
 #endif
 

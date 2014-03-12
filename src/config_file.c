@@ -39,6 +39,7 @@ struct config_field {
 	{"port", number, &config.port, "# Listen port for remote access.\n"},
 	{"web_path", string, &config.web_path, "# Path where Web pages are stored.\n"},
 	{"radio.enabled", boolean, &config.radio_enabled, "# Enable radio module.\n"},
+	{"radio.list_file", string, &config.radio_list_file, "# File where Radio list is stored.\n"},
 	{"raop.enabled", boolean, &config.raop_enabled, "# Enable RAOP module.\n"},
 	{"raop.name", string, &config.raop_name, "# Name of RAOP device (same as general name by default).\n"},
 	{"raop.password", string, &config.raop_password, "# Password for using RAOP module.\n"},
@@ -169,6 +170,8 @@ void config_free(void)
 		free(config.password);
 	if(config.web_path != NULL)
 		free(config.web_path);
+	if(config.radio_list_file != NULL)
+		free(config.radio_list_file);
 	if(config.raop_name != NULL)
 		free(config.raop_name);
 	if(config.raop_password != NULL)
@@ -184,6 +187,7 @@ void config_default(void)
 	config.port = 8080;
 	config.web_path = strdup("/var/aircat/www/");
 	config.radio_enabled = 1;
+	config.radio_list_file = strdup("/var/aircat/radio_list.json");
 	config.raop_enabled = 1;
 	config.raop_name = NULL;
 	config.raop_password = NULL;

@@ -24,6 +24,7 @@
 
 #include "config_file.h"
 #include "httpd.h"
+#include "radio.h"
 #include "airtunes.h"
 #include "avahi.h"
 
@@ -128,6 +129,7 @@ void signal_handler(int signum)
 int main(int argc, char* argv[])
 {
 	struct avahi_handle *avahi;
+	struct radio_handle *radio;
 	struct airtunes_handle *airtunes;
 	struct httpd_attr httpd_attr;
 	struct httpd_handle *httpd;
@@ -151,6 +153,9 @@ int main(int argc, char* argv[])
 
 	/* Open Avahi Client */
 	avahi_open(&avahi);
+
+	/* Open Radio Module */
+	radio_open(&radio);
 
 	/* Open Airtunes Server */
 	airtunes_open(&airtunes, avahi);
@@ -198,6 +203,9 @@ int main(int argc, char* argv[])
 
 	/* Close Airtunes Server */
 	airtunes_close(airtunes);
+
+	/* Close Radio Module */
+	radio_close(radio);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);
