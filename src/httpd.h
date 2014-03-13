@@ -25,7 +25,7 @@ struct httpd_attr{
 	/* Audio output module */
 	//struct output_handle *output;
 	/* Radio module */
-	//struct radio_handle *radio;
+	struct radio_handle *radio;
 	/* Airtunes module */
 	struct airtunes_handle *airtunes;
 	/* Config file */

@@ -166,6 +166,7 @@ int main(int argc, char* argv[])
 
 	/* Prepare attributes for HTTP Server */
 	httpd_attr.config_filename = config_file;
+	httpd_attr.radio = radio;
 	httpd_attr.airtunes = airtunes;
 
 	/* Open HTTP Server */

@@ -27,6 +27,7 @@
 #include <json_tokener.h>
 
 #include "config_file.h"
+#include "radio.h"
 #include "airtunes.h"
 
 #ifdef HAVE_CONFIG_H
@@ -87,6 +88,8 @@ struct httpd_handle {
 	struct MHD_Daemon *httpd;
 	char *realm;
 	char *opaque;
+	/* Radio module */
+	struct radio_handle *radio;
 	/* Airtunes module */
 	struct airtunes_handle *airtunes;
 	/* Config file */
@@ -117,6 +120,7 @@ int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr)
 		h->realm = strdup("AirCat");
 	h->opaque = strdup(OPAQUE);
 	h->config_file = strdup(attr->config_filename);
+	h->radio = attr->radio;
 	h->airtunes = attr->airtunes;
 	h->httpd = NULL;
 
@@ -455,7 +459,7 @@ static int httpd_json_msg(struct MHD_Connection *c, int code, const char *msg)
 	if(len == 14)
 		len = 0;
 
-	return httpd_json_response(c, code, json, len);
+	return httpd_json_response(c, code, json, len-1);
 }
 
 /******************************************************************************
@@ -681,7 +685,7 @@ static void httpd_put_config(struct config_tab *tab, struct json_object *root,
 				{
 					if(*c_str != NULL)
 						free(*c_str);
-					if(str != NULL)
+					if(str != NULL && str[0] != 0)
 						*c_str = strdup(str);
 					else
 						*c_str = NULL;
@@ -764,6 +768,42 @@ static int httpd_config(struct request_attr *attr)
 }
 
 /******************************************************************************
+ *                               Radio Part                                   *
+ ******************************************************************************/
+
+static int httpd_radio_info(struct request_attr *attr)
+{
+	char *id = NULL;
+	char *info;
+
+	/* Get radio name */
+	if(attr->url != NULL)
+		id = strstr(attr->url, "info/");
+	if(id == NULL || id[5] == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
+	id += 5;
+
+	/* Get info about radio */
+	info = radio_get_json_info(attr->handle->radio, id);
+	if(info == NULL)
+		return httpd_json_msg(attr->connection, 404, "Radio not found");
+
+	return httpd_json_response(attr->connection, 200, info, strlen(info));
+}
+
+static int httpd_radio_list(struct request_attr *attr)
+{
+	char *list = NULL;
+
+	/* Get Radio list */
+	list = radio_get_json_list(attr->handle->radio);
+	if(list == NULL)
+		return httpd_json_msg(attr->connection, 500, "No radio list");
+
+	return httpd_json_response(attr->connection, 200, list, strlen(list));
+}
+
+/******************************************************************************
  *                             Airtunes Part                                  *
  ******************************************************************************/
 
@@ -793,6 +833,8 @@ struct url_table url_table[] = {
 	{"/config/default", 1, HTTP_PUT, &httpd_config_default},
 	{"/config/", 0, HTTP_PUT, &httpd_config},
 	{"/config", 1, HTTP_GET | HTTP_PUT, &httpd_config},
+	{"/radio/info/", 0, HTTP_GET, &httpd_radio_info},
+	{"/radio/list", 1, HTTP_GET, &httpd_radio_list},
 	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},
