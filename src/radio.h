@@ -22,10 +22,9 @@
 struct radio_handle;
 
 int radio_open(struct radio_handle **handle);
-int radio_load_list(struct radio_handle *h, const char *json_str);
-int radio_load_list_from_file(struct radio_handle *h, const char *filename);
-char *radio_get_json_info(struct radio_handle *h, const char *id);
-char *radio_get_json_list(struct radio_handle *h);
+char *radio_get_json_category_info(struct radio_handle *h, const char *id);
+char *radio_get_json_radio_info(struct radio_handle *h, const char *id);
+char *radio_get_json_list(struct radio_handle *h, const char *id);
 int radio_close(struct radio_handle *h);
 
 #endif

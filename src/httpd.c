@@ -771,6 +771,26 @@ static int httpd_config(struct request_attr *attr)
  *                               Radio Part                                   *
  ******************************************************************************/
 
+static int httpd_radio_cat_info(struct request_attr *attr)
+{
+	char *id = NULL;
+	char *info;
+
+	/* Get category name */
+	if(attr->url != NULL)
+		id = strstr(attr->url, "info/");
+	if(id == NULL || id[5] == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
+	id += 5;
+
+	/* Get info about category */
+	info = radio_get_json_category_info(attr->handle->radio, id);
+	if(info == NULL)
+		return httpd_json_msg(attr->connection, 404, "Radio not found");
+
+	return httpd_json_response(attr->connection, 200, info, strlen(info));
+}
+ 
 static int httpd_radio_info(struct request_attr *attr)
 {
 	char *id = NULL;
@@ -784,7 +804,7 @@ static int httpd_radio_info(struct request_attr *attr)
 	id += 5;
 
 	/* Get info about radio */
-	info = radio_get_json_info(attr->handle->radio, id);
+	info = radio_get_json_radio_info(attr->handle->radio, id);
 	if(info == NULL)
 		return httpd_json_msg(attr->connection, 404, "Radio not found");
 
@@ -794,9 +814,21 @@ static int httpd_radio_info(struct request_attr *attr)
 static int httpd_radio_list(struct request_attr *attr)
 {
 	char *list = NULL;
+	char *id = NULL;
+
+	/* Get radio / category path*/
+	if(attr->url != NULL)
+	{
+		id = strstr(attr->url, "list/");
+		if(id != NULL)
+			id+=5;
+	}
+
+	if(id != NULL && *id == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
 
 	/* Get Radio list */
-	list = radio_get_json_list(attr->handle->radio);
+	list = radio_get_json_list(attr->handle->radio, id);
 	if(list == NULL)
 		return httpd_json_msg(attr->connection, 500, "No radio list");
 
@@ -833,8 +865,9 @@ struct url_table url_table[] = {
 	{"/config/default", 1, HTTP_PUT, &httpd_config_default},
 	{"/config/", 0, HTTP_PUT, &httpd_config},
 	{"/config", 1, HTTP_GET | HTTP_PUT, &httpd_config},
+	{"/radio/category/info/", 0, HTTP_GET, &httpd_radio_cat_info},
 	{"/radio/info/", 0, HTTP_GET, &httpd_radio_info},
-	{"/radio/list", 1, HTTP_GET, &httpd_radio_list},
+	{"/radio/list", 0, HTTP_GET, &httpd_radio_list},
 	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},

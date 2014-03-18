@@ -4,6 +4,7 @@ aircat_SOURCES = main.c \
 		 config_file.c \
 		 httpd.c \
 		 radio.c \
+		 radio_list.c \
 		 airtunes.c \
 		 avahi.c \
 		 http.c \
@@ -29,6 +30,7 @@ EXTRA_DIST = http.h \
 	     config_file.h \
 	     httpd.h \
 	     radio.h \
+	     radio_list.h \
 	     airtunes.h \
 	     avahi.h \
 	     file.h \
