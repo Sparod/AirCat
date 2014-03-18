@@ -457,7 +457,7 @@ static int httpd_json_msg(struct MHD_Connection *c, int code, const char *msg)
 	sprintf(json, "{ \"msg\": \"%s\" }", msg);
 
 	if(len == 14)
-		len = 0;
+		len = 1;
 
 	return httpd_json_response(c, code, json, len-1);
 }
