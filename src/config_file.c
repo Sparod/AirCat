@@ -176,6 +176,8 @@ void config_free(void)
 		free(config.raop_name);
 	if(config.raop_password != NULL)
 		free(config.raop_password);
+	if(config.files_path != NULL)
+		free(config.files_path);
 }
 
 void config_default(void)
@@ -191,4 +193,6 @@ void config_default(void)
 	config.raop_enabled = 1;
 	config.raop_name = NULL;
 	config.raop_password = NULL;
+	config.files_enabled = 1;
+	config.files_path = strdup("/var/aircat/files/");
 }

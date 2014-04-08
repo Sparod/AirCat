@@ -25,6 +25,7 @@
 #include "config_file.h"
 #include "httpd.h"
 #include "radio.h"
+#include "files.h"
 #include "airtunes.h"
 #include "avahi.h"
 
@@ -131,6 +132,7 @@ int main(int argc, char* argv[])
 	struct avahi_handle *avahi;
 	struct radio_handle *radio;
 	struct airtunes_handle *airtunes;
+	struct files_handle *files;
 	struct httpd_attr httpd_attr;
 	struct httpd_handle *httpd;
 	struct timeval timeout;
@@ -154,6 +156,9 @@ int main(int argc, char* argv[])
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
+	/* Open Files Module */
+	files_open(&files);
+
 	/* Open Radio Module */
 	radio_open(&radio);
 
@@ -168,6 +173,7 @@ int main(int argc, char* argv[])
 	httpd_attr.config_filename = config_file;
 	httpd_attr.radio = radio;
 	httpd_attr.airtunes = airtunes;
+	httpd_attr.files = files;
 
 	/* Open HTTP Server */
 	httpd_open(&httpd, &httpd_attr);
@@ -207,6 +213,9 @@ int main(int argc, char* argv[])
 
 	/* Close Radio Module */
 	radio_close(radio);
+
+	/* Close Files Module */
+	files_close(files);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);

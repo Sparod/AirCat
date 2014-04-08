@@ -8,6 +8,7 @@ aircat_SOURCES = main.c \
 		 airtunes.c \
 		 avahi.c \
 		 http.c \
+		 files.c \
 		 file.c \
 		 shoutcast.c \
 		 rtsp.c \
@@ -33,6 +34,7 @@ EXTRA_DIST = http.h \
 	     radio_list.h \
 	     airtunes.h \
 	     avahi.h \
+	     files.h \
 	     file.h \
 	     shoutcast.h \
 	     rtsp.h \

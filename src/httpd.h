@@ -28,6 +28,8 @@ struct httpd_attr{
 	struct radio_handle *radio;
 	/* Airtunes module */
 	struct airtunes_handle *airtunes;
+	/* Files module */
+	struct files_handle *files;
 	/* Config file */
 	char *config_filename;
 };

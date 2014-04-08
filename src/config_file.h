@@ -32,6 +32,9 @@ struct config {
 	int raop_enabled;
 	char *raop_name;
 	char *raop_password;
+	/* Files module */
+	int files_enabled;
+	char *files_path;
 } config;
 
 extern struct config config;

@@ -29,6 +29,7 @@
 #include "config_file.h"
 #include "radio.h"
 #include "airtunes.h"
+#include "files.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -92,6 +93,8 @@ struct httpd_handle {
 	struct radio_handle *radio;
 	/* Airtunes module */
 	struct airtunes_handle *airtunes;
+	/* Files module */
+	struct files_handle *files;
 	/* Config file */
 	char *config_file;
 };
@@ -122,6 +125,7 @@ int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr)
 	h->config_file = strdup(attr->config_filename);
 	h->radio = attr->radio;
 	h->airtunes = attr->airtunes;
+	h->files = attr->files;
 	h->httpd = NULL;
 
 	return 0;
@@ -790,7 +794,7 @@ static int httpd_radio_cat_info(struct request_attr *attr)
 
 	return httpd_json_response(attr->connection, 200, info, strlen(info));
 }
- 
+
 static int httpd_radio_info(struct request_attr *attr)
 {
 	char *id = NULL;
@@ -856,6 +860,63 @@ static int httpd_raop_restart(struct request_attr *attr)
 }
 
 /******************************************************************************
+ *                               Files Part                                   *
+ ******************************************************************************/
+
+static int httpd_files_play(struct request_attr *attr)
+{
+	char *filename = NULL;
+
+	/* Get list file in path*/
+	if(attr->url != NULL)
+	{
+		filename = strstr(attr->url, "play/");
+		if(filename != NULL)
+			filename += 5;
+	}
+
+	if(filename != NULL && *filename == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
+
+	if(files_play(attr->handle->files, filename) != 0)
+		return httpd_json_msg(attr->connection, 406,
+						       "File is not supported");
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_stop(struct request_attr *attr)
+{
+	files_stop(attr->handle->files);
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_list(struct request_attr *attr)
+{
+	char *list = NULL;
+	char *path = NULL;
+
+	/* Get list file in path*/
+	if(attr->url != NULL)
+	{
+		path = strstr(attr->url, "list/");
+		if(path != NULL)
+			path += 5;
+	}
+
+	if(path != NULL && *path == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
+
+	/* Get file list */
+	list = files_get_json_list(attr->handle->files, path);
+	if(list == NULL)
+		return httpd_json_msg(attr->connection, 404, "Bad directory");
+
+	return httpd_json_response(attr->connection, 200, list, strlen(list));
+}
+
+/******************************************************************************
  *                          Main HTTP request parser                          *
  ******************************************************************************/
 
@@ -871,6 +932,9 @@ struct url_table url_table[] = {
 	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},
+	{"/files/play/", 0, HTTP_PUT, &httpd_files_play},
+	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
+	{"/files/list", 0, HTTP_GET, &httpd_files_list},
 	{0, 0, 0}
 };
 
