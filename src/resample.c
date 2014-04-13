@@ -202,26 +202,32 @@ int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
 	{
 		size_t i, len;
 #ifdef USE_FLOAT
-		float *p_out = (float*) h->buffer_out;
+		float *p_in = (float*) h->buffer_out;
+		float *p_out = (float*) buffer;
 #else
-		int32_t *p_out = (int32_t*) h->buffer_out;
+		int32_t *p_in = (int32_t*) h->buffer_out;
+		int32_t *p_out = (int32_t*) buffer;
 #endif
 		int j;
 
-		len = soxr_output(h->soxr, h->buffer_out, h->size_out / h->in_nb_channel);
+		size = size * h->in_nb_channel / h->out_nb_channel;
+		if(h->size_out < size)
+			size = h->size_out;
 
-		for(i = len; i--; p_out += h->in_nb_channel)
+		len = soxr_output(h->soxr, h->buffer_out, size / h->in_nb_channel);
+
+		for(i = len; i--; p_in += h->in_nb_channel)
 		{
 			for(j = 0; j < h->out_nb_channel; j++)
 			{
-				*(buffer++) = p_out[h->out_specs[j].in_specs[0].channel_num];
+				*(p_out++) = p_in[h->out_specs[j].in_specs[0].channel_num];
 			}
 		}
 
 		return len * h->out_nb_channel;
 	}
 	else
-		return soxr_output(h->soxr, buffer, size/h->out_nb_channel)*h->out_nb_channel;	
+		return soxr_output(h->soxr, buffer, size/h->out_nb_channel)*h->out_nb_channel;
 }
 
 int resample_close(struct resample_handle *h)
