@@ -28,6 +28,7 @@
 #include "files.h"
 #include "airtunes.h"
 #include "avahi.h"
+#include "output.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -135,6 +136,7 @@ int main(int argc, char* argv[])
 	struct files_handle *files;
 	struct httpd_attr httpd_attr;
 	struct httpd_handle *httpd;
+	struct output_handle *output;
 	struct timeval timeout;
 	fd_set fds;
 
@@ -156,14 +158,17 @@ int main(int argc, char* argv[])
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
+	/* Open Output Module */
+	output_open(&output, OUTPUT_ALSA, 44100, 2);
+
 	/* Open Files Module */
-	files_open(&files);
+	files_open(&files, output);
 
 	/* Open Radio Module */
-	radio_open(&radio);
+	radio_open(&radio, output);
 
 	/* Open Airtunes Server */
-	airtunes_open(&airtunes, avahi);
+	airtunes_open(&airtunes, avahi, output);
 
 	/* Start Airtunes Server */
 	if(config.raop_enabled)
@@ -216,6 +221,9 @@ int main(int argc, char* argv[])
 
 	/* Close Files Module */
 	files_close(files);
+
+	/* Close Output Module */
+	output_close(output);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);

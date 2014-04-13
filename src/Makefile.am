@@ -21,7 +21,8 @@ aircat_SOURCES = main.c \
 		 decoder_mp3.c \
 		 decoder_alac.c \
 		 resample.c \
-		 alsa.c
+		 output.c \
+		 output_alsa.c
 
 aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) $(libmicrohttpd_LIBS) $(libjsonc_LIBS) -lpthread
 
@@ -47,5 +48,6 @@ EXTRA_DIST = http.h \
 	     decoder_mp3.h \
 	     decoder_alac.h \
 	     resample.h \
-	     alsa.h
+	     output.h \
+	     output_alsa.h
 

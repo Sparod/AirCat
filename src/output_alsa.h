@@ -1,5 +1,5 @@
 /*
- * alsa.h - Alsa output
+ * output_alsa.h - Alsa Audio output module
  *
  * Copyright (c) 2013   A. Dilly
  *
@@ -16,16 +16,12 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _ALSA_OUTPUT_H
-#define _ALSA_OUTPUT_H
+#ifndef _OUTPUT_ALSA_H
+#define _OUTPUT_ALSA_H
 
-struct alsa_handle;
+#include "output.h"
 
-int alsa_open(struct alsa_handle **h, unsigned long samplerate, unsigned char nb_channel, unsigned long latency, void *input_callback, void *user_data);
-int alsa_play(struct alsa_handle *h);
-int alsa_stop(struct alsa_handle *h);
-int alsa_close(struct alsa_handle *h);
-
+struct output_handle output_alsa;
 
 #endif
 

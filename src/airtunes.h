@@ -20,6 +20,7 @@
 #define _AIRTUNES_SERVER_H
 
 #include "avahi.h"
+#include "output.h"
 
 enum{
 	AIRTUNES_STARTING,
@@ -30,7 +31,8 @@ enum{
 
 struct airtunes_handle;
 
-int airtunes_open(struct airtunes_handle **h, struct avahi_handle *a);
+int airtunes_open(struct airtunes_handle **h, struct avahi_handle *a,
+		  struct output_handle *o);
 
 void airtunes_set_name(struct airtunes_handle *h, const char *name);
 void airtunes_set_port(struct airtunes_handle *h, unsigned int port);

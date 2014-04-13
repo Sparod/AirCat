@@ -29,7 +29,7 @@
 #include "rtsp.h"
 #include "raop.h"
 #include "sdp.h"
-#include "alsa.h"
+#include "output.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -67,6 +67,8 @@
 static RSA *rsa = NULL;
 
 struct airtunes_server_data {
+	/* Output module */
+	struct output_handle *output;
 	unsigned char hw_addr[6];
 	char *name;
 	char *password;
@@ -75,7 +77,7 @@ struct airtunes_server_data {
 struct airtunes_client_data {
 	/* Audio output handlers */
 	struct raop_handle *raop;
-	struct alsa_handle *alsa;
+	struct output_stream *stream;
 	/* AES key and IV */
 	unsigned char *aes_key;
 	unsigned char aes_iv[16];
@@ -95,6 +97,8 @@ struct airtunes_handle{
 	/* Avahi client */
 	struct avahi_handle *avahi;
 	int local_avahi;
+	/* Output module */
+	struct output_handle *output;
 	/* Airtunes */
 	char *name;
 	unsigned int port;
@@ -116,7 +120,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  void *user_data);
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data);
 
-int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a)
+int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a,
+		  struct output_handle *o)
 {
 	char buf[6] = {0x00, 0x51, 0x52, 0x53, 0x54, 0x55};
 	struct airtunes_handle *h;
@@ -129,6 +134,7 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a)
 
 	/* Init structure */
 	h->avahi = a;
+	h->output = o;
 	h->local_avahi = 0;
 	h->status = AIRTUNES_STOPPED;
 	h->reload = 0;
@@ -156,6 +162,7 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a)
 	memcpy(h->rtsp_data.hw_addr, buf, 6);
 	h->rtsp_data.name = h->name;
 	h->rtsp_data.password = h->password;
+	h->rtsp_data.output = h->output;
 
 	return 0;
 }
@@ -458,7 +465,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			cdata->port = attr.port;
 
 			/* Create audio stream output */
-			alsa_open(&cdata->alsa, 44100, 2, 500, &raop_read, cdata->raop);
+			cdata->stream = output_add_stream(sdata->output, 44100, 2, &raop_read, cdata->raop);
 
 			/* Send answer */
 			RESPONSE_BEGIN(c, sdata->hw_addr);
@@ -469,7 +476,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			break;
 		case RTSP_RECORD:
 			/* Start stream */
-			alsa_play(cdata->alsa);
+			output_play_stream(sdata->output, cdata->stream);
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
 		case RTSP_SET_PARAMETER:
@@ -483,9 +490,9 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			break;
 		case RTSP_TEARDOWN:
 			/* Stop stream and close raop */
-			alsa_stop(cdata->alsa);
-			alsa_close(cdata->alsa);
-			cdata->alsa = NULL;
+			output_pause_stream(sdata->output, cdata->stream);
+			output_remove_stream(sdata->output, cdata->stream);
+			cdata->stream = NULL;
 			raop_close(cdata->raop);
 			cdata->raop = NULL;
 
@@ -594,12 +601,13 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 {
 	struct airtunes_client_data *cdata = (struct airtunes_client_data*) rtsp_get_user_data(c);
+	struct airtunes_server_data *sdata = (struct airtunes_server_data*) user_data;
 
 	if(cdata != NULL)
 	{
 		/* Stop stream */
-		alsa_stop(cdata->alsa);
-		alsa_close(cdata->alsa);
+		output_pause_stream(sdata->output, cdata->stream);
+		output_remove_stream(sdata->output, cdata->stream);
 		raop_close(cdata->raop);
 
 		/* Free client data */

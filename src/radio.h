@@ -19,9 +19,11 @@
 #ifndef _RADIO_H
 #define _RADIO_H
 
+#include "output.h"
+
 struct radio_handle;
 
-int radio_open(struct radio_handle **handle);
+int radio_open(struct radio_handle **handle, struct output_handle *o);
 char *radio_get_json_category_info(struct radio_handle *h, const char *id);
 char *radio_get_json_radio_info(struct radio_handle *h, const char *id);
 char *radio_get_json_list(struct radio_handle *h, const char *id);

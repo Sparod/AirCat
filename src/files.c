@@ -26,17 +26,17 @@
 
 #include "config_file.h"
 #include "files.h"
-#include "alsa.h"
 #include "file.h"
 
 struct files_handle {
 	/* File player */
 	struct file_handle *file;
-	struct alsa_handle *alsa;
+	struct output_handle *output;
+	struct output_stream *stream;
 	int is_playing;
 };
 
-int files_open(struct files_handle **handle)
+int files_open(struct files_handle **handle, struct output_handle *o)
 {
 	struct files_handle *h;
 
@@ -48,7 +48,8 @@ int files_open(struct files_handle **handle)
 
 	/* Init structure */
 	h->file = NULL;
-	h->alsa = NULL;
+	h->output = o;
+	h->stream = NULL;
 	h->is_playing = 0;
 
 	return 0;
@@ -87,9 +88,10 @@ int files_play(struct files_handle *h, const char *filename)
 	samplerate = file_get_samplerate(h->file);
 	channels = file_get_channels(h->file);
 
-	/* Open Alsa output and play */
-	alsa_open(&h->alsa, samplerate, channels, 500, &file_read, h->file);
-	alsa_play(h->alsa);
+	/* Open new Audio stream output and play */
+	h->stream = output_add_stream(h->output, samplerate, channels,
+				      &file_read, h->file);
+	output_play_stream(h->output, h->stream);
 
 	h->is_playing = 1;
 
@@ -103,9 +105,9 @@ int files_stop(struct files_handle *h)
 
 	h->is_playing = 0;
 
-	alsa_stop(h->alsa);
-	alsa_close(h->alsa);
-	h->alsa = NULL;
+	//output_stop_stream(h->output, h->stream);
+	output_remove_stream(h->output, h->stream);
+	h->stream = NULL;
 	file_close(h->file);
 	h->file = NULL;
 
@@ -217,6 +219,9 @@ int files_close(struct files_handle *h)
 {
 	if(h == NULL)
 		return 0;
+
+	if(h->stream != NULL)
+		output_remove_stream(h->output, h->stream);
 
 	/* Stop and close file player */
 	if(h->file != NULL)

@@ -26,13 +26,16 @@
 #include "radio.h"
 
 struct radio_handle {
+	/* Output module */
+	struct output_handle *output;
+	struct output_stream *stream;
 	/* Radio player */
 	struct shout_handle *shout;
 	/* Radio list */
 	struct radio_list_handle *list;
 };
 
-int radio_open(struct radio_handle **handle)
+int radio_open(struct radio_handle **handle, struct output_handle *o)
 {
 	struct radio_handle *h;
 
@@ -45,6 +48,8 @@ int radio_open(struct radio_handle **handle)
 	/* Init structure */
 	h->shout = NULL;
 	h->list = NULL;
+	h->output = o;
+	h->stream = NULL;
 
 	/* Load radio list */
 	if(radio_list_open(&h->list, config.radio_list_file) != 0)

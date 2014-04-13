@@ -19,9 +19,11 @@
 #ifndef _FILES_H
 #define _FILES_H
 
+#include "output.h"
+
 struct files_handle;
 
-int files_open(struct files_handle **handle);
+int files_open(struct files_handle **handle, struct output_handle *o);
 int files_play(struct files_handle *h, const char *filename);
 int files_stop(struct files_handle *h);
 char *files_get_json_list(struct files_handle *h, const char *path);
