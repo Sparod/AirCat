@@ -80,8 +80,7 @@ int files_play(struct files_handle *h, const char *filename)
 	sprintf(real_path, "%s/%s", config.files_path, filename);
 
 	/* Start new player */
-	file_open(&h->file, real_path);
-	if(h->file == NULL)
+	if(file_open(&h->file, real_path) != 0)
 		return -1;
 
 	/* Get samplerate and channels */
@@ -106,7 +105,8 @@ int files_stop(struct files_handle *h)
 	h->is_playing = 0;
 
 	//output_stop_stream(h->output, h->stream);
-	output_remove_stream(h->output, h->stream);
+	if(h->stream != NULL)
+		output_remove_stream(h->output, h->stream);
 	h->stream = NULL;
 	file_close(h->file);
 	h->file = NULL;

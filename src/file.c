@@ -45,6 +45,10 @@ int file_open(struct file_handle **handle, const char *name)
 		return -1;
 	h = *handle;
 
+	/* Init structure */
+	h->fp = NULL;
+	h->dec = NULL;
+
 	/* Connect and get header from server */
 	h->fp = fopen(name, "rb");
 	if(h->fp == NULL)
@@ -82,10 +86,12 @@ int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 int file_close(struct file_handle *h)
 {
 	/* Close decoder */
-	decoder_close(h->dec);
+	if(h->dec != NULL)
+		decoder_close(h->dec);
 
 	/* Close file */
-	fclose(h->fp);
+	if(h->fp != NULL)
+		fclose(h->fp);
 
 	free(h);
 
