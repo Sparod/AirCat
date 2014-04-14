@@ -54,20 +54,31 @@ struct decoder {
 };
 
 static long decoder_aac_fill(struct decoder *dec, unsigned long bytes);
-static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size);
+static long decoder_aac_fill_output(struct decoder *dec,
+				    unsigned char *output_buffer,
+				    size_t output_size);
+
+#define FRAME_LEN(b, p) ((((unsigned int) b[p+3] & 0x3)) << 11) | \
+			(((unsigned int) b[p+4]) << 3) | \
+			(b[p+5] >> 5);
 
 /* FIXME */
 static int decoder_aac_sync(struct decoder *dec)
 {
+	size_t frame_length;
+
 	while(1)
 	{
 		/* Look for a ADTS header */
-		if(dec->buffer[dec->buffer_pos] == 0xFF && (dec->buffer[dec->buffer_pos+1] & 0xF6) == 0xF0)
+		if(dec->buffer[dec->buffer_pos] == 0xFF &&
+		   (dec->buffer[dec->buffer_pos+1] & 0xF6) == 0xF0)
 		{
-			/* Check if syncword on next frame with calculated frame length */
-			size_t frame_length = ((((unsigned int)dec->buffer[dec->buffer_pos+3] & 0x3)) << 11) | (((unsigned int)dec->buffer[dec->buffer_pos+4]) << 3) | (dec->buffer[dec->buffer_pos+5] >> 5);
+			/* Check if syncword on next frame with calculated 
+			 * frame length
+			 */
+			frame_length = FRAME_LEN(dec->buffer, dec->buffer_pos);
 			decoder_aac_fill(dec, 0);
-			if(dec->buffer[dec->buffer_pos+frame_length] == 0xFF) 
+			if(dec->buffer[dec->buffer_pos+frame_length] == 0xFF)
 			{
 				decoder_aac_fill(dec, 0);
 				return 0;
@@ -78,7 +89,8 @@ static int decoder_aac_sync(struct decoder *dec)
 	}
 }
 
-int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_data)
+int decoder_aac_open(struct decoder **decoder, void *input_callback,
+		     void *user_data)
 {
 	NeAACDecConfigurationPtr config;
 	NeAACDecFrameInfo frameInfo;
@@ -115,14 +127,17 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback, void *user_
 	decoder_aac_sync(dec);
 
 	/* Parse first frame to init decoder */
-	if(NeAACDecInit(dec->hDec, &dec->buffer[dec->buffer_pos], dec->buffer_size, &dec->samplerate, &dec->nb_channel) < 0)
+	if(NeAACDecInit(dec->hDec, &dec->buffer[dec->buffer_pos],
+			dec->buffer_size, &dec->samplerate, &dec->nb_channel)
+	   < 0)
 	{
 		NeAACDecClose(dec->hDec);
 		return 1;
 	}
 
 	/* Decode first frame and get informations */
-	NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
+	NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos],
+		       dec->buffer_size);
 
 	return 0;
 }
@@ -166,7 +181,8 @@ static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
 	/* Read data from callback */
 	while(dec->buffer_size < FAAD_MIN_STREAMSIZE*2)
 	{
-		bread = dec->input_callback(dec->user_data, &dec->buffer[remaining], size);
+		bread = dec->input_callback(dec->user_data,
+					    &dec->buffer[remaining], size);
 		if(bread < 0)
 			return -1;
 		dec->buffer_size += bread;
@@ -177,7 +193,9 @@ static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
 	return 0;
 }
 
-static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+static long decoder_aac_fill_output(struct decoder *dec,
+				    unsigned char *output_buffer,
+				    size_t output_size)
 {
 	unsigned long pos;
 	unsigned long size;
@@ -203,7 +221,8 @@ static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_b
 	}
 	else
 #ifdef USE_FLOAT
-	memcpy(output_buffer, &dec->pcm_buffer[pos*4], size*4); // 32-bit wide sample (float or 32-bit fixed)
+	/* 32-bit wide sample (float or 32-bit fixed) */
+	memcpy(output_buffer, &dec->pcm_buffer[pos * 4], size * 4);
 #else
 	{
 		int32_t *p_in = (int32_t*) &dec->pcm_buffer[pos*4];
@@ -222,7 +241,8 @@ static long decoder_aac_fill_output(struct decoder *dec, unsigned char *output_b
 	return size;
 }
 
-int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer,
+		     size_t output_size)
 {
 	NeAACDecFrameInfo frameInfo;
 	unsigned short size = 0;
@@ -236,30 +256,40 @@ int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer, size_t o
 	}
 
 	/* FIXME: */
-	/* Decode a new frame */
-	dec->pcm_buffer = (unsigned char*) NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
-
-        if (frameInfo.error > 0)
-        {
-		return 0;
-        }
-
-	if(frameInfo.samples == 0)
+	/* Fill all buffer */
+	while(size < output_size)
 	{
-		dec->pcm_buffer = NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos], dec->buffer_size);
-		return 0;
+		/* Decode a new frame */
+		dec->pcm_buffer = (unsigned char*) NeAACDecDecode(dec->hDec,
+						  &frameInfo,
+						  &dec->buffer[dec->buffer_pos],
+						  dec->buffer_size);
+
+		if (frameInfo.error > 0)
+		{
+			return 0;
+		}
+
+		if(frameInfo.samples == 0)
+		{
+			dec->pcm_buffer = NeAACDecDecode(dec->hDec, &frameInfo,
+						  &dec->buffer[dec->buffer_pos],
+						  dec->buffer_size);
+			return 0;
+		}
+
+		if(dec->pcm_buffer == NULL)
+			return 0;
+
+		/* Update buffer */
+		decoder_aac_fill(dec, frameInfo.bytesconsumed);
+
+		/* Fill output buffer with PCM */
+		dec->pcm_remain = frameInfo.samples;
+		dec->pcm_length = frameInfo.samples;
+		size += decoder_aac_fill_output(dec, &output_buffer[size * 4],
+						output_size - size);
 	}
-
-	if(dec->pcm_buffer == NULL)
-		return 0;
-
-	/* Update buffer */
-	decoder_aac_fill(dec, frameInfo.bytesconsumed);
-
-	/* Fill output buffer with PCM */
-	dec->pcm_remain = frameInfo.samples;
-	dec->pcm_length = frameInfo.samples;
-	size += decoder_aac_fill_output(dec, &output_buffer[size], output_size-size);
 
 	return size;
 }

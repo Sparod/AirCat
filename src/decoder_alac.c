@@ -100,10 +100,14 @@ struct decoder {
 
 static const int host_bigendian = 0;
 
-static int decoder_alac_init(struct alac_decoder *alac, unsigned char *in_buffer);
-static void decoder_alac_decode_frame(struct alac_decoder *alac, unsigned char *in_buffer, void *out_buffer, int *output_size);
+static int decoder_alac_init(struct alac_decoder *alac,
+			     unsigned char *in_buffer);
+static void decoder_alac_decode_frame(struct alac_decoder *alac,
+				      unsigned char *in_buffer,
+				      void *out_buffer, int *output_size);
 
-int decoder_alac_open(struct decoder **decoder, void *input_callback, void *user_data)
+int decoder_alac_open(struct decoder **decoder, void *input_callback,
+		      void *user_data)
 {
 	struct decoder *dec;
 
@@ -137,7 +141,9 @@ unsigned char decoder_alac_get_channels(struct decoder *dec)
 	return dec->alac.numchannels;
 }
 
-static long decoder_alac_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+static long decoder_alac_fill_output(struct decoder *dec,
+				     unsigned char *output_buffer,
+				     size_t output_size)
 {
 #ifdef USE_FLOAT
 	float *p = (float*) output_buffer;
@@ -158,9 +164,11 @@ static long decoder_alac_fill_output(struct decoder *dec, unsigned char *output_
 	for(i = 0; i < size*2; i+=2)
 	{
 #ifdef USE_FLOAT
-		*p++ = ((int32_t) (dec->buffer[i+1+pos] << 24) | (dec->buffer[i+pos] << 16)) / 0x7fffffff;
+		*p++ = (float)((int32_t) (dec->buffer[i+1+pos] << 24) |
+				       (dec->buffer[i+pos] << 16)) / 0x7fffffff;
 #else
-		*p++ = (int32_t) (dec->buffer[i+1+pos] << 24) | (dec->buffer[i+pos] << 16);
+		*p++ = (int32_t) (dec->buffer[i+1+pos] << 24) |
+				 (dec->buffer[i+pos] << 16);
 #endif
 	}
 
@@ -169,7 +177,8 @@ static long decoder_alac_fill_output(struct decoder *dec, unsigned char *output_
 	return size;
 }
 
-int decoder_alac_read(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+int decoder_alac_read(struct decoder *dec, unsigned char *output_buffer,
+		      size_t output_size)
 {
 	unsigned char packet[PACKET_SIZE];
 	int size = 0;
@@ -178,24 +187,31 @@ int decoder_alac_read(struct decoder *dec, unsigned char *output_buffer, size_t 
 	/* Empty remaining PCM before decoding another frame */
 	if(dec->pcm_remain > 0)
 	{
-		size = decoder_alac_fill_output(dec, output_buffer, output_size);
+		size = decoder_alac_fill_output(dec, output_buffer,
+						output_size);
 		if(dec->pcm_remain > 0 || size == output_size)
 			return size;
 	}
 
-	/* Get an ALAC frame */
-	decode_size = dec->input_callback(dec->user_data, packet, PACKET_SIZE);
-	if(decode_size <= 0)
-		return size;
+	/* Fill all buffer */
+	while(size < output_size)
+	{
+		/* Get an ALAC frame */
+		decode_size = dec->input_callback(dec->user_data, packet,
+						  PACKET_SIZE);
+		if(decode_size <= 0)
+			return size;
 
-	/* Decode the frame */
-	decoder_alac_decode_frame(&dec->alac, packet, dec->buffer, &decode_size);
+		/* Decode the frame */
+		decoder_alac_decode_frame(&dec->alac, packet, dec->buffer,
+					  &decode_size);
 
-	/* Fill output buffer with PCM */
-	dec->pcm_remain = decode_size/2;
-	dec->pcm_length = decode_size/2;
-	size += decoder_alac_fill_output(dec, &output_buffer[size], output_size-size);
-
+		/* Fill output buffer with PCM */
+		dec->pcm_remain = decode_size / 2;
+		dec->pcm_length = decode_size / 2;
+		size += decoder_alac_fill_output(dec, &output_buffer[size * 4],
+						 output_size - size);
+	}
 	return size;
 }
 

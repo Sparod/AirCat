@@ -47,9 +47,12 @@ struct decoder {
 };
 
 static long decoder_mp3_fill(struct decoder *dec);
-static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size);
+static long decoder_mp3_fill_output(struct decoder *dec,
+				    unsigned char *output_buffer,
+				    size_t output_size);
 
-int decoder_mp3_open(struct decoder **decoder, void *input_callback, void *user_data)
+int decoder_mp3_open(struct decoder **decoder, void *input_callback,
+		     void *user_data)
 {
 	struct decoder *dec;
 
@@ -128,7 +131,8 @@ static long decoder_mp3_fill(struct decoder *dec)
 	}
 
 	/* Read data from callback */
-	size = dec->input_callback(dec->user_data, &dec->buffer[remaining], size);
+	size = dec->input_callback(dec->user_data, &dec->buffer[remaining],
+				   size);
 	if(size < 0)
 		return -1;
 
@@ -155,7 +159,9 @@ inline int32_t mad_scale(mad_fixed_t sample)
 }
 #endif
 
-static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+static long decoder_mp3_fill_output(struct decoder *dec,
+				    unsigned char *output_buffer,
+				    size_t output_size)
 {
 #ifdef USE_FLOAT
 	float *p = (float*) output_buffer;
@@ -167,7 +173,8 @@ static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_b
 
 	pos = dec->Synth.pcm.length-dec->pcm_remain;
 
-	for(i = 0; pos < dec->Synth.pcm.length && i < output_size; pos++, i += dec->nb_channel)
+	for(i = 0; pos < dec->Synth.pcm.length && i < output_size;
+	    pos++, i += dec->nb_channel)
 	{
 		/* Left channel */
 		*(p++) = mad_scale(dec->Synth.pcm.samples[0][pos]);
@@ -182,7 +189,8 @@ static long decoder_mp3_fill_output(struct decoder *dec, unsigned char *output_b
 	return i;
 }
 
-int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer, size_t output_size)
+int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer,
+		     size_t output_size)
 {
 	unsigned short size = 0;
 
@@ -194,34 +202,39 @@ int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer, size_t o
 			return size;
 	}
 
-	/* Decode a new frame */
-	while(mad_frame_decode(&dec->Frame, &dec->Stream))
+	/* Fill all buffer */
+	while(size < output_size)
 	{
-		if(MAD_RECOVERABLE(dec->Stream.error))
+		/* Decode a new frame */
+		while(mad_frame_decode(&dec->Frame, &dec->Stream))
 		{
-			continue;
-		}
-		else
-		{
-			if(dec->Stream.error == MAD_ERROR_BUFLEN)
+			if(MAD_RECOVERABLE(dec->Stream.error))
 			{
-				/* Refill buffer */
-				if(decoder_mp3_fill(dec) < 0)
-					return -1;
+				continue;
 			}
 			else
 			{
-				break;
+				if(dec->Stream.error == MAD_ERROR_BUFLEN)
+				{
+					/* Refill buffer */
+					if(decoder_mp3_fill(dec) < 0)
+						return -1;
+				}
+				else
+				{
+					break;
+				}
 			}
 		}
+
+		/* Synthethise PCM */
+		mad_synth_frame(&dec->Synth, &dec->Frame);
+
+		/* Fill output buffer with PCM */
+		dec->pcm_remain = dec->Synth.pcm.length;
+		size += decoder_mp3_fill_output(dec, &output_buffer[size * 4],
+						output_size - size);
 	}
-
-	/* Synthethise PCM */
-	mad_synth_frame(&dec->Synth, &dec->Frame);
-
-	/* Fill output buffer with PCM */
-	dec->pcm_remain = dec->Synth.pcm.length;
-	size += decoder_mp3_fill_output(dec, &output_buffer[size], output_size-size);
 
 	return size;
 }
