@@ -885,6 +885,13 @@ static int httpd_files_play(struct request_attr *attr)
 	return httpd_json_msg(attr->connection, 200, "");
 }
 
+static int httpd_files_pause(struct request_attr *attr)
+{
+	files_pause(attr->handle->files);
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
 static int httpd_files_stop(struct request_attr *attr)
 {
 	files_stop(attr->handle->files);
@@ -933,6 +940,7 @@ struct url_table url_table[] = {
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},
 	{"/files/play/", 0, HTTP_PUT, &httpd_files_play},
+	{"/files/pause", 1, HTTP_PUT, &httpd_files_pause},
 	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
 	{"/files/list", 0, HTTP_GET, &httpd_files_list},
 	{0, 0, 0}

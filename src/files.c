@@ -97,6 +97,25 @@ int files_play(struct files_handle *h, const char *filename)
 	return 0;
 }
 
+int files_pause(struct files_handle *h)
+{
+	if(h == NULL || h->output == NULL || h->stream == NULL)
+		return 0;
+
+	if(!h->is_playing)
+	{
+		h->is_playing = 1;
+		output_play_stream(h->output, h->stream);
+	}
+	else
+	{
+		h->is_playing = 0;
+		output_pause_stream(h->output, h->stream);
+	}
+
+	return 0;
+}
+
 int files_stop(struct files_handle *h)
 {
 	if(h == NULL || h->file == NULL)
