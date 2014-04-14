@@ -99,18 +99,46 @@ static int raop_tcp_read_timeout(struct raop_tcp_handle *h, unsigned char *buffe
 	return 0;
 }
 
-int raop_tcp_read(struct raop_tcp_handle *h, unsigned char *buffer, size_t size)
+static int raop_tcp_accept(struct raop_tcp_handle *h)
 {
 	struct sockaddr_in addr;
 	socklen_t client_len;
+	struct timeval tv;
+	fd_set readfs;
+
+	FD_ZERO(&readfs);
+	FD_SET(h->server_sock, &readfs);
+
+	tv.tv_sec = 0;
+	tv.tv_usec = h->timeout;
+
+	if(select(h->server_sock + 1, &readfs, NULL, NULL, &tv) < 0)
+		return -1;
+
+	if(FD_ISSET(h->server_sock, &readfs))
+	{
+		/* Accept TCP connection */
+		client_len = sizeof(addr);
+		return accept(h->server_sock, (struct sockaddr *)&addr,
+			      &client_len);
+	}
+
+	return 0;
+}
+
+int raop_tcp_read(struct raop_tcp_handle *h, unsigned char *buffer, size_t size)
+{
 	unsigned char header[16];
 	int read_len;
+	int sock;
 
 	/* Accept a client */
 	if(h->client_sock == -1)
 	{
-		client_len = sizeof(addr);
-		h->client_sock = accept(h->server_sock, (struct sockaddr *)&addr, &client_len);
+		sock = raop_tcp_accept(h);
+		if(sock <= 0)
+			return 0;
+		h->client_sock = sock;
 	}
 
 	/* Get next packet */

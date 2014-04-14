@@ -147,7 +147,7 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	if(attr->transport == RAOP_TCP)
 	{
 		/* Open TCP server */
-		while(raop_tcp_open(&h->tcp, attr->port, 100) != 0)
+		while(raop_tcp_open(&h->tcp, attr->port, 1) != 0)
 		{
 			attr->port++;
 			if(attr->port >= 7000)
@@ -327,7 +327,6 @@ static int raop_read_stream(void * user_data, unsigned char *buffer, size_t size
 		/* Read RTP packet */
 		read_len = rtp_read(h->rtp, packet, MAX_PACKET_SIZE);
 	}
-
 
 	if(read_len > 0)
 	{
