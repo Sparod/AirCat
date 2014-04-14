@@ -13,5 +13,6 @@ config.status
 depcomp
 stamp-h1
 *.o
+*~
 .deps
 aircat
