@@ -25,7 +25,8 @@
 #include "decoder_aac.h"
 #include "decoder_mp3.h"
 
-int decoder_open(struct decoder_handle **handle, int codec, void *input_callback, void *user_data)
+int decoder_open(struct decoder_handle **handle, int codec,
+		 void *input_callback, void *user_data)
 {
 	struct decoder_handle *h;
 
@@ -60,16 +61,25 @@ int decoder_open(struct decoder_handle **handle, int codec, void *input_callback
 
 unsigned long decoder_get_samplerate(struct decoder_handle *h)
 {
+	if(h == NULL || h->dec == NULL)
+		return 0;
+
 	return h->get_samplerate(h->dec);
 }
 
 unsigned char decoder_get_channels(struct decoder_handle *h)
 {
+	if(h == NULL || h->dec == NULL)
+		return 0;
+
 	return h->get_channels(h->dec);
 }
 
 int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size)
 {
+	if(h == NULL || h->dec == NULL || buffer == NULL)
+		return -1;
+
 	return h->read(h->dec, buffer, size);
 }
 

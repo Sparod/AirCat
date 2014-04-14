@@ -36,7 +36,9 @@ enum {
 	CODEC_AAC
 };
 
-int decoder_open(struct decoder_handle **h, int codec, void *input_callback, void *user_data);
+
+int decoder_open(struct decoder_handle **handle, int codec,
+		 void *input_callback, void *user_data);
 unsigned long decoder_get_samplerate(struct decoder_handle *h);
 unsigned char decoder_get_channels(struct decoder_handle *h);
 int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size);
