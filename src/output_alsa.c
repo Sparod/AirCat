@@ -44,14 +44,14 @@ struct output_stream {
 	/* Resample object */
 	struct resample_handle *res;
 	/* Input callback */
-	int (*input_callback)(void *, char *, size_t);
+	int (*input_callback)(void *, unsigned char *, size_t);
 	void *user_data;
 	/* Format */
 	unsigned long samplerate;
 	unsigned char nb_channel;
 	/* Stream status */
 	int is_playing;
-
+	/* Next output stream in list */
 	struct output_stream *next;
 };
 
@@ -63,7 +63,7 @@ struct output {
 	unsigned char nb_channel;
 	/* Thread objects */
 	pthread_t thread;
-	// MUTEX
+	pthread_mutex_t mutex;
 	int stop;
 	/* Stream list */
 	struct output_stream *streams;
@@ -134,7 +134,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 		if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
 			      h->nb_channel, input_callback, user_data) != 0)
 			goto error;
-		s->input_callback = &resample_read;
+		s->input_callback = (void*) &resample_read;
 		s->user_data = s->res;
 	}
 	else
@@ -156,18 +156,18 @@ error:
 
 int output_alsa_play_stream(struct output *h, struct output_stream *s)
 {
-	// LOCK
+	pthread_mutex_lock(&h->mutex);
 	s->is_playing = 1;
-	// UNLOCK
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
 
 int output_alsa_pause_stream(struct output *h, struct output_stream *s)
 {
-	// LOCK
+	pthread_mutex_lock(&h->mutex);
 	s->is_playing = 0;
-	// UNLOCK
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
@@ -187,7 +187,7 @@ int output_alsa_remove_stream(struct output *h, struct output_stream *s)
 	struct output_stream *cur, *prev;
 
 	/* Remove stream from list */
-	// LOCK
+	pthread_mutex_lock(&h->mutex);
 	prev = NULL;
 	cur = h->streams;
 	while(cur != NULL)
@@ -204,7 +204,7 @@ int output_alsa_remove_stream(struct output *h, struct output_stream *s)
 		prev = cur;
 		cur = cur->next;
 	}
-	// UNLOCK
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Free stream */
 	output_alsa_free_stream(s);
@@ -212,8 +212,8 @@ int output_alsa_remove_stream(struct output *h, struct output_stream *s)
 	return 0;
 }
 
-static int output_alsa_mix_streams(struct output *h, char *in_buffer,
-				   char *out_buffer, size_t len)
+static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
+				   unsigned char *out_buffer, size_t len)
 {
 	struct output_stream *s;
 #ifdef USE_FLOAT
@@ -227,7 +227,7 @@ static int output_alsa_mix_streams(struct output *h, char *in_buffer,
 	int in_size;
 	int i;
 
-	// LOCK
+	pthread_mutex_lock(&h->mutex);
 	for(s = h->streams; s != NULL; s = s->next)
 	{
 		if(!s->is_playing)
@@ -257,7 +257,7 @@ static int output_alsa_mix_streams(struct output *h, char *in_buffer,
 		if(out_size < in_size);
 			out_size = in_size;
 	}
-	// UNLOCK
+	pthread_mutex_unlock(&h->mutex);
 
 	return out_size;
 }
@@ -266,7 +266,7 @@ static void *output_alsa_thread(void *user_data)
 {
 	struct output *h = (struct output *) user_data;
 	snd_pcm_sframes_t frames;
-	char *in_buffer, *out_buffer;
+	unsigned char *in_buffer, *out_buffer;
 	int in_size = BUFFER_SIZE;
 	int out_size = 0;
 
@@ -293,8 +293,7 @@ static void *output_alsa_thread(void *user_data)
 		}
 
 		/* Play pcm sample */
-		frames = snd_pcm_writei(h->alsa, (unsigned char*) out_buffer,
-					out_size);
+		frames = snd_pcm_writei(h->alsa, out_buffer, out_size);
 
 		/* Try again to send frames */
 		if (frames < 0)

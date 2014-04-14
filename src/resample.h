@@ -21,8 +21,12 @@
 
 struct resample_handle;
 
-int resample_open(struct resample_handle **h, unsigned long in_samplerate, unsigned char in_nb_channel, unsigned long out_samplerate, unsigned char out_channel, void *input_callback, void *user_data);
-int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size);
+int resample_open(struct resample_handle **h, unsigned long in_samplerate,
+		  unsigned char in_nb_channel, unsigned long out_samplerate,
+		  unsigned char out_channel, void *input_callback,
+		  void *user_data);
+int resample_read(struct resample_handle *h, unsigned char *buffer,
+		  size_t size);
 int resample_close(struct resample_handle *h);
 
 #endif
