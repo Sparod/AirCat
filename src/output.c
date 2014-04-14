@@ -48,7 +48,7 @@ struct output_stream *output_add_stream(struct output_handle *h,
 					unsigned char nb_channel,
 					void *input_callback, void *user_data)
 {
-	if(h == NULL)
+	if(h == NULL || h->out == NULL)
 		return NULL;
 
 	return h->add_stream(h->out, samplerate, nb_channel, input_callback,
@@ -57,7 +57,7 @@ struct output_stream *output_add_stream(struct output_handle *h,
 
 int output_play_stream(struct output_handle *h, struct output_stream *s)
 {
-	if(h == NULL)
+	if(h == NULL || h->out == NULL || s == NULL)
 		return -1;
 
 	return h->play_stream(h->out, s);
@@ -65,7 +65,7 @@ int output_play_stream(struct output_handle *h, struct output_stream *s)
 
 int output_pause_stream(struct output_handle *h, struct output_stream *s)
 {
-	if(h == NULL)
+	if(h == NULL || h->out == NULL || s == NULL)
 		return -1;
 
 	return h->pause_stream(h->out, s);
@@ -73,7 +73,7 @@ int output_pause_stream(struct output_handle *h, struct output_stream *s)
 
 int output_remove_stream(struct output_handle* h, struct output_stream *s)
 {
-	if(h == NULL)
+	if(h == NULL || h->out == NULL || s == NULL)
 		return -1;
 
 	return h->remove_stream(h->out, s);
