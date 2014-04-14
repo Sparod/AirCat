@@ -235,6 +235,8 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 
 		/* Get input data */
 		in_size = s->input_callback(s->user_data, in_buffer, len);
+		if(in_size <= 0)
+			continue;
 
 		/* Add it to output buffer */
 		if(s == h->streams)
