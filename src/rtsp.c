@@ -316,6 +316,9 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 				{
 					if(errno != EAGAIN && errno != EINTR)
 						return -1;
+					/* Peer closed connection */
+					if(c->buffer_ptr == c->req_buffer)
+						return -1;
 					return 0;
 				}
 				c->buffer_ptr += len;
