@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <sys/stat.h>
 
 #include <json.h>
 #include <json_tokener.h>
@@ -142,26 +143,16 @@ int files_stop(struct files_handle *h)
 #define ADD_INT(root, key, value) \
 		  json_object_object_add(root, key, json_object_new_int(value));
 
-static json_object *files_get_file_json_object(const char *path,
+static json_object *files_get_file_json_object(const char *file,
 					       const char *filename)
 {
 	json_object *tmp = NULL;
 	struct tag *meta;
-	char *file;
-
-	file = malloc(strlen(path) + strlen(filename) + 2);
-	if(file == NULL)
-		return NULL;
-
-	sprintf(file, "%s/%s", path, filename);
 
 	/* Create temporary object */
 	tmp = json_object_new_object();
 	if(tmp == NULL)
-	{
-		free(file);
 		return NULL;
-	}
 
 	/* Add filename */
 	json_object_object_add(tmp, "file", json_object_new_string(filename));
@@ -182,8 +173,6 @@ static json_object *files_get_file_json_object(const char *path,
 		tag_free(meta);
 	}
 
-	free(file);
-
 	return tmp;
 }
 
@@ -192,6 +181,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 	char *ext[] = { ".mp3", ".m4a", ".ogg", ".wav", NULL };
 	struct dirent *entry;
 	DIR *dir;
+	struct stat s;
 	struct json_object *root = NULL, *dir_list, *file_list, *tmp;
 	char *real_path;
 	char *str = NULL;
@@ -234,8 +224,18 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 		if(entry->d_name[0] == '.')
 			continue;
 
+		/* Make complete filanme path */
+		len = strlen(real_path) + strlen(entry->d_name) + 2;
+		str = calloc(sizeof(char), len);
+		if(str == NULL)
+			continue;
+		sprintf(str, "%s/%s", real_path, entry->d_name);
+
+		/* Stat file */
+		stat(str, &s);
+
 		/* Add to array */
-		if(entry->d_type & DT_REG)
+		if(s.st_mode & S_IFREG)
 		{
 			/* Verify extension */
 			len = strlen(entry->d_name);
@@ -244,8 +244,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
 				{
 					/* Create temporary object */
-					tmp = files_get_file_json_object(
-								 real_path,
+					tmp = files_get_file_json_object(str,
 								 entry->d_name);
 					if(tmp == NULL)
 						continue;
@@ -257,7 +256,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 				}
 			}
 		}
-		else if(entry->d_type & DT_DIR)
+		else if(s.st_mode & S_IFDIR)
 		{
 			/* Create temporary object */
 			tmp = json_object_new_string(entry->d_name);
@@ -267,6 +266,9 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 			if(json_object_array_add(dir_list, tmp) != 0)
 				json_object_put(tmp);
 		}
+
+		/* Free complete filenmae */
+		free(str);
 	}
 
 	/* Add both arrays to JSON object */
