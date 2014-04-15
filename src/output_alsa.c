@@ -51,6 +51,8 @@ struct output_stream {
 	unsigned char nb_channel;
 	/* Stream status */
 	int is_playing;
+	/* Stream volume */
+	unsigned int volume;
 	/* Next output stream in list */
 	struct output_stream *next;
 };
@@ -61,6 +63,8 @@ struct output {
 	/* Format */
 	unsigned long samplerate;
 	unsigned char nb_channel;
+	/* General volume */
+	unsigned int volume;
 	/* Thread objects */
 	pthread_t thread;
 	pthread_mutex_t mutex;
@@ -90,6 +94,7 @@ int output_alsa_open(struct output **handle, unsigned int samplerate,
 	/* Copy input and output format */
 	h->samplerate = samplerate;
 	h->nb_channel = nb_channel;
+	h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Open alsa device */
 	if(snd_pcm_open(&h->alsa, "default", SND_PCM_STREAM_PLAYBACK, 0) < 0)
@@ -107,6 +112,26 @@ int output_alsa_open(struct output **handle, unsigned int samplerate,
 		return -1;
 
 	return 0;
+}
+
+int output_alsa_set_volume(struct output *h, unsigned int volume)
+{
+	pthread_mutex_lock(&h->mutex);
+	h->volume = volume;
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+unsigned int output_alsa_get_volume(struct output *h)
+{
+	unsigned int volume;
+
+	pthread_mutex_lock(&h->mutex);
+	volume = h->volume;
+	pthread_mutex_unlock(&h->mutex);
+
+	return volume;
 }
 
 struct output_stream *output_alsa_add_stream(struct output *h,
@@ -127,6 +152,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->nb_channel = nb_channel;
 	s->res = NULL;
 	s->is_playing = 0;
+	s->volume = OUTPUT_VOLUME_MAX;
 
 	/* Use resampler module if samplerate or/and channels are different */
 	if(samplerate != h->samplerate || nb_channel != h->nb_channel)
@@ -172,6 +198,28 @@ int output_alsa_pause_stream(struct output *h, struct output_stream *s)
 	return 0;
 }
 
+int output_alsa_set_volume_stream(struct output *h, struct output_stream *s,
+				  unsigned int volume)
+{
+	pthread_mutex_lock(&h->mutex);
+	s->volume = volume;
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+unsigned int output_alsa_get_volume_stream(struct output *h, 
+					   struct output_stream *s)
+{
+	unsigned int volume;
+
+	pthread_mutex_lock(&h->mutex);
+	volume = s->volume;
+	pthread_mutex_unlock(&h->mutex);
+
+	return volume;
+}
+
 static void output_alsa_free_stream(struct output_stream *s)
 {
 	/* Close resample module */
@@ -213,6 +261,11 @@ int output_alsa_remove_stream(struct output *h, struct output_stream *s)
 }
 
 #ifdef USE_FLOAT
+static inline float output_alsa_vol(float x, unsigned int v)
+{
+	return x * (v * 1.0 / OUTPUT_VOLUME_MAX);
+}
+
 static inline float output_alsa_add(float a, float b)
 {
 	float sum;
@@ -227,11 +280,26 @@ static inline float output_alsa_add(float a, float b)
 	return sum;
 }
 #else
+static inline int32_t output_alsa_vol(int32_t x, unsigned int v)
+{
+	int64_t value;
+
+	value = ((int64_t)x * v) / OUTPUT_VOLUME_MAX;
+
+	return (int32_t) value;
+}
+
 static inline int32_t output_alsa_add(int32_t a, int32_t b)
 {
 	int64_t sum;
 
 	sum = (int64_t)a + (int64_t)b;
+
+	/* Introduce some distorsion */
+	/*if(a > 0 && b > 0)
+		sum -= (int64_t)a * (int64_t)b / 0x7FFFFFFFLL;
+	else if(a < 0 && b < 0)
+		sum -= (int64_t)a * (int64_t)b / -0x80000000LL;*/
 
 	if(sum > 0x7FFFFFFFLL)
 		sum = 0x7FFFFFFFLL;
@@ -249,9 +317,11 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 #ifdef USE_FLOAT
 	float *p_in = (float*) in_buffer;
 	float *p_out = (float*) out_buffer;
+	float sample;
 #else
 	int32_t *p_in = (int32_t*) in_buffer;
 	int32_t *p_out = (int32_t*) out_buffer;
+	int32_t sample;
 #endif
 	int out_size = 0;
 	int first = 1;
@@ -275,7 +345,8 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			first = 0;
 			for(i = 0; i < in_size; i++)
 			{
-				p_out[i] = p_in[i];
+				sample = output_alsa_vol(p_in[i], s->volume);
+				p_out[i] = sample;
 			}
 		}
 		else
@@ -283,7 +354,8 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			/* Add it to output buffer */
 			for(i = 0; i < in_size; i++)
 			{
-				p_out[i] = output_alsa_add(p_out[i], p_in[i]);
+				sample = output_alsa_vol(p_in[i], s->volume);
+				p_out[i] = output_alsa_add(p_out[i], sample);
 			}
 		}
 
@@ -389,9 +461,13 @@ int output_alsa_close(struct output *h)
 struct output_handle output_alsa = {
 	.out = NULL,
 	.open = &output_alsa_open,
+	.set_volume = &output_alsa_set_volume,
+	.get_volume = &output_alsa_get_volume,
 	.add_stream = &output_alsa_add_stream,
 	.play_stream = &output_alsa_play_stream,
 	.pause_stream = &output_alsa_pause_stream,
+	.set_volume_stream = &output_alsa_set_volume_stream,
+	.get_volume_stream = &output_alsa_get_volume_stream,
 	.remove_stream = &output_alsa_remove_stream,
 	.close = &output_alsa_close,
 };

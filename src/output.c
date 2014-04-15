@@ -43,6 +43,22 @@ int output_open(struct output_handle **handle, int module,
 	return h->open(&h->out, samplerate, nb_channel);
 }
 
+int output_set_volume(struct output_handle *h, unsigned int volume)
+{
+	if(h == NULL || h->out == NULL)
+		return -1;
+
+	return h->set_volume(h->out, volume);
+}
+
+unsigned int output_get_volume(struct output_handle *h)
+{
+	if(h == NULL || h->out == NULL)
+		return -1;
+
+	return h->get_volume(h->out);
+}
+
 struct output_stream *output_add_stream(struct output_handle *h, 
 					unsigned long samplerate,
 					unsigned char nb_channel,
@@ -69,6 +85,24 @@ int output_pause_stream(struct output_handle *h, struct output_stream *s)
 		return -1;
 
 	return h->pause_stream(h->out, s);
+}
+
+int output_set_volume_stream(struct output_handle *h, struct output_stream *s,
+			     unsigned int volume)
+{
+	if(h == NULL || h->out == NULL || s == NULL)
+		return -1;
+
+	return h->set_volume_stream(h->out, s, volume);
+}
+
+unsigned int output_get_volume_stream(struct output_handle *h,
+				      struct output_stream *s)
+{
+	if(h == NULL || h->out == NULL || s == NULL)
+		return -1;
+
+	return h->get_volume_stream(h->out, s);
 }
 
 int output_remove_stream(struct output_handle* h, struct output_stream *s)
