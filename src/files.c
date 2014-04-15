@@ -27,6 +27,7 @@
 #include "config_file.h"
 #include "files.h"
 #include "file.h"
+#include "tag.h"
 
 struct files_handle {
 	/* File player */
@@ -133,6 +134,59 @@ int files_stop(struct files_handle *h)
 	return 0;
 }
 
+#define ADD_STRING(root, key, value) if(value != NULL) \
+	     json_object_object_add(root, key, json_object_new_string(value)); \
+	else \
+	     json_object_object_add(root, key, NULL);
+
+#define ADD_INT(root, key, value) \
+		  json_object_object_add(root, key, json_object_new_int(value));
+
+static json_object *files_get_file_json_object(const char *path,
+					       const char *filename)
+{
+	json_object *tmp = NULL;
+	struct tag *meta;
+	char *file;
+
+	file = malloc(strlen(path) + strlen(filename) + 2);
+	if(file == NULL)
+		return NULL;
+
+	sprintf(file, "%s/%s", path, filename);
+
+	/* Create temporary object */
+	tmp = json_object_new_object();
+	if(tmp == NULL)
+	{
+		free(file);
+		return NULL;
+	}
+
+	/* Add filename */
+	json_object_object_add(tmp, "file", json_object_new_string(filename));
+
+	/* Get tag data */
+	meta = tag_read(file, 0);
+	if(meta != NULL)
+	{
+		/* Add all tags */
+		ADD_STRING(tmp, "title", meta->title);
+		ADD_STRING(tmp, "artist", meta->artist);
+		ADD_STRING(tmp, "album", meta->album);
+		ADD_STRING(tmp, "comment", meta->comment);
+		ADD_STRING(tmp, "genre", meta->genre);
+		ADD_INT(tmp, "track", meta->track);
+		ADD_INT(tmp, "year", meta->year);
+
+		tag_free(meta);
+	}
+
+	free(file);
+
+	return tmp;
+}
+
 char *files_get_json_list(struct files_handle *h, const char *path)
 {
 	char *ext[] = { ".mp3", ".m4a", ".ogg", ".wav", NULL };
@@ -190,7 +244,8 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
 				{
 					/* Create temporary object */
-					tmp = json_object_new_string(
+					tmp = files_get_file_json_object(
+								 real_path,
 								 entry->d_name);
 					if(tmp == NULL)
 						continue;

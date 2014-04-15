@@ -8,8 +8,10 @@ AM_INIT_AUTOMAKE()
 
 # Checks for programs
 AC_PROG_CC
+AC_PROG_CXX
 AC_PROG_INSTALL
 AC_PROG_MAKE_SET
+AM_PROG_CC_C_O
 
 # Checks for header files.
 AC_HEADER_STDC
@@ -44,6 +46,11 @@ PKG_CHECK_MODULES(libmicrohttpd, libmicrohttpd >= 0.9.0)
 
 # Check for libjson-c for JSON parsing
 PKG_CHECK_MODULES(libjsonc, json-c >= 0.11.0)
+
+# Check for libtag for Audio tag file support
+PKG_CHECK_MODULES(libtag, taglib >= 1.7, [
+	AC_DEFINE([HAVE_TAGLIB], 1, ["Use taglib"])
+])
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile

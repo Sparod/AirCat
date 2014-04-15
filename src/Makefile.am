@@ -10,6 +10,7 @@ aircat_SOURCES = main.c \
 		 http.c \
 		 files.c \
 		 file.c \
+		 tag.c \
 		 shoutcast.c \
 		 rtsp.c \
 		 rtp.c \
@@ -24,9 +25,28 @@ aircat_SOURCES = main.c \
 		 output.c \
 		 output_alsa.c
 
-aircat_LDADD = $(libssl_LIBS) $(libmad_LIBS) $(libsoxr_LIBS) $(libasound2_LIBS) $(libavahi_LIBS) $(libmicrohttpd_LIBS) $(libjsonc_LIBS) -lpthread
+aircat_LDADD = $(libssl_LIBS) \
+	       $(libmad_LIBS) \
+	       $(libsoxr_LIBS) \
+	       $(libasound2_LIBS) \
+	       $(libavahi_LIBS) \
+	       $(libmicrohttpd_LIBS) \
+	       $(libjsonc_LIBS) \
+	       $(libtag_LIBS) \
+	       -lpthread
 
-AM_CPPFLAGS =  $(libssl_CFLAGS) $(libmad_CFLAGS) $(libsoxr_CFLAGS) $(libasound2_CFLAGS) $(libavahi_CFLAGS) $(libmicrohttpd_CFLAGS) $(libjsonc_CFLAGS) -Wall
+aircat_CFLAGS =  $(libssl_CFLAGS) \
+		 $(libmad_CFLAGS) \
+		 $(libsoxr_CFLAGS) \
+		 $(libasound2_CFLAGS) \
+		 $(libavahi_CFLAGS) \
+		 $(libmicrohttpd_CFLAGS) \
+		 $(libjsonc_CFLAGS) \
+		 -Wall
+
+# C++ support and TagLib support
+aircat_CPPFLAGS = $(libtag_CFLAGS)
+aircat_SOURCES += tag_libtag.cpp
 
 EXTRA_DIST = http.h \
 	     config_file.h \
@@ -37,6 +57,7 @@ EXTRA_DIST = http.h \
 	     avahi.h \
 	     files.h \
 	     file.h \
+	     tag.h \
 	     shoutcast.h \
 	     rtsp.h \
 	     rtp.h \

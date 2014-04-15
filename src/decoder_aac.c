@@ -187,7 +187,7 @@ static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
 			return -1;
 		dec->buffer_size += bread;
 		remaining += bread;
-		size -= bread;		
+		size -= bread;
 	}
 
 	return 0;
