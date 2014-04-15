@@ -212,6 +212,36 @@ int output_alsa_remove_stream(struct output *h, struct output_stream *s)
 	return 0;
 }
 
+#ifdef USE_FLOAT
+static inline float output_alsa_add(float a, float b)
+{
+	float sum;
+
+	sum = a + b;
+
+	if(sum > 1.0)
+		sum = 1.0;
+	else if(sum < -1.0)
+		sum = -1.0;
+
+	return sum;
+}
+#else
+static inline int32_t output_alsa_add(int32_t a, int32_t b)
+{
+	int64_t sum;
+
+	sum = (int64_t)a + (int64_t)b;
+
+	if(sum > 0x7FFFFFFFLL)
+		sum = 0x7FFFFFFFLL;
+	else if(sum < -0x80000000LL)
+		sum = -0x80000000LL;
+
+	return (int32_t) sum;
+}
+#endif
+
 static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 				   unsigned char *out_buffer, size_t len)
 {
@@ -224,6 +254,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 	int32_t *p_out = (int32_t*) out_buffer;
 #endif
 	int out_size = 0;
+	int first = 1;
 	int in_size;
 	int i;
 
@@ -239,8 +270,9 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			continue;
 
 		/* Add it to output buffer */
-		if(s == h->streams)
+		if(first)
 		{
+			first = 0;
 			for(i = 0; i < in_size; i++)
 			{
 				p_out[i] = p_in[i];
@@ -251,7 +283,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			/* Add it to output buffer */
 			for(i = 0; i < in_size; i++)
 			{
-				p_out[i] += p_in[i];
+				p_out[i] = output_alsa_add(p_out[i], p_in[i]);
 			}
 		}
 
