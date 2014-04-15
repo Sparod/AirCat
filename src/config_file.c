@@ -43,6 +43,8 @@ struct config_field {
 	{"raop.enabled", boolean, &config.raop_enabled, "# Enable RAOP module.\n"},
 	{"raop.name", string, &config.raop_name, "# Name of RAOP device (same as general name by default).\n"},
 	{"raop.password", string, &config.raop_password, "# Password for using RAOP module.\n"},
+	{"files.path", string, &config.files_path, "# Path where Local files are stored.\n"},
+	{"files.enabled", boolean, &config.files_enabled, "# Enable Files module.\n"},
 	{NULL, 0, NULL}
 };
 
