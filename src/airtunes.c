@@ -388,10 +388,13 @@ static int airtunes_do_apple_response(struct rtsp_client *c,
 		rtsp_add_response(c, "Server", "AirCat/1.0"); \
 		rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq", 1));
 
-static int airtunes_request_callback(struct rtsp_client *c, int request, const char *url, void *user_data)
+static int airtunes_request_callback(struct rtsp_client *c, int request,
+				     const char *url, void *user_data)
 {
-	struct airtunes_server_data *sdata = (struct airtunes_server_data*) user_data;
-	struct airtunes_client_data *cdata = (struct airtunes_client_data*) rtsp_get_user_data(c);
+	struct airtunes_server_data *sdata = (struct airtunes_server_data*)
+								      user_data;
+	struct airtunes_client_data *cdata = (struct airtunes_client_data*)
+							  rtsp_get_user_data(c);
 	struct raop_attr attr;
 	char buffer[BUFFER_SIZE];
 	char *username;
@@ -409,12 +412,15 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	if(sdata->password != NULL)
 	{
 		username = rtsp_digest_auth_get_username(c);
-		if(username == NULL || rtsp_digest_auth_check(c, username, sdata->password, sdata->name) != 0)
+		if(username == NULL || rtsp_digest_auth_check(c, username, 
+							      sdata->password,
+							      sdata->name) != 0)
 		{
 			rtsp_create_digest_auth_response(c, sdata->name, "", 0);
 			airtunes_do_apple_response(c, sdata->hw_addr);
 			rtsp_add_response(c, "Server", "AirCat/1.0");
-			rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq", 1));
+			rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq",
+									    1));
 			return 0;
 		}
 	}
@@ -423,7 +429,11 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	{
 		case RTSP_OPTIONS:
 			RESPONSE_BEGIN(c, sdata->hw_addr);
-			rtsp_add_response(c, "Public", "ANNOUNCE, SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
+			rtsp_add_response(c, "Public", "ANNOUNCE, SETUP, "
+						       "RECORD, PAUSE, FLUSH, "
+						       "TEARDOWN, OPTIONS, "
+						       "GET_PARAMETER, "
+						       "SET_PARAMETER");
 			break;
 		case RTSP_ANNOUNCE:
 			/* Prepare answer */
@@ -465,12 +475,17 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			cdata->port = attr.port;
 
 			/* Create audio stream output */
-			cdata->stream = output_add_stream(sdata->output, 44100, 2, &raop_read, cdata->raop);
+			cdata->stream = output_add_stream(sdata->output, 44100,
+							  2, &raop_read,
+							  cdata->raop);
 
 			/* Send answer */
 			RESPONSE_BEGIN(c, sdata->hw_addr);
-			rtsp_add_response(c, "Audio-Jack-Status", "connected; type=analog");
-			snprintf(buffer, BUFFER_SIZE, "%s;server_port=%d;", rtsp_get_header(c, "Transport", 0), cdata->port);
+			rtsp_add_response(c, "Audio-Jack-Status",
+						      "connected; type=analog");
+			snprintf(buffer, BUFFER_SIZE, "%s;server_port=%d;",
+				 rtsp_get_header(c, "Transport", 0),
+				 cdata->port);
 			rtsp_add_response(c, "Transport", buffer);
 			rtsp_add_response(c, "Session", "1");
 			break;
@@ -489,10 +504,11 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
 		case RTSP_TEARDOWN:
-			/* Stop stream and close raop */
-			output_pause_stream(sdata->output, cdata->stream);
+			/* Stop stream */
 			output_remove_stream(sdata->output, cdata->stream);
 			cdata->stream = NULL;
+
+			/* Close raop */
 			raop_close(cdata->raop);
 			cdata->raop = NULL;
 
@@ -505,9 +521,12 @@ static int airtunes_request_callback(struct rtsp_client *c, int request, const c
 	return 0;
 }
 
-static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, size_t size, int end_of_stream, void *user_data)
+static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
+				  size_t size, int end_of_stream,
+				  void *user_data)
 {
-	struct airtunes_client_data *cdata = (struct airtunes_client_data*) rtsp_get_user_data(c);
+	struct airtunes_client_data *cdata = (struct airtunes_client_data*)
+							  rtsp_get_user_data(c);
 	struct sdp_media *m = NULL;
 	struct sdp *s;
 	char *p;
@@ -528,7 +547,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 				/* Search "m=audio" line */
 				for(i = 0; i < s->nb_medias; i++)
 				{
-					if(strncmp(s->medias[i].media, "audio", 5) == 0)
+					if(strncmp(s->medias[i].media, "audio",
+						   5) == 0)
 					{
 						m = &s->medias[i];
 						break;
@@ -540,7 +560,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 				{
 					if(strncmp(m->attr[i], "fmtp", 4) == 0)
 					{
-						cdata->format = strdup(m->attr[i]+5);
+						cdata->format = strdup(
+								  m->attr[i]+5);
 						break;
 					}
 				}
@@ -548,16 +569,22 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 				/* Get AES key */
 				for(i = 0; i < m->nb_attr; i++)
 				{
-					if(strncmp(m->attr[i], "rsaaeskey", 9) == 0)
+					if(strncmp(m->attr[i], "rsaaeskey", 9)
+					    == 0)
 					{
 						/* Decode Base64 */
 						p = strdup(m->attr[i]+10);
 						rtsp_decode_base64(p);
 						len = RSA_size(rsa);
-						cdata->aes_key = malloc(len * sizeof(char));
+						cdata->aes_key = malloc(len *
+								  sizeof(char));
 						
 						/* Decrypt AES key */
-						if(RSA_private_decrypt(len, (unsigned char *)p, (unsigned char*) cdata->aes_key, rsa, RSA_PKCS1_OAEP_PADDING) < 0)
+						if(RSA_private_decrypt(len,
+						(unsigned char*) p,
+						(unsigned char*) cdata->aes_key,
+						rsa,
+						RSA_PKCS1_OAEP_PADDING) < 0)
 						{
 							free(p);
 							return -1;
@@ -576,7 +603,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 						/* Decode AES IV */
 						p = strdup(m->attr[i]+6);
 						rtsp_decode_base64(p);
-						strncpy((char*)cdata->aes_iv, p, 16);
+						strncpy((char*)cdata->aes_iv, p,
+							 16);
 
 						free(p);
 						break;
@@ -600,13 +628,14 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer, 
 
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 {
-	struct airtunes_client_data *cdata = (struct airtunes_client_data*) rtsp_get_user_data(c);
-	struct airtunes_server_data *sdata = (struct airtunes_server_data*) user_data;
+	struct airtunes_client_data *cdata = (struct airtunes_client_data*)
+							  rtsp_get_user_data(c);
+	struct airtunes_server_data *sdata = (struct airtunes_server_data*)
+								      user_data;
 
 	if(cdata != NULL)
 	{
 		/* Stop stream */
-		output_pause_stream(sdata->output, cdata->stream);
 		output_remove_stream(sdata->output, cdata->stream);
 		raop_close(cdata->raop);
 
@@ -617,3 +646,4 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 
 	return 0;
 }
+
