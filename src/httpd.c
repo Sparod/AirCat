@@ -904,13 +904,16 @@ static int httpd_files_playlist(struct request_attr *attr)
 
 static int httpd_files_play(struct request_attr *attr)
 {
-	int idx;
+	int idx = -1;
 
 	/* Add file to playlist */
-	idx = files_add(attr->handle->files, attr->res);
-	if(idx < 0)
-		return httpd_json_msg(attr->connection, 406,
+	if(*attr->res != 0)
+	{
+		idx = files_add(attr->handle->files, attr->res);
+		if(idx < 0)
+			return httpd_json_msg(attr->connection, 406,
 						       "File is not supported");
+	}
 
 	/* Play the file now */
 	if(files_play(attr->handle->files, idx) != 0)
@@ -969,7 +972,7 @@ struct url_table url_table[] = {
 	{"/files/playlist/remove/", 0, HTTP_PUT, &httpd_files_playlist_remove},
 	{"/files/playlist/flush", 1, HTTP_PUT, &httpd_files_playlist_flush},
 	{"/files/playlist", 1, HTTP_GET, &httpd_files_playlist},
-	{"/files/play/", 0, HTTP_PUT, &httpd_files_play},
+	{"/files/play", 0, HTTP_PUT, &httpd_files_play},
 	{"/files/pause", 1, HTTP_PUT, &httpd_files_pause},
 	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
 	{"/files/list", 0, HTTP_GET, &httpd_files_list},

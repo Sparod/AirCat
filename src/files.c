@@ -21,6 +21,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <libgen.h>
 
 #include <json.h>
 #include <json_tokener.h>
@@ -168,8 +169,12 @@ int files_play(struct files_handle *h, int index)
 	if(config.files_enabled != 1)
 		return 0;
 
+	/* Get last played index */
+	if(index == -1 && (index = h->playlist_cur) < 0)
+		index = 0;
+
 	/* Check playlist index */
-	if(index < 0 || index >= h->playlist_len)
+	if(index >= h->playlist_len)
 		return -1;
 
 	/* Stop previous playing */
@@ -219,7 +224,6 @@ int files_stop(struct files_handle *h)
 		return 0;
 
 	/* Stop stream */
-	h->playlist_cur = -1;
 	h->is_playing = 0;
 
 	/* Close stream */
