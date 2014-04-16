@@ -134,7 +134,14 @@ int files_remove(struct files_handle *h, int index)
 {
 	/* Check if it is current file */
 	if(h->playlist_cur == index)
+	{
 		files_stop(h);
+		h->playlist_cur = -1;
+	}
+	else if(h->playlist_cur > index)
+	{
+		h->playlist_cur--;	
+	}
 
 	/* Free index playlist structure */
 	files_free_playlist(&h->playlist[index]);
@@ -158,6 +165,7 @@ void files_flush(struct files_handle *h)
 		files_free_playlist(&h->playlist[h->playlist_len]);
 	}
 	h->playlist_len = 0;
+	h->playlist_cur = -1;
 }
 
 int files_play(struct files_handle *h, int index)
