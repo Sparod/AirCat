@@ -591,12 +591,18 @@ struct config_tab config_raop_tab[] = {
 	{0, 0, 0}
 };
 
+struct config_tab config_files_tab[] = {
+	{"enabled", BOOLEAN, &config.files_enabled},
+	{0, 0, 0}
+};
+
 struct config_tab config_tab[] = {
 	{"name", STRING, &config.name},
 	{"password", STRING, &config.password},
 	{"port", NUMBER, &config.port},
 	{"radio", NODE, &config_radio_tab},
 	{"raop", NODE, &config_raop_tab},
+	{"files", NODE, &config_files_tab},
 	{0, 0, 0}
 };
 
@@ -681,7 +687,8 @@ static int httpd_put_config(struct config_tab *tab, struct json_object *root,
 		switch(tab[i].type)
 		{
 			case NODE:
-				httpd_put_config(tab[i].value, current, next);
+				ret += httpd_put_config(tab[i].value, current,
+						       next);
 				break;
 			case STRING:
 				c_str = (char**) tab[i].value;
