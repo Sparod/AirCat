@@ -107,6 +107,9 @@ int output_alsa_open(struct output **handle, unsigned int samplerate,
 	if(ret < 0)
 		return -1;
 
+	/* Initialize mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
 	/* Create thread */
 	if(pthread_create(&h->thread, NULL, output_alsa_thread, h) != 0)
 		return -1;
