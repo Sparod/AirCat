@@ -71,6 +71,7 @@ struct request_attr {
 	struct httpd_handle *handle;
 	struct MHD_Connection *connection;
 	const char *url;
+	const char *res;
 	int method;
 	const char *upload_data;
 	size_t *upload_data_size;
@@ -640,7 +641,7 @@ static void httpd_get_config(struct config_tab *tab, struct json_object *root)
 	}
 }
 
-static void httpd_put_config(struct config_tab *tab, struct json_object *root,
+static int httpd_put_config(struct config_tab *tab, struct json_object *root,
 			     const char *url)
 {
 	struct json_object *current;
@@ -649,6 +650,7 @@ static void httpd_put_config(struct config_tab *tab, struct json_object *root,
 	long *c_nb = NULL, nb;
 	int *c_bool = NULL, bool;
 	int i, len;
+	int ret = 0;
 
 	/* Process URL if not NULL */
 	if(url != NULL)
@@ -694,28 +696,32 @@ static void httpd_put_config(struct config_tab *tab, struct json_object *root,
 					else
 						*c_str = NULL;
 				}
+				ret++;
 				break;
 			case NUMBER:
 				c_nb = (long*) tab[i].value;
 				nb = (long) json_object_get_int(current);
 				*c_nb = nb;
+				ret++;
 				break;
 			case BOOLEAN:
 				c_bool = (int*) tab[i].value;
 				bool = (int) json_object_get_boolean(current);
 				*c_bool = bool != 0 ? 1 : 0;
+				ret++;
 				break;
 			default:
 				continue;
 		}
 	}
+
+	return ret;
 }
 
 static int httpd_config(struct request_attr *attr)
 {
 	struct request_data *req_data;
 	struct json_object *json_root;
-	char *url = NULL;
 	char *json;
 	int ret;
 
@@ -752,19 +758,15 @@ static int httpd_config(struct request_attr *attr)
 		req_data = *attr->req_data;
 		json_root = ((struct json_data*)req_data->data)->object;
 
-		/* Process JSON data */
+		/* Process JSON data and change configuration */
 		if(json_root != NULL)
 		{
-			/* Check URL */
-			if(strlen(attr->url) > 8)
-				url = (char*)attr->url + 8;
-
-			/* Change configuration */
-			httpd_put_config(config_tab, json_root, url);
+			ret = httpd_put_config(config_tab, json_root,
+					       attr->res);
+			if(ret > 0)
+				return httpd_json_msg(attr->connection, 200,
+						      "");
 		}
-
-		/* Respond with success message */
-		return httpd_json_msg(attr->connection, 200, "");
 	}
 
 	return httpd_json_msg(attr->connection, 400,
@@ -777,18 +779,10 @@ static int httpd_config(struct request_attr *attr)
 
 static int httpd_radio_cat_info(struct request_attr *attr)
 {
-	char *id = NULL;
 	char *info;
 
-	/* Get category name */
-	if(attr->url != NULL)
-		id = strstr(attr->url, "info/");
-	if(id == NULL || id[5] == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
-	id += 5;
-
 	/* Get info about category */
-	info = radio_get_json_category_info(attr->handle->radio, id);
+	info = radio_get_json_category_info(attr->handle->radio, attr->res);
 	if(info == NULL)
 		return httpd_json_msg(attr->connection, 404, "Radio not found");
 
@@ -797,18 +791,10 @@ static int httpd_radio_cat_info(struct request_attr *attr)
 
 static int httpd_radio_info(struct request_attr *attr)
 {
-	char *id = NULL;
 	char *info;
 
-	/* Get radio name */
-	if(attr->url != NULL)
-		id = strstr(attr->url, "info/");
-	if(id == NULL || id[5] == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
-	id += 5;
-
 	/* Get info about radio */
-	info = radio_get_json_radio_info(attr->handle->radio, id);
+	info = radio_get_json_radio_info(attr->handle->radio, attr->res);
 	if(info == NULL)
 		return httpd_json_msg(attr->connection, 404, "Radio not found");
 
@@ -818,21 +804,9 @@ static int httpd_radio_info(struct request_attr *attr)
 static int httpd_radio_list(struct request_attr *attr)
 {
 	char *list = NULL;
-	char *id = NULL;
-
-	/* Get radio / category path*/
-	if(attr->url != NULL)
-	{
-		id = strstr(attr->url, "list/");
-		if(id != NULL)
-			id+=5;
-	}
-
-	if(id != NULL && *id == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
 
 	/* Get Radio list */
-	list = radio_get_json_list(attr->handle->radio, id);
+	list = radio_get_json_list(attr->handle->radio, attr->res);
 	if(list == NULL)
 		return httpd_json_msg(attr->connection, 500, "No radio list");
 
@@ -865,21 +839,10 @@ static int httpd_raop_restart(struct request_attr *attr)
 
 static int httpd_files_playlist_add(struct request_attr *attr)
 {
-	char *filename = NULL;
 	int idx;
 
-	/* Get filename in url*/
-	if(attr->url != NULL)
-	{
-		filename = strstr(attr->url, "add/");
-		if(filename != NULL)
-			filename += 4;
-	}
-
-	if(filename != NULL && *filename == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
-
-	idx = files_add(attr->handle->files, filename);
+	/* Add file to playlist */
+	idx = files_add(attr->handle->files, attr->res);
 	if(idx < 0)
 		return httpd_json_msg(attr->connection, 406,
 						       "File is not supported");
@@ -889,21 +852,14 @@ static int httpd_files_playlist_add(struct request_attr *attr)
 
 static int httpd_files_playlist_play(struct request_attr *attr)
 {
-	char *tmp = NULL;
-	int idx = -1;
+	int idx;
 
-	/* Get index in url */
-	tmp = strstr(attr->url, "play/");
-	if(tmp != NULL)
-	{
-		tmp += 5;
-		idx = atoi(tmp);
-	}
-
+	/* Get index from URL */
+	idx = atoi(attr->res);
 	if(idx < 0)
 		return httpd_json_msg(attr->connection, 400, "Bad index");
 
-	/* remove from playlist */
+	/* Play selected file in playlist */
 	if(files_play(attr->handle->files, idx) != 0)
 		return httpd_json_msg(attr->connection, 500, "Playlist error");
 
@@ -912,21 +868,14 @@ static int httpd_files_playlist_play(struct request_attr *attr)
 
 static int httpd_files_playlist_remove(struct request_attr *attr)
 {
-	char *tmp = NULL;
-	int idx = -1;
+	int idx;
 
-	/* Get index in url */
-	tmp = strstr(attr->url, "remove/");
-	if(tmp != NULL)
-	{
-		tmp += 7;
-		idx = atoi(tmp);
-	}
-
+	/* Get index from URL */
+	idx = atoi(attr->res);
 	if(idx < 0)
 		return httpd_json_msg(attr->connection, 400, "Bad index");
 
-	/* remove from playlist */
+	/* Remove from playlist */
 	if(files_remove(attr->handle->files, idx) != 0)
 		return httpd_json_msg(attr->connection, 500, "Playlist error");
 
@@ -955,25 +904,15 @@ static int httpd_files_playlist(struct request_attr *attr)
 
 static int httpd_files_play(struct request_attr *attr)
 {
-	char *filename = NULL;
 	int idx;
 
-	/* Get filename in path*/
-	if(attr->url != NULL)
-	{
-		filename = strstr(attr->url, "play/");
-		if(filename != NULL)
-			filename += 5;
-	}
-
-	if(filename != NULL && *filename == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
-
-	idx = files_add(attr->handle->files, filename);
+	/* Add file to playlist */
+	idx = files_add(attr->handle->files, attr->res);
 	if(idx < 0)
 		return httpd_json_msg(attr->connection, 406,
 						       "File is not supported");
 
+	/* Play the file now */
 	if(files_play(attr->handle->files, idx) != 0)
 		return httpd_json_msg(attr->connection, 406,
 						        "Cannot play the file");
@@ -983,6 +922,7 @@ static int httpd_files_play(struct request_attr *attr)
 
 static int httpd_files_pause(struct request_attr *attr)
 {
+	/* Pause file playing */
 	files_pause(attr->handle->files);
 
 	return httpd_json_msg(attr->connection, 200, "");
@@ -990,6 +930,7 @@ static int httpd_files_pause(struct request_attr *attr)
 
 static int httpd_files_stop(struct request_attr *attr)
 {
+	/* Stop file playing */
 	files_stop(attr->handle->files);
 
 	return httpd_json_msg(attr->connection, 200, "");
@@ -998,21 +939,9 @@ static int httpd_files_stop(struct request_attr *attr)
 static int httpd_files_list(struct request_attr *attr)
 {
 	char *list = NULL;
-	char *path = NULL;
-
-	/* Get list file in path*/
-	if(attr->url != NULL)
-	{
-		path = strstr(attr->url, "list/");
-		if(path != NULL)
-			path += 5;
-	}
-
-	if(path != NULL && *path == 0)
-		return httpd_json_msg(attr->connection, 400, "Bad request");
 
 	/* Get file list */
-	list = files_get_json_list(attr->handle->files, path);
+	list = files_get_json_list(attr->handle->files, attr->res);
 	if(list == NULL)
 		return httpd_json_msg(attr->connection, 404, "Bad directory");
 
@@ -1108,6 +1037,19 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 			if((url_table[i].method & method_code) == 0)
 				return httpd_response(c, 406,
 						      "Method not acceptable!");
+
+			/* Extarct and check ressource name */
+			if(url_table[i].strict_cmp == 0)
+			{
+				attr.res = url + strlen(url_table[i].url) - 1;
+				if(*attr.res++ == '/' && *attr.res == 0)
+					return httpd_response(c, 400,
+							      "Bad request");
+				if(*attr.res == '/')
+					attr.res++;
+			}
+			else
+				attr.res = NULL;
 
 			/* Prepare attributes for processing URL */
 			attr.handle = h;

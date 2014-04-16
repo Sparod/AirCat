@@ -784,7 +784,7 @@ char *radio_list_get_list_json(struct radio_list_handle *h, const char *id)
 	/* Lock radio list access */
 	pthread_mutex_lock(&h->mutex);
 
-	if(id == NULL)
+	if(id == NULL || *id == 0)
 	{
 		str = radio_list_list_by_category(h->category_list,
 						  h->category_list_count,
