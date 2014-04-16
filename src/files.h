@@ -24,9 +24,13 @@
 struct files_handle;
 
 int files_open(struct files_handle **handle, struct output_handle *o);
-int files_play(struct files_handle *h, const char *filename);
+int files_add(struct files_handle *h, const char *filename);
+int files_remove(struct files_handle *h, int index);
+void files_flush(struct files_handle *h);
+int files_play(struct files_handle *h, int index);
 int files_pause(struct files_handle *h);
 int files_stop(struct files_handle *h);
+char *files_get_json_playlist(struct files_handle *h);
 char *files_get_json_list(struct files_handle *h, const char *path);
 int files_close(struct files_handle *h);
 

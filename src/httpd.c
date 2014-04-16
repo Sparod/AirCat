@@ -863,11 +863,102 @@ static int httpd_raop_restart(struct request_attr *attr)
  *                               Files Part                                   *
  ******************************************************************************/
 
+static int httpd_files_playlist_add(struct request_attr *attr)
+{
+	char *filename = NULL;
+	int idx;
+
+	/* Get filename in url*/
+	if(attr->url != NULL)
+	{
+		filename = strstr(attr->url, "add/");
+		if(filename != NULL)
+			filename += 4;
+	}
+
+	if(filename != NULL && *filename == 0)
+		return httpd_json_msg(attr->connection, 400, "Bad request");
+
+	idx = files_add(attr->handle->files, filename);
+	if(idx < 0)
+		return httpd_json_msg(attr->connection, 406,
+						       "File is not supported");
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_playlist_play(struct request_attr *attr)
+{
+	char *tmp = NULL;
+	int idx = -1;
+
+	/* Get index in url */
+	tmp = strstr(attr->url, "play/");
+	if(tmp != NULL)
+	{
+		tmp += 5;
+		idx = atoi(tmp);
+	}
+
+	if(idx < 0)
+		return httpd_json_msg(attr->connection, 400, "Bad index");
+
+	/* remove from playlist */
+	if(files_play(attr->handle->files, idx) != 0)
+		return httpd_json_msg(attr->connection, 500, "Playlist error");
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_playlist_remove(struct request_attr *attr)
+{
+	char *tmp = NULL;
+	int idx = -1;
+
+	/* Get index in url */
+	tmp = strstr(attr->url, "remove/");
+	if(tmp != NULL)
+	{
+		tmp += 7;
+		idx = atoi(tmp);
+	}
+
+	if(idx < 0)
+		return httpd_json_msg(attr->connection, 400, "Bad index");
+
+	/* remove from playlist */
+	if(files_remove(attr->handle->files, idx) != 0)
+		return httpd_json_msg(attr->connection, 500, "Playlist error");
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_playlist_flush(struct request_attr *attr)
+{
+	/* Flush playlist */
+	files_flush(attr->handle->files);
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
+static int httpd_files_playlist(struct request_attr *attr)
+{
+	char *list = NULL;
+
+	/* Get playlist */
+	list = files_get_json_playlist(attr->handle->files);
+	if(list == NULL)
+		return httpd_json_msg(attr->connection, 500, "Playlist error");
+
+	return httpd_json_response(attr->connection, 200, list, strlen(list));
+}
+
 static int httpd_files_play(struct request_attr *attr)
 {
 	char *filename = NULL;
+	int idx;
 
-	/* Get list file in path*/
+	/* Get filename in path*/
 	if(attr->url != NULL)
 	{
 		filename = strstr(attr->url, "play/");
@@ -878,9 +969,14 @@ static int httpd_files_play(struct request_attr *attr)
 	if(filename != NULL && *filename == 0)
 		return httpd_json_msg(attr->connection, 400, "Bad request");
 
-	if(files_play(attr->handle->files, filename) != 0)
+	idx = files_add(attr->handle->files, filename);
+	if(idx < 0)
 		return httpd_json_msg(attr->connection, 406,
 						       "File is not supported");
+
+	if(files_play(attr->handle->files, idx) != 0)
+		return httpd_json_msg(attr->connection, 406,
+						        "Cannot play the file");
 
 	return httpd_json_msg(attr->connection, 200, "");
 }
@@ -939,6 +1035,11 @@ struct url_table url_table[] = {
 	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},
+	{"/files/playlist/add/", 0, HTTP_PUT, &httpd_files_playlist_add},
+	{"/files/playlist/play/", 0, HTTP_PUT, &httpd_files_playlist_play},
+	{"/files/playlist/remove/", 0, HTTP_PUT, &httpd_files_playlist_remove},
+	{"/files/playlist/flush", 1, HTTP_PUT, &httpd_files_playlist_flush},
+	{"/files/playlist", 1, HTTP_GET, &httpd_files_playlist},
 	{"/files/play/", 0, HTTP_PUT, &httpd_files_play},
 	{"/files/pause", 1, HTTP_PUT, &httpd_files_pause},
 	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},

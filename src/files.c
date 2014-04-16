@@ -30,12 +30,25 @@
 #include "file.h"
 #include "tag.h"
 
+#define PLAYLIST_ALLOC_SIZE 32
+
+struct files_playlist {
+	char *filename;
+	struct tag *meta;
+	struct file_handle *file;
+};
+
 struct files_handle {
 	/* File player */
 	struct file_handle *file;
 	struct output_handle *output;
 	struct output_stream *stream;
 	int is_playing;
+	/* Playlist */
+	struct files_playlist *playlist;
+	int playlist_alloc;
+	int playlist_len;
+	int playlist_cur;
 };
 
 int files_open(struct files_handle **handle, struct output_handle *o)
@@ -53,26 +66,36 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 	h->output = o;
 	h->stream = NULL;
 	h->is_playing = 0;
+	h->playlist_cur = -1;
+
+	/* Allocate playlist */
+	h->playlist = malloc(PLAYLIST_ALLOC_SIZE *
+			     sizeof(struct files_playlist));
+	if(h->playlist != NULL)
+		h->playlist_alloc = PLAYLIST_ALLOC_SIZE;
+	h->playlist_len = 0;
 
 	return 0;
 }
 
-int files_play(struct files_handle *h, const char *filename)
+static inline void files_free_playlist(struct files_playlist *p)
 {
-	unsigned long samplerate;
-	unsigned char channels;
+	if(p->filename != NULL)
+		free(p->filename);
+	if(p->meta != NULL)
+		tag_free(p->meta);
+	if(p->file != NULL)
+		file_close(p->file);
+}
+
+int files_add(struct files_handle *h, const char *filename)
+{
+	struct files_playlist *p;
 	char *real_path;
 	int len;
 
 	if(filename == NULL)
 		return -1;
-
-	/* Files module must be enabled */
-	if(config.files_enabled != 1)
-		return 0;
-
-	/* Stop previous playing */
-	files_stop(h);
 
 	/* Make real path */
 	len = strlen(config.files_path) + strlen(filename) + 2;
@@ -81,8 +104,79 @@ int files_play(struct files_handle *h, const char *filename)
 		return -1;
 	sprintf(real_path, "%s/%s", config.files_path, filename);
 
+	/* Add more space to playlist */
+	if(h->playlist_len == h->playlist_alloc)
+	{
+		/* Reallocate playlist */
+		p = realloc(h->playlist, PLAYLIST_ALLOC_SIZE *
+			    sizeof(struct files_playlist));
+		if(p == NULL)
+			return -1;
+
+		h->playlist = p;
+		h->playlist_alloc += PLAYLIST_ALLOC_SIZE;
+	}
+
+	/* Fill the new playlist entry */
+	p = &h->playlist[h->playlist_len];
+	p->filename = strdup(real_path);
+	p->meta = tag_read(real_path, 0);
+	p->file = NULL;
+
+	/* Increment playlist len */
+	h->playlist_len++;
+
+	return h->playlist_len - 1;
+}
+
+int files_remove(struct files_handle *h, int index)
+{
+	/* Check if it is current file */
+	if(h->playlist_cur == index)
+		files_stop(h);
+
+	/* Free index playlist structure */
+	files_free_playlist(&h->playlist[index]);
+
+	/* Remove the index from playlist */
+	memmove(&h->playlist[index], &h->playlist[index+1], 
+		(h->playlist_len - index - 1) * sizeof(struct files_playlist));
+	h->playlist_len--;
+
+	return 0;
+}
+
+void files_flush(struct files_handle *h)
+{
+	/* Stop playing before flush */
+	files_stop(h);
+
+	/* Flush all playlist */
+	for(; h->playlist_len--;)
+	{
+		files_free_playlist(&h->playlist[h->playlist_len]);
+	}
+	h->playlist_len = 0;
+}
+
+int files_play(struct files_handle *h, int index)
+{
+	unsigned long samplerate;
+	unsigned char channels;
+
+	/* Files module must be enabled */
+	if(config.files_enabled != 1)
+		return 0;
+
+	/* Check playlist index */
+	if(index < 0 || index >= h->playlist_len)
+		return -1;
+
+	/* Stop previous playing */
+	files_stop(h);
+
 	/* Start new player */
-	if(file_open(&h->file, real_path) != 0)
+	if(file_open(&h->file, h->playlist[index].filename) != 0)
 		return -1;
 
 	/* Get samplerate and channels */
@@ -94,6 +188,7 @@ int files_play(struct files_handle *h, const char *filename)
 				      &file_read, h->file);
 	output_play_stream(h->output, h->stream);
 
+	h->playlist_cur = index;
 	h->is_playing = 1;
 
 	return 0;
@@ -123,12 +218,16 @@ int files_stop(struct files_handle *h)
 	if(h == NULL || h->file == NULL)
 		return 0;
 
+	/* Stop stream */
+	h->playlist_cur = -1;
 	h->is_playing = 0;
 
-	//output_stop_stream(h->output, h->stream);
+	/* Close stream */
 	if(h->stream != NULL)
 		output_remove_stream(h->output, h->stream);
 	h->stream = NULL;
+
+	/* Close file */
 	file_close(h->file);
 	h->file = NULL;
 
@@ -143,11 +242,13 @@ int files_stop(struct files_handle *h)
 #define ADD_INT(root, key, value) \
 		  json_object_object_add(root, key, json_object_new_int(value));
 
-static json_object *files_get_file_json_object(const char *file,
-					       const char *filename)
+static json_object *files_get_file_json_object(const char *filename,
+					       struct tag *meta)
 {
 	json_object *tmp = NULL;
-	struct tag *meta;
+
+	if(filename == NULL)
+		return NULL;
 
 	/* Create temporary object */
 	tmp = json_object_new_object();
@@ -158,7 +259,6 @@ static json_object *files_get_file_json_object(const char *file,
 	json_object_object_add(tmp, "file", json_object_new_string(filename));
 
 	/* Get tag data */
-	meta = tag_read(file, 0);
 	if(meta != NULL)
 	{
 		/* Add all tags */
@@ -169,20 +269,53 @@ static json_object *files_get_file_json_object(const char *file,
 		ADD_STRING(tmp, "genre", meta->genre);
 		ADD_INT(tmp, "track", meta->track);
 		ADD_INT(tmp, "year", meta->year);
-
-		tag_free(meta);
 	}
 
 	return tmp;
 }
 
+char *files_get_json_playlist(struct files_handle *h)
+{
+	struct json_object *root, *tmp;
+	char *str;
+	int i;
+
+	/* Create JSON object */
+	root = json_object_new_array();
+	if(root == NULL)
+		return NULL;
+
+	/* Fill the JSON array with playlist */
+	for(i = 0; i < h->playlist_len; i++)
+	{
+		/* Create temporary object */
+		str = basename(h->playlist[i].filename);
+		tmp = files_get_file_json_object(str, h->playlist[i].meta);
+		if(tmp == NULL)
+			continue;
+
+		/* Add to list */
+		if(json_object_array_add(root, tmp) != 0)
+			json_object_put(tmp);
+	}
+
+	/* Get JSON string */
+	str = strdup(json_object_to_json_string(root));
+
+	/* Free JSON object */
+	json_object_put(root);
+
+	return str;
+}
+
 char *files_get_json_list(struct files_handle *h, const char *path)
 {
 	char *ext[] = { ".mp3", ".m4a", ".ogg", ".wav", NULL };
-	struct dirent *entry;
-	DIR *dir;
-	struct stat s;
 	struct json_object *root = NULL, *dir_list, *file_list, *tmp;
+	struct dirent *entry;
+	struct stat s;
+	DIR *dir;
+	struct tag *meta;
 	char *real_path;
 	char *str = NULL;
 	int len, i;
@@ -211,7 +344,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 	dir_list = json_object_new_array();
 	if(root == NULL || dir_list == NULL)
 		goto end;
-	file_list = json_object_new_array();;
+	file_list = json_object_new_array();
 	if(file_list == NULL)
 	{
 		json_object_put(dir_list);
@@ -243,9 +376,15 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 			{
 				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
 				{
+					/* Read meta data from file */
+					meta = tag_read(str, 0);
+
 					/* Create temporary object */
-					tmp = files_get_file_json_object(str,
-								 entry->d_name);
+					tmp = files_get_file_json_object(
+								  entry->d_name,
+								  meta);
+					if(meta != NULL)
+						tag_free(meta);
 					if(tmp == NULL)
 						continue;
 
@@ -296,12 +435,15 @@ int files_close(struct files_handle *h)
 	if(h == NULL)
 		return 0;
 
-	if(h->stream != NULL)
-		output_remove_stream(h->output, h->stream);
+	/* Stop playing */
+	files_stop(h);
 
-	/* Stop and close file player */
-	if(h->file != NULL)
-		file_close(h->file);
+	/* Free playlist */
+	if(h->playlist != NULL)
+	{
+		files_flush(h);
+		free(h->playlist);
+	}
 
 	free(h);
 
