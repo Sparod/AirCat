@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+
 #include <mad.h>
 
 #include "decoder_mp3.h"
@@ -145,17 +146,21 @@ static long decoder_mp3_fill(struct decoder *dec)
 #ifdef USE_FLOAT
 inline float mad_scale(mad_fixed_t sample)
 {
-    return (float) (sample / (float) (1L << MAD_F_FRACBITS));
+	return (float) (sample / (float) (1L << MAD_F_FRACBITS));
 }
-#else /* FIXME */
+#else
 inline int32_t mad_scale(mad_fixed_t sample)
 {
-    if (sample >= MAD_F_ONE)
-        sample = MAD_F_ONE - 1;
-    else if (sample < -MAD_F_ONE)
-        sample = -MAD_F_ONE;
+	/* Round sample */
+	sample += (1L << 4);
 
-    return sample << 3;
+	/* Clip */
+	if (sample >= MAD_F_ONE)
+		sample = MAD_F_ONE - 1;
+	else if (sample < -MAD_F_ONE)
+		sample = -MAD_F_ONE;
+
+	return (sample << 3) & 0xFFFFFF00;
 }
 #endif
 
