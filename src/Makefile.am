@@ -1,6 +1,7 @@
 bin_PROGRAMS = aircat
 
 aircat_SOURCES = main.c \
+		 utils.c \
 		 config_file.c \
 		 httpd.c \
 		 radio.c \
@@ -49,6 +50,7 @@ aircat_CPPFLAGS = $(libtag_CFLAGS)
 aircat_SOURCES += tag_libtag.cpp
 
 EXTRA_DIST = http.h \
+	     utils.h \
 	     config_file.h \
 	     httpd.h \
 	     radio.h \

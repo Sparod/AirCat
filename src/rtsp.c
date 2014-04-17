@@ -38,6 +38,7 @@
 #include <openssl/md5.h>
 #endif
 
+#include "utils.h"
 #include "rtsp.h"
 
 #define BUFFER_SIZE 8192
@@ -108,8 +109,6 @@ struct rtsp_handle {
 	struct pollfd *poll_table;
 	struct rtsp_client *clients;
 };
-
-static char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static void rtsp_accept(struct rtsp_handle *h);
 static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c);
@@ -1108,94 +1107,11 @@ int rtsp_close(struct rtsp_handle *h)
 
 char *rtsp_encode_base64(const char *buffer, int length)
 {
-	unsigned char *s = (unsigned char*) buffer;
-	char *output, *p;
-
-	output = malloc(((4*((length+2)/3))+1)*sizeof(char));
-	if(output == NULL)
-		return NULL;
-
-	p = output;
-
-	/* Function from libbb of BusyBox */
-	/* Transform the 3x8 bits to 4x6 bits */
-	while (length > 0)
-	{
-		unsigned s1, s2;
-
-		/* Are s[1], s[2] valid or should be assumed 0? */
-		s1 = s2 = 0;
-		length -= 3; /* can be >=0, -1, -2 */
-		if (length >= -1)
-		{
-			s1 = s[1];
-			if (length >= 0)
-				s2 = s[2];
-		}
-		*p++ = base64_table[s[0] >> 2];
-		*p++ = base64_table[((s[0] & 3) << 4) + (s1 >> 4)];
-		*p++ = base64_table[((s1 & 0xf) << 2) + (s2 >> 6)];
-		*p++ = base64_table[s2 & 0x3f];
-		s += 3;
-	}
-	/* Zero-terminate */
-	*p = '\0';
-	/* If length is -2 or -1, pad last char or two */
-	while (length)
-	{
-		*--p = base64_table[64];
-		length++;
-	}
-
-	return output;
+	return base64_encode(buffer, length);
 }
 
 void rtsp_decode_base64(char *buffer)
 {
-	const unsigned char *in = (const unsigned char *)buffer;
-	/* The decoded size will be at most 3/4 the size of the encoded */
-	unsigned ch = 0;
-	int i = 0;
-
-	while (*in) {
-		int t = *in++;
-
-		if (t >= '0' && t <= '9')
-			t = t - '0' + 52;
-		else if (t >= 'A' && t <= 'Z')
-			t = t - 'A';
-		else if (t >= 'a' && t <= 'z')
-			t = t - 'a' + 26;
-		else if (t == '+')
-			t = 62;
-		else if (t == '/')
-			t = 63;
-		else if (t == '=')
-			t = 0;
-		else
-			continue;
-
-		ch = (ch << 6) | t;
-		i++;
-		if (i == 4)
-		{
-			*buffer++ = (char) (ch >> 16);
-			*buffer++ = (char) (ch >> 8);
-			*buffer++ = (char) ch;
-			i = 0;
-		}
-	}
-
-	/* Padding */
-	if (i != 0)
-	{
-		while (i--)
-			ch = (ch << 6) | 0;
-		*buffer++ = (char) (ch >> 16);
-		*buffer++ = (char) (ch >> 8);
-		*buffer++ = (char) ch;
-	}
-
-	*buffer = '\0';
+	base64_decode(buffer);
 }
 

@@ -42,6 +42,7 @@
 #include <openssl/ssl.h>
 #endif
 
+#include "utils.h"
 #include "http.h"
 
 enum {HTTP_GET, HTTP_HEAD, HTTP_POST};
@@ -80,15 +81,12 @@ struct http_handle {
 	struct http_header *headers;
 };
 
-static char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 static int http_parse_url(struct http_handle *h, const char *url);
 static int http_connect(struct http_handle *h);
 static int http_send_request(struct http_handle *h, const char *url, int type, unsigned char *post_buffer, int post_length);
 static int http_parse_header(struct http_handle *h);
 static int http_copy_options(struct http_handle *h2, struct http_handle *h);
 static int http_copy(struct http_handle *h, struct http_handle *h2);
-static char *http_base64_encode(const char *buffer, int length);
 static int http_close_free(struct http_handle *h, int free);
 
 struct http_handle *http_init()
@@ -342,7 +340,7 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	}
 	if(h->req.auth != NULL)
 	{
-		auth = http_base64_encode(h->req.auth, strlen(h->req.auth));
+		auth = base64_encode(h->req.auth, strlen(h->req.auth));
 		size += sprintf(&buffer[size], "Authorization: Basic %s\r\n", auth);
 		free(auth);
 	}
@@ -523,50 +521,6 @@ static int http_copy(struct http_handle *h, struct http_handle *h2)
 	free(h2);
 
 	return 0;
-}
-
-static char *http_base64_encode(const char *buffer, int length)
-{
-	unsigned char *s = (unsigned char*) buffer;
-	char *output, *p;
-
-	output = malloc(((4*((length+2)/3))+1)*sizeof(char));
-	if(output == NULL)
-		return NULL;
-
-	p = output;
-
-	/* Function from libbb of BusyBox */
-	/* Transform the 3x8 bits to 4x6 bits */
-	while (length > 0)
-	{
-		unsigned s1, s2;
-
-		/* Are s[1], s[2] valid or should be assumed 0? */
-		s1 = s2 = 0;
-		length -= 3; /* can be >=0, -1, -2 */
-		if (length >= -1)
-		{
-			s1 = s[1];
-			if (length >= 0)
-				s2 = s[2];
-		}
-		*p++ = base64_table[s[0] >> 2];
-		*p++ = base64_table[((s[0] & 3) << 4) + (s1 >> 4)];
-		*p++ = base64_table[((s1 & 0xf) << 2) + (s2 >> 6)];
-		*p++ = base64_table[s2 & 0x3f];
-		s += 3;
-	}
-	/* Zero-terminate */
-	*p = '\0';
-	/* If length is -2 or -1, pad last char or two */
-	while (length)
-	{
-		*--p = base64_table[64];
-		length++;
-	}
-
-	return output;
 }
 
 static int http_close_free(struct http_handle *h, int do_free)
