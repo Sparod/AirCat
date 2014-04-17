@@ -25,6 +25,18 @@ extern "C" {
 
 enum {
 	TAG_PICTURE = 1,
+	TAG_TOTAL_TRACK = 2,
+	TAG_COPYRIGHT = 4,
+	TAG_ENCODED = 8,
+	TAG_LANGUAGE = 16,
+	TAG_PUBLISHER = 32,
+};
+
+struct tag_picture {
+	unsigned char *data;
+	char *description;
+	char *mime;
+	int size;
 };
 
 struct tag {
@@ -38,8 +50,13 @@ struct tag {
 	int track;
 	int total_track;
 	int year;
-	/* Binary value */
-	char *picture;
+	/* Picture tag */
+	struct tag_picture picture;
+	/* Extended tags */
+	char *copyright;
+	char *encoded;
+	char *language;
+	char *publisher;
 };
 
 extern struct tag *tag_read(const char *filename, int options);

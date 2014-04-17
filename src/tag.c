@@ -32,26 +32,29 @@ struct tag *tag_read(const char *filename, int options)
 }
 #endif
 
+#define FREE_STRING(str) if(str != NULL) free(str);
+
 void tag_free(struct tag *tag)
 {
 	if(tag == NULL)
 		return;
 
 	/* Free string values */
-	if(tag->title != NULL)
-		free(tag->title);
-	if(tag->artist != NULL)
-		free(tag->artist);
-	if(tag->album != NULL)
-		free(tag->album);
-	if(tag->comment != NULL)
-		free(tag->comment);
-	if(tag->genre != NULL)
-		free(tag->genre);
+	FREE_STRING(tag->title);
+	FREE_STRING(tag->artist);
+	FREE_STRING(tag->album);
+	FREE_STRING(tag->comment);
+	FREE_STRING(tag->genre);
+	FREE_STRING(tag->copyright);
+	FREE_STRING(tag->encoded);
+	FREE_STRING(tag->language);
+	FREE_STRING(tag->publisher);
 
-	/* Free binary values */
-	if(tag->picture != NULL)
-		free(tag->picture);
+	/* Free picture */
+	FREE_STRING(tag->picture.description);
+	FREE_STRING(tag->picture.mime);
+	if(tag->picture.data != NULL)
+		free(tag->picture.data);
 
 	/* Free structure */
 	free(tag);

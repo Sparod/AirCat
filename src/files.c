@@ -27,6 +27,7 @@
 #include <json_tokener.h>
 
 #include "config_file.h"
+#include "utils.h"
 #include "files.h"
 #include "file.h"
 #include "tag.h"
@@ -258,6 +259,7 @@ static json_object *files_get_file_json_object(const char *filename,
 					       struct tag *meta)
 {
 	json_object *tmp = NULL;
+	char *pic = NULL;
 
 	if(filename == NULL)
 		return NULL;
@@ -281,6 +283,17 @@ static json_object *files_get_file_json_object(const char *filename,
 		ADD_STRING(tmp, "genre", meta->genre);
 		ADD_INT(tmp, "track", meta->track);
 		ADD_INT(tmp, "year", meta->year);
+
+		/* Get picture */
+		if(meta->picture.data != NULL)
+			pic = base64_encode((const char *)meta->picture.data,
+					    meta->picture.size);
+
+		/* Add picture to object */
+		ADD_STRING(tmp, "picture", pic);
+		ADD_STRING(tmp, "mime", meta->picture.mime);
+		if(pic != NULL)
+			free(pic);
 	}
 
 	return tmp;
@@ -389,7 +402,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
 				{
 					/* Read meta data from file */
-					meta = tag_read(str, 0);
+					meta = tag_read(str, TAG_PICTURE);
 
 					/* Create temporary object */
 					tmp = files_get_file_json_object(
