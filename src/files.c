@@ -30,14 +30,12 @@
 #include "utils.h"
 #include "files.h"
 #include "file.h"
-#include "tag.h"
 
 #define PLAYLIST_ALLOC_SIZE 32
 
 struct files_playlist {
 	char *filename;
-	struct tag *meta;
-	struct file_handle *file;
+	struct file_format *format;
 };
 
 struct files_handle {
@@ -84,10 +82,8 @@ static inline void files_free_playlist(struct files_playlist *p)
 {
 	if(p->filename != NULL)
 		free(p->filename);
-	if(p->meta != NULL)
-		tag_free(p->meta);
-	if(p->file != NULL)
-		file_close(p->file);
+	if(p->format != NULL)
+		file_format_free(p->format);
 }
 
 int files_add(struct files_handle *h, const char *filename)
@@ -122,8 +118,7 @@ int files_add(struct files_handle *h, const char *filename)
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
 	p->filename = strdup(real_path);
-	p->meta = tag_read(real_path, 0);
-	p->file = NULL;
+	p->format = file_format_parse(real_path, 0);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -256,7 +251,7 @@ int files_stop(struct files_handle *h)
 		  json_object_object_add(root, key, json_object_new_int(value));
 
 static json_object *files_get_file_json_object(const char *filename,
-					       struct tag *meta)
+					       struct file_format *meta)
 {
 	json_object *tmp = NULL;
 	char *pic = NULL;
@@ -315,7 +310,7 @@ char *files_get_json_playlist(struct files_handle *h)
 	{
 		/* Create temporary object */
 		str = basename(h->playlist[i].filename);
-		tmp = files_get_file_json_object(str, h->playlist[i].meta);
+		tmp = files_get_file_json_object(str, h->playlist[i].format);
 		if(tmp == NULL)
 			continue;
 
@@ -340,7 +335,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 	struct dirent *entry;
 	struct stat s;
 	DIR *dir;
-	struct tag *meta;
+	struct file_format *format;
 	char *real_path;
 	char *str = NULL;
 	int len, i;
@@ -402,14 +397,15 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
 				{
 					/* Read meta data from file */
-					meta = tag_read(str, TAG_PICTURE);
+					format = file_format_parse(str,
+								   TAG_PICTURE);
 
 					/* Create temporary object */
 					tmp = files_get_file_json_object(
 								  entry->d_name,
-								  meta);
-					if(meta != NULL)
-						tag_free(meta);
+								  format);
+					if(format != NULL)
+						file_format_free(format);
 					if(tmp == NULL)
 						continue;
 

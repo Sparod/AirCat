@@ -19,6 +19,8 @@
 #ifndef _FILE_CLIENT_H
 #define _FILE_CLIENT_H
 
+#include "file_format.h"
+
 struct file_handle;
 
 int file_open(struct file_handle **h, const char *name);

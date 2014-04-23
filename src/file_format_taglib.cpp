@@ -1,5 +1,6 @@
 /*
- * tag_libtag.cpp - An Audio Tag parser (based on libtag)
+ * file_format_taglib.cpp - An Audio File format parser and tag extractor (based
+ *                          on taglib)
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -26,7 +27,7 @@
 #include <taglib/id3v2tag.h>
 #include <taglib/attachedpictureframe.h>
 
-#include "tag.h"
+#include "file_format.h"
 
 #define COPY_STRING(d, s) if(s != NULL && *s != 0) d = strdup(s);
 
@@ -59,18 +60,19 @@ static const int id3v2_pic_type_pref[] = {
 
 using namespace TagLib;
 
-static void tag_get_total_track(struct tag *meta, const char *str)
+static void tag_get_total_track(struct file_format *f, const char *str)
 {
 	unsigned int track, total;
 
 	if(sscanf(str, "%u/%u", &track, &total) == 2)
 	{
-		meta->track = track;
-		meta->total_track = total;
+		f->track = track;
+		f->total_track = total;
 	}
 }
 
-static void tag_read_from_id3v2(ID3v2::Tag *tag, struct tag *meta, int options)
+static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
+				int options)
 {
 
 	ID3v2::FrameList list;
@@ -87,10 +89,10 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct tag *meta, int options)
             COPY_STRING(dest, (*list.begin())->toString().toCString(true)); \
     }
 
-	SET(TAG_COPYRIGHT, "TCOP", meta->copyright);
-	SET(TAG_ENCODED, "TENC", meta->encoded);
-	SET(TAG_LANGUAGE, "TLAN", meta->language);
-	SET(TAG_PUBLISHER, "TPUB", meta->publisher);
+	SET(TAG_COPYRIGHT, "TCOP", f->copyright);
+	SET(TAG_ENCODED, "TENC", f->encoded);
+	SET(TAG_LANGUAGE, "TLAN", f->language);
+	SET(TAG_PUBLISHER, "TPUB", f->publisher);
 
 #undef SET
 
@@ -100,7 +102,7 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct tag *meta, int options)
 		list = tag->frameListMap()["TRCK"];
 		if(!list.isEmpty())
 		{
-			tag_get_total_track(meta,
+			tag_get_total_track(f,
 				   (*list.begin())->toString().toCString(true));
 		}
 	}
@@ -136,31 +138,32 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct tag *meta, int options)
 			return;
 
 		/* Get mime type */
-		COPY_STRING(meta->picture.mime,
+		COPY_STRING(f->picture.mime,
 			    pic->mimeType().toCString(true));
 
 		/* Get description */
-		COPY_STRING(meta->picture.description,
+		COPY_STRING(f->picture.description,
 			    pic->description().toCString(true));
 
 		/* Get picture */
 		picture = pic->picture();
-		meta->picture.size = picture.size();
-		meta->picture.data = (unsigned char *) malloc(picture.size());
-		if(meta->picture.data == NULL)
+		f->picture.size = picture.size();
+		f->picture.data = (unsigned char *) malloc(picture.size());
+		if(f->picture.data == NULL)
 		{
-			meta->picture.size = 0;
+			f->picture.size = 0;
 			return;
 		}
 
 		/* Copy data */
-		memcpy(meta->picture.data, picture.data(), meta->picture.size);
+		memcpy(f->picture.data, picture.data(), f->picture.size);
 	}
 }
 
-struct tag *tag_read(const char *filename, int options)
+struct file_format *file_format_parse(const char *filename, int options)
 {
-	struct tag *meta;
+	AudioProperties *prop;
+	struct file_format *f;
 	FileRef file;
 	Tag *tag;
 
@@ -168,39 +171,47 @@ struct tag *tag_read(const char *filename, int options)
 
 	if(file.isNull())
 		return NULL;
-	if(!file.tag() || file.tag()->isEmpty())
+
+	/* Allocate tag structure */
+	f = (struct file_format*) calloc(1, sizeof(struct file_format));
+	if(f == NULL)
 		return NULL;
 
 	tag = file.tag();
-
-	/* Allocate tag structure */
-	meta = (struct tag*) calloc(1, sizeof(struct tag));
-	if(meta == NULL)
-		return NULL;
-
-	/* Fill structure with values */
-	COPY_STRING(meta->title, tag->title().toCString());
-	COPY_STRING(meta->artist, tag->artist().toCString());
-	COPY_STRING(meta->album, tag->album().toCString());
-	COPY_STRING(meta->comment, tag->comment().toCString());
-	COPY_STRING(meta->genre, tag->genre().toCString());
-	meta->track = tag->track();
-	meta->year = tag->year();
-
-
-	/* Extended tag extraction */
-	if(options != 0)
+	if(tag != NULL && !tag->isEmpty())
 	{
-		if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file.file()))
-		{
-
-			if(mpeg->ID3v2Tag())
-				tag_read_from_id3v2(mpeg->ID3v2Tag(), meta,
-						    options);
-		}
+		/* Fill structure with values */
+		COPY_STRING(f->title, tag->title().toCString());
+		COPY_STRING(f->artist, tag->artist().toCString());
+		COPY_STRING(f->album, tag->album().toCString());
+		COPY_STRING(f->comment, tag->comment().toCString());
+		COPY_STRING(f->genre, tag->genre().toCString());
+		f->track = tag->track();
+		f->year = tag->year();
 	}
 
+	/* Get file properties */
+	prop = file.audioProperties();
+	if(prop != NULL)
+	{
+		f->length = prop->length();
+		f->bitrate = prop->bitrate();
+		f->samplerate = prop->sampleRate();
+		f->channels = prop->channels();
+	}
 
-	return meta;
+	/* Get file type */
+	if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file.file()))
+	{
+		f->type = FILE_FORMAT_MPEG;
+
+		/* Get extended tags */
+		if(options != 0 && mpeg->ID3v2Tag())
+			tag_read_from_id3v2(mpeg->ID3v2Tag(), f, options);
+	}
+	else
+		f->type = FILE_FORMAT_UNKNOWN;
+
+	return f;
 }
 

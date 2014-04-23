@@ -11,7 +11,7 @@ aircat_SOURCES = main.c \
 		 http.c \
 		 files.c \
 		 file.c \
-		 tag.c \
+		 file_format.c \
 		 shoutcast.c \
 		 rtsp.c \
 		 rtp.c \
@@ -47,7 +47,7 @@ aircat_CFLAGS =  $(libssl_CFLAGS) \
 
 # C++ support and TagLib support
 aircat_CPPFLAGS = $(libtag_CFLAGS)
-aircat_SOURCES += tag_libtag.cpp
+aircat_SOURCES += file_format_taglib.cpp
 
 EXTRA_DIST = http.h \
 	     utils.h \
@@ -59,7 +59,7 @@ EXTRA_DIST = http.h \
 	     avahi.h \
 	     files.h \
 	     file.h \
-	     tag.h \
+	     file_format.h \
 	     shoutcast.h \
 	     rtsp.h \
 	     rtp.h \

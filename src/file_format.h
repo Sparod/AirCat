@@ -1,5 +1,5 @@
 /*
- * tag.h - An Audio Tag parser
+ * file_format.h - An Audio File format parser and tag extractor
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -16,12 +16,18 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _TAG_H
-#define _TAG_H
+#ifndef _FILE_FORMAT_H
+#define _FILE_FORMAT_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+enum {
+	FILE_FORMAT_UNKNOWN = 0,
+	FILE_FORMAT_MPEG = 1,
+	FILE_FORMAT_MP4
+};
 
 enum {
 	TAG_PICTURE = 1,
@@ -30,6 +36,7 @@ enum {
 	TAG_ENCODED = 8,
 	TAG_LANGUAGE = 16,
 	TAG_PUBLISHER = 32,
+	TAG_ALL = 0xFFFFF
 };
 
 struct tag_picture {
@@ -39,7 +46,9 @@ struct tag_picture {
 	int size;
 };
 
-struct tag {
+struct file_format {
+	/* Audio file type */
+	int type;
 	/* String values */
 	char *title;
 	char *artist;
@@ -50,6 +59,11 @@ struct tag {
 	int track;
 	int total_track;
 	int year;
+	/* File properties */
+	unsigned long length;
+	unsigned int bitrate;
+	unsigned long samplerate;
+	unsigned int channels;
 	/* Picture tag */
 	struct tag_picture picture;
 	/* Extended tags */
@@ -59,8 +73,9 @@ struct tag {
 	char *publisher;
 };
 
-extern struct tag *tag_read(const char *filename, int options);
-void tag_free(struct tag *tag);
+extern struct file_format *file_format_parse(const char *filename, int options);
+
+void file_format_free(struct file_format *f);
 
 #ifdef __cplusplus
 }
