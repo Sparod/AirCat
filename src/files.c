@@ -22,6 +22,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <libgen.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #include <json.h>
 #include <json_tokener.h>
@@ -39,17 +41,28 @@ struct files_playlist {
 };
 
 struct files_handle {
-	/* File player */
-	struct file_handle *file;
+	/* Output handle */
 	struct output_handle *output;
+	/* Current file player */
+	struct file_handle *file;
 	struct output_stream *stream;
+	/* Previous file player */
+	struct file_handle *prev_file;
+	struct output_stream *prev_stream;
+	/* Player status */
 	int is_playing;
 	/* Playlist */
 	struct files_playlist *playlist;
 	int playlist_alloc;
 	int playlist_len;
 	int playlist_cur;
+	/* Thread */
+	pthread_t thread;
+	pthread_mutex_t mutex;
+	int stop;
 };
+
+static void *files_thread(void *user_data);
 
 int files_open(struct files_handle **handle, struct output_handle *o)
 {
@@ -62,11 +75,14 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 	h = *handle;
 
 	/* Init structure */
-	h->file = NULL;
 	h->output = o;
+	h->file = NULL;
+	h->prev_file = NULL;
 	h->stream = NULL;
+	h->prev_stream = NULL;
 	h->is_playing = 0;
 	h->playlist_cur = -1;
+	h->stop = 0;
 
 	/* Allocate playlist */
 	h->playlist = malloc(PLAYLIST_ALLOC_SIZE *
@@ -75,7 +91,98 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 		h->playlist_alloc = PLAYLIST_ALLOC_SIZE;
 	h->playlist_len = 0;
 
+	/* Init thread */
+	pthread_mutex_init(&h->mutex, NULL);
+
+	/* Create thread */
+	if(pthread_create(&h->thread, NULL, files_thread, h) != 0)
+		return -1;
+
 	return 0;
+}
+
+static int files_new_player(struct files_handle *h)
+{
+	unsigned long samplerate;
+	unsigned char channels;
+
+	/* Start new player */
+	if(file_open(&h->file, h->playlist[h->playlist_cur].filename) != 0)
+	{
+		file_close(h->file);
+		h->file = NULL;
+		h->stream = NULL;
+		return -1;
+	}
+
+	/* Get samplerate and channels */
+	samplerate = file_get_samplerate(h->file);
+	channels = file_get_channels(h->file);
+
+	/* Open new Audio stream output and play */
+	h->stream = output_add_stream(h->output, samplerate, channels,
+				      &file_read, h->file);
+	output_play_stream(h->output, h->stream);
+
+	return 0;
+}
+
+static void *files_thread(void *user_data)
+{
+	struct files_handle *h = (struct files_handle *) user_data;
+
+	while(!h->stop)
+	{
+		/* Lock playlist */
+		pthread_mutex_lock(&h->mutex);
+
+		if(h->playlist_cur != -1 &&
+		   h->playlist_cur+1 <= h->playlist_len)
+		{
+			if(h->file != NULL && 
+			   (file_get_pos(h->file) >= file_get_length(h->file)-1
+			   || file_get_status(h->file) == FILE_EOF))
+			{
+				/* Close previous stream */
+				if(h->prev_stream != NULL)
+					output_remove_stream(h->output,
+							     h->prev_stream);
+
+				/* Close previous file */
+				file_close(h->prev_file);
+
+				/* Move current stream to previous */
+				h->prev_stream = h->stream;
+				h->prev_file = h->file;
+
+				/* Open next file in playlist */
+				while(h->playlist_cur <= h->playlist_len)
+				{
+					h->playlist_cur++;
+					if(h->playlist_cur >= h->playlist_len)
+					{
+						h->playlist_cur = -1;
+						h->stream = NULL;
+						h->file = NULL;
+						break;
+					}
+
+					if(files_new_player(h) != 0)
+						continue;
+
+					break;
+				}
+			}
+		}
+
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
+
+		/* Sleep during 100ms */
+		usleep(100000);
+	}
+
+	return NULL;
 }
 
 static inline void files_free_playlist(struct files_playlist *p)
@@ -102,6 +209,9 @@ int files_add(struct files_handle *h, const char *filename)
 		return -1;
 	sprintf(real_path, "%s/%s", config.files_path, filename);
 
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Add more space to playlist */
 	if(h->playlist_len == h->playlist_alloc)
 	{
@@ -123,15 +233,28 @@ int files_add(struct files_handle *h, const char *filename)
 	/* Increment playlist len */
 	h->playlist_len++;
 
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
 	return h->playlist_len - 1;
 }
 
 int files_remove(struct files_handle *h, int index)
 {
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Check if it is current file */
 	if(h->playlist_cur == index)
 	{
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
+
 		files_stop(h);
+
+		/* Lock playlist */
+		pthread_mutex_lock(&h->mutex);
+
 		h->playlist_cur = -1;
 	}
 	else if(h->playlist_cur > index)
@@ -147,6 +270,9 @@ int files_remove(struct files_handle *h, int index)
 		(h->playlist_len - index - 1) * sizeof(struct files_playlist));
 	h->playlist_len--;
 
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
 	return 0;
 }
 
@@ -155,6 +281,9 @@ void files_flush(struct files_handle *h)
 	/* Stop playing before flush */
 	files_stop(h);
 
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Flush all playlist */
 	for(; h->playlist_len--;)
 	{
@@ -162,13 +291,13 @@ void files_flush(struct files_handle *h)
 	}
 	h->playlist_len = 0;
 	h->playlist_cur = -1;
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 }
 
 int files_play(struct files_handle *h, int index)
 {
-	unsigned long samplerate;
-	unsigned char channels;
-
 	/* Files module must be enabled */
 	if(config.files_enabled != 1)
 		return 0;
@@ -185,47 +314,52 @@ int files_play(struct files_handle *h, int index)
 	files_stop(h);
 
 	/* Start new player */
-	if(file_open(&h->file, h->playlist[index].filename) != 0)
-		return -1;
-
-	/* Get samplerate and channels */
-	samplerate = file_get_samplerate(h->file);
-	channels = file_get_channels(h->file);
-
-	/* Open new Audio stream output and play */
-	h->stream = output_add_stream(h->output, samplerate, channels,
-				      &file_read, h->file);
-	output_play_stream(h->output, h->stream);
-
 	h->playlist_cur = index;
-	h->is_playing = 1;
+	if(files_new_player(h) != 0)
+	{
+		h->playlist_cur = -1;
+		h->is_playing = 0;
+		return -1;
+	}
 
 	return 0;
 }
 
 int files_pause(struct files_handle *h)
 {
-	if(h == NULL || h->output == NULL || h->stream == NULL)
+	if(h == NULL || h->output == NULL)
 		return 0;
 
-	if(!h->is_playing)
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->stream != NULL)
 	{
-		h->is_playing = 1;
-		output_play_stream(h->output, h->stream);
+		if(!h->is_playing)
+		{
+			h->is_playing = 1;
+			output_play_stream(h->output, h->stream);
+		}
+		else
+		{
+			h->is_playing = 0;
+			output_pause_stream(h->output, h->stream);
+		}
 	}
-	else
-	{
-		h->is_playing = 0;
-		output_pause_stream(h->output, h->stream);
-	}
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
 
 int files_stop(struct files_handle *h)
 {
-	if(h == NULL || h->file == NULL)
+	if(h == NULL)
 		return 0;
+
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
 
 	/* Stop stream */
 	h->is_playing = 0;
@@ -233,11 +367,19 @@ int files_stop(struct files_handle *h)
 	/* Close stream */
 	if(h->stream != NULL)
 		output_remove_stream(h->output, h->stream);
+	if(h->prev_stream != NULL)
+		output_remove_stream(h->output, h->prev_stream);
 	h->stream = NULL;
+	h->prev_stream = NULL;
 
 	/* Close file */
 	file_close(h->file);
+	file_close(h->prev_file);
 	h->file = NULL;
+	h->prev_file = NULL;
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
@@ -301,9 +443,17 @@ char *files_get_json_status(struct files_handle *h, int add_pic)
 	char *str = NULL;
 	int idx;
 
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	idx = h->playlist_cur;
 	if(idx < 0)
+	{
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
+
 		return strdup("{ \"file\": null }");
+	}
 
 	/* Create basic JSON object */
 	str = basename(h->playlist[idx].filename);
@@ -314,6 +464,9 @@ char *files_get_json_status(struct files_handle *h, int add_pic)
 		ADD_INT(tmp, "pos", file_get_pos(h->file));
 		ADD_INT(tmp, "length", file_get_length(h->file));
 	}
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Get JSON string */
 	str = strdup(json_object_to_json_string(tmp));
@@ -335,6 +488,9 @@ char *files_get_json_playlist(struct files_handle *h)
 	if(root == NULL)
 		return NULL;
 
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Fill the JSON array with playlist */
 	for(i = 0; i < h->playlist_len; i++)
 	{
@@ -348,6 +504,9 @@ char *files_get_json_playlist(struct files_handle *h)
 		if(json_object_array_add(root, tmp) != 0)
 			json_object_put(tmp);
 	}
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Get JSON string */
 	str = strdup(json_object_to_json_string(root));
@@ -488,6 +647,11 @@ int files_close(struct files_handle *h)
 
 	/* Stop playing */
 	files_stop(h);
+
+	/* Stop thread */
+	h->stop = 1;
+	if(pthread_join(h->thread, NULL) < 0)
+		return -1;
 
 	/* Free playlist */
 	if(h->playlist != NULL)

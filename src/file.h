@@ -21,6 +21,14 @@
 
 #include "file_format.h"
 
+/* File status */
+enum {
+	FILE_OPENED = 0,
+	FILE_EOF = 1,
+	FILE_CLOSED = 2,
+	FILE_NULL = -1
+};
+
 struct file_handle;
 
 int file_open(struct file_handle **h, const char *name);
@@ -31,6 +39,7 @@ unsigned char file_get_channels(struct file_handle *h);
 int file_set_pos(struct file_handle *h, int pos);
 int file_get_pos(struct file_handle *h);
 int file_get_length(struct file_handle *h);
+int file_get_status(struct file_handle *h);
 
 int file_read(struct file_handle *h, unsigned char *buffer, size_t size);
 

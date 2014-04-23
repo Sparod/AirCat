@@ -201,6 +201,20 @@ int file_get_length(struct file_handle *h)
 	return h->length;
 }
 
+int file_get_status(struct file_handle *h)
+{
+	if(h == NULL)
+		return FILE_NULL;
+
+	if(h->fp == NULL)
+		return FILE_CLOSED;
+
+	if(feof(h->fp))
+		return FILE_EOF;
+
+	return FILE_OPENED;
+}
+
 int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 {
 	int ret;
@@ -228,6 +242,9 @@ int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 
 int file_close(struct file_handle *h)
 {
+	if(h == NULL)
+		return 0;
+
 	/* Close decoder */
 	if(h->dec != NULL)
 		decoder_close(h->dec);
