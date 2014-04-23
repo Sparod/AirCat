@@ -127,6 +127,70 @@ static int files_new_player(struct files_handle *h)
 	return 0;
 }
 
+static void files_play_next(struct files_handle *h)
+{
+	/* Close previous stream */
+	if(h->prev_stream != NULL)
+		output_remove_stream(h->output, h->prev_stream);
+
+	/* Close previous file */
+	file_close(h->prev_file);
+
+	/* Move current stream to previous */
+	h->prev_stream = h->stream;
+	h->prev_file = h->file;
+
+	/* Open next file in playlist */
+	while(h->playlist_cur <= h->playlist_len)
+	{
+		h->playlist_cur++;
+		if(h->playlist_cur >= h->playlist_len)
+		{
+			h->playlist_cur = -1;
+			h->stream = NULL;
+			h->file = NULL;
+			break;
+		}
+
+		if(files_new_player(h) != 0)
+			continue;
+
+		break;
+	}
+}
+
+static void files_play_prev(struct files_handle *h)
+{
+	/* Close previous stream */
+	if(h->prev_stream != NULL)
+		output_remove_stream(h->output, h->prev_stream);
+
+	/* Close previous file */
+	file_close(h->prev_file);
+
+	/* Move current stream to previous */
+	h->prev_stream = h->stream;
+	h->prev_file = h->file;
+
+	/* Open next file in playlist */
+	while(h->playlist_cur >= 0)
+	{
+		h->playlist_cur--;
+		if(h->playlist_cur < 0)
+		{
+			h->playlist_cur = -1;
+			h->stream = NULL;
+			h->file = NULL;
+			break;
+		}
+
+		if(files_new_player(h) != 0)
+			continue;
+
+		break;
+	}
+}
+
 static void *files_thread(void *user_data)
 {
 	struct files_handle *h = (struct files_handle *) user_data;
@@ -143,35 +207,7 @@ static void *files_thread(void *user_data)
 			   (file_get_pos(h->file) >= file_get_length(h->file)-1
 			   || file_get_status(h->file) == FILE_EOF))
 			{
-				/* Close previous stream */
-				if(h->prev_stream != NULL)
-					output_remove_stream(h->output,
-							     h->prev_stream);
-
-				/* Close previous file */
-				file_close(h->prev_file);
-
-				/* Move current stream to previous */
-				h->prev_stream = h->stream;
-				h->prev_file = h->file;
-
-				/* Open next file in playlist */
-				while(h->playlist_cur <= h->playlist_len)
-				{
-					h->playlist_cur++;
-					if(h->playlist_cur >= h->playlist_len)
-					{
-						h->playlist_cur = -1;
-						h->stream = NULL;
-						h->file = NULL;
-						break;
-					}
-
-					if(files_new_player(h) != 0)
-						continue;
-
-					break;
-				}
+				files_play_next(h);
 			}
 		}
 
@@ -313,6 +349,9 @@ int files_play(struct files_handle *h, int index)
 	/* Stop previous playing */
 	files_stop(h);
 
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Start new player */
 	h->playlist_cur = index;
 	if(files_new_player(h) != 0)
@@ -321,6 +360,9 @@ int files_play(struct files_handle *h, int index)
 		h->is_playing = 0;
 		return -1;
 	}
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
@@ -377,6 +419,60 @@ int files_stop(struct files_handle *h)
 	file_close(h->prev_file);
 	h->file = NULL;
 	h->prev_file = NULL;
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+int files_prev(struct files_handle *h)
+{
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->playlist_cur != -1 && h->playlist_cur >= 0)
+	{
+		/* Start next file in playlist */
+		files_play_prev(h);
+
+		/* Close previous stream */
+		if(h->prev_stream != NULL)
+			output_remove_stream(h->output, h->prev_stream);
+
+		/* Close previous file */
+		file_close(h->prev_file);
+
+		h->prev_stream = NULL;
+		h->prev_file = NULL;
+	}
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+int files_next(struct files_handle *h)
+{
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->playlist_cur != -1 && h->playlist_cur+1 <= h->playlist_len)
+	{
+		/* Start next file in playlist */
+		files_play_next(h);
+
+		/* Close previous stream */
+		if(h->prev_stream != NULL)
+			output_remove_stream(h->output, h->prev_stream);
+
+		/* Close previous file */
+		file_close(h->prev_file);
+
+		h->prev_stream = NULL;
+		h->prev_file = NULL;
+	}
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
