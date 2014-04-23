@@ -51,6 +51,7 @@ struct decoder {
 	/* Infos */
 	unsigned long samplerate;
 	unsigned char nb_channel;
+	unsigned long bitrate;
 };
 
 static long decoder_aac_fill(struct decoder *dec, unsigned long bytes);
@@ -139,6 +140,10 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback,
 	NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos],
 		       dec->buffer_size);
 
+	/* Compute birate */
+	dec->bitrate = frameInfo.bytesconsumed * 8 * dec->samplerate *
+		       dec->nb_channel / frameInfo.samples;
+
 	return 0;
 }
 
@@ -150,6 +155,11 @@ unsigned long decoder_aac_get_samplerate(struct decoder* dec)
 unsigned char decoder_aac_get_channels(struct decoder *dec)
 {
 	return dec->nb_channel;
+}
+
+unsigned long decoder_aac_get_bitrate(struct decoder *dec)
+{
+	return dec->bitrate;
 }
 
 /* FIXME */
@@ -221,8 +231,8 @@ static long decoder_aac_fill_output(struct decoder *dec,
 	}
 	else
 #ifdef USE_FLOAT
-	/* 32-bit wide sample (float or 32-bit fixed) */
-	memcpy(output_buffer, &dec->pcm_buffer[pos * 4], size * 4);
+		/* 32-bit wide sample (float or 32-bit fixed) */
+		memcpy(output_buffer, &dec->pcm_buffer[pos * 4], size * 4);
 #else
 	{
 		int32_t *p_in = (int32_t*) &dec->pcm_buffer[pos*4];
@@ -310,6 +320,7 @@ struct decoder_handle decoder_aac = {
 	.open = &decoder_aac_open,
 	.get_samplerate = &decoder_aac_get_samplerate,
 	.get_channels = &decoder_aac_get_channels,
+	.get_bitrate = &decoder_aac_get_bitrate,
 	.read = &decoder_aac_read,
 	.close = &decoder_aac_close,
 };

@@ -96,6 +96,7 @@ struct decoder {
 	unsigned long pcm_remain;
 	/* ALAC params */
 	struct alac_decoder alac;
+	unsigned long bitrate;
 };
 
 static const int host_bigendian = 0;
@@ -128,6 +129,9 @@ int decoder_alac_open(struct decoder **decoder, void *input_callback,
 	/* Init ALAC parameters */
 	decoder_alac_init(&dec->alac, dec->buffer);
 
+	/* Compite birate */
+	dec->bitrate = 0;
+
 	return 0;
 }
 
@@ -139,6 +143,11 @@ unsigned long decoder_alac_get_samplerate(struct decoder* dec)
 unsigned char decoder_alac_get_channels(struct decoder *dec)
 {
 	return dec->alac.numchannels;
+}
+
+unsigned long decoder_alac_get_bitrate(struct decoder *dec)
+{
+	return dec->bitrate;
 }
 
 static long decoder_alac_fill_output(struct decoder *dec,
@@ -228,6 +237,7 @@ struct decoder_handle decoder_alac = {
 	.open = &decoder_alac_open,
 	.get_samplerate = &decoder_alac_get_samplerate,
 	.get_channels = &decoder_alac_get_channels,
+	.get_bitrate = &decoder_alac_get_bitrate,
 	.read = &decoder_alac_read,
 	.close = &decoder_alac_close,
 };

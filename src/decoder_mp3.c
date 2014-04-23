@@ -45,6 +45,7 @@ struct decoder {
 	/* Infos */
 	unsigned long samplerate;
 	unsigned char nb_channel;
+	unsigned long bitrate;
 };
 
 static long decoder_mp3_fill(struct decoder *dec);
@@ -100,6 +101,7 @@ int decoder_mp3_open(struct decoder **decoder, void *input_callback,
 	/* Get infos */
 	dec->samplerate = dec->Header.samplerate;
 	dec->nb_channel = MAD_NCHANNELS(&dec->Header);
+	dec->bitrate = dec->Header.bitrate;
 
 	return 0;
 }
@@ -112,6 +114,11 @@ unsigned long decoder_mp3_get_samplerate(struct decoder* dec)
 unsigned char decoder_mp3_get_channels(struct decoder *dec)
 {
 	return dec->nb_channel;
+}
+
+unsigned long decoder_mp3_get_bitrate(struct decoder *dec)
+{
+	return dec->bitrate;
 }
 
 static long decoder_mp3_fill(struct decoder *dec)
@@ -263,6 +270,7 @@ struct decoder_handle decoder_mp3 = {
 	.open = &decoder_mp3_open,
 	.get_samplerate = &decoder_mp3_get_samplerate,
 	.get_channels = &decoder_mp3_get_channels,
+	.get_bitrate = &decoder_mp3_get_bitrate,
 	.read = &decoder_mp3_read,
 	.close = &decoder_mp3_close,
 };

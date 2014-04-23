@@ -75,6 +75,14 @@ unsigned char decoder_get_channels(struct decoder_handle *h)
 	return h->get_channels(h->dec);
 }
 
+unsigned long decoder_get_bitrate(struct decoder_handle *h)
+{
+	if(h == NULL || h->dec == NULL)
+		return 0;
+
+	return h->get_bitrate(h->dec);
+}
+
 int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size)
 {
 	if(h == NULL || h->dec == NULL || buffer == NULL)
