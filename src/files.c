@@ -118,7 +118,7 @@ int files_add(struct files_handle *h, const char *filename)
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
 	p->filename = strdup(real_path);
-	p->format = file_format_parse(real_path, 0);
+	p->format = file_format_parse(real_path, TAG_PICTURE);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -136,7 +136,7 @@ int files_remove(struct files_handle *h, int index)
 	}
 	else if(h->playlist_cur > index)
 	{
-		h->playlist_cur--;	
+		h->playlist_cur--;
 	}
 
 	/* Free index playlist structure */
@@ -251,7 +251,8 @@ int files_stop(struct files_handle *h)
 		  json_object_object_add(root, key, json_object_new_int(value));
 
 static json_object *files_get_file_json_object(const char *filename,
-					       struct file_format *meta)
+					       struct file_format *meta,
+					       int add_pic)
 {
 	json_object *tmp = NULL;
 	char *pic = NULL;
@@ -280,7 +281,7 @@ static json_object *files_get_file_json_object(const char *filename,
 		ADD_INT(tmp, "year", meta->year);
 
 		/* Get picture */
-		if(meta->picture.data != NULL)
+		if(add_pic && meta->picture.data != NULL)
 			pic = base64_encode((const char *)meta->picture.data,
 					    meta->picture.size);
 
@@ -292,6 +293,35 @@ static json_object *files_get_file_json_object(const char *filename,
 	}
 
 	return tmp;
+}
+
+char *files_get_json_status(struct files_handle *h, int add_pic)
+{
+	struct json_object *tmp;
+	char *str = NULL;
+	int idx;
+
+	idx = h->playlist_cur;
+	if(idx < 0)
+		return strdup("{ \"file\": null }");
+
+	/* Create basic JSON object */
+	str = basename(h->playlist[idx].filename);
+	tmp = files_get_file_json_object(str, h->playlist[idx].format, add_pic);
+	if(tmp != NULL)
+	{
+		/* Add curent postion and audio file length */
+		ADD_INT(tmp, "pos", file_get_pos(h->file));
+		ADD_INT(tmp, "length", file_get_length(h->file));
+	}
+
+	/* Get JSON string */
+	str = strdup(json_object_to_json_string(tmp));
+
+	/* Free JSON object */
+	json_object_put(tmp);
+
+	return str;
 }
 
 char *files_get_json_playlist(struct files_handle *h)
@@ -310,7 +340,7 @@ char *files_get_json_playlist(struct files_handle *h)
 	{
 		/* Create temporary object */
 		str = basename(h->playlist[i].filename);
-		tmp = files_get_file_json_object(str, h->playlist[i].format);
+		tmp = files_get_file_json_object(str, h->playlist[i].format, 0);
 		if(tmp == NULL)
 			continue;
 
@@ -403,7 +433,7 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 					/* Create temporary object */
 					tmp = files_get_file_json_object(
 								  entry->d_name,
-								  format);
+								  format, 1);
 					if(format != NULL)
 						file_format_free(format);
 					if(tmp == NULL)

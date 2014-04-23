@@ -26,8 +26,11 @@ struct file_handle;
 int file_open(struct file_handle **h, const char *name);
 
 unsigned long file_get_samplerate(struct file_handle *h);
-
 unsigned char file_get_channels(struct file_handle *h);
+
+int file_set_pos(struct file_handle *h, int pos);
+int file_get_pos(struct file_handle *h);
+int file_get_length(struct file_handle *h);
 
 int file_read(struct file_handle *h, unsigned char *buffer, size_t size);
 

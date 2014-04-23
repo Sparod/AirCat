@@ -946,6 +946,22 @@ static int httpd_files_stop(struct request_attr *attr)
 	return httpd_json_msg(attr->connection, 200, "");
 }
 
+static int httpd_files_status(struct request_attr *attr)
+{
+	char *str = NULL;
+	int add_pic = 0;
+
+	if(strncmp(attr->res, "img", 3) == 0)
+		add_pic = 1;
+
+	/* Get status */
+	str = files_get_json_status(attr->handle->files, add_pic);
+	if(str == NULL)
+		return httpd_json_msg(attr->connection, 500, "Status error");
+
+	return httpd_json_response(attr->connection, 200, str, strlen(str));
+}
+
 static int httpd_files_list(struct request_attr *attr)
 {
 	char *list = NULL;
@@ -982,6 +998,7 @@ struct url_table url_table[] = {
 	{"/files/play", 0, HTTP_PUT, &httpd_files_play},
 	{"/files/pause", 1, HTTP_PUT, &httpd_files_pause},
 	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
+	{"/files/status", 0, HTTP_GET, &httpd_files_status},
 	{"/files/list", 0, HTTP_GET, &httpd_files_list},
 	{0, 0, 0}
 };
