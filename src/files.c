@@ -361,6 +361,8 @@ int files_play(struct files_handle *h, int index)
 		return -1;
 	}
 
+	h->is_playing = 1;
+
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
