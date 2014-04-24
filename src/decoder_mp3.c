@@ -258,6 +258,16 @@ int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer,
 
 	return size;
 }
+int decoder_mp3_flush(struct decoder *dec)
+{
+	/* Flush PCM buffer */
+	dec->pcm_remain = 0;
+
+	/* Flush input buffer */
+	dec->Stream.buffer = NULL;
+
+	return 0;
+}
 
 int decoder_mp3_close(struct decoder *dec)
 {
@@ -280,6 +290,7 @@ struct decoder_handle decoder_mp3 = {
 	.get_channels = &decoder_mp3_get_channels,
 	.get_bitrate = &decoder_mp3_get_bitrate,
 	.read = &decoder_mp3_read,
+	.flush = &decoder_mp3_flush,
 	.close = &decoder_mp3_close,
 };
 

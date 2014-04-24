@@ -304,6 +304,18 @@ int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer,
 	return size;
 }
 
+int decoder_aac_flush(struct decoder *dec)
+{
+	/* Flush PCM buffer */
+	dec->pcm_remain = 0;
+
+	/* Flush input buffer */
+	dec->buffer_size = 0;
+	dec->buffer_pos = 0;
+
+	return 0;
+}
+
 int decoder_aac_close(struct decoder *dec)
 {
 	/* Close mad */
@@ -322,6 +334,7 @@ struct decoder_handle decoder_aac = {
 	.get_channels = &decoder_aac_get_channels,
 	.get_bitrate = &decoder_aac_get_bitrate,
 	.read = &decoder_aac_read,
+	.flush = &decoder_aac_flush,
 	.close = &decoder_aac_close,
 };
 

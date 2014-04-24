@@ -224,6 +224,15 @@ int decoder_alac_read(struct decoder *dec, unsigned char *output_buffer,
 	return size;
 }
 
+int decoder_alac_flush(struct decoder *dec)
+{
+	/* Flush PCM buffer */
+	dec->pcm_length = 0;
+	dec->pcm_remain = 0;
+
+	return 0;
+}
+
 int decoder_alac_close(struct decoder *dec)
 {
 	if(dec != NULL)
@@ -239,6 +248,7 @@ struct decoder_handle decoder_alac = {
 	.get_channels = &decoder_alac_get_channels,
 	.get_bitrate = &decoder_alac_get_bitrate,
 	.read = &decoder_alac_read,
+	.flush = &decoder_alac_flush,
 	.close = &decoder_alac_close,
 };
 

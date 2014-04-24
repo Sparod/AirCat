@@ -91,6 +91,14 @@ int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size)
 	return h->read(h->dec, buffer, size);
 }
 
+int decoder_flush(struct decoder_handle *h)
+{
+	if(h == NULL || h->dec == NULL)
+		return -1;
+
+	return h->flush(h->dec);
+}
+
 int decoder_close(struct decoder_handle *h)
 {
 	if(h == NULL)

@@ -27,6 +27,7 @@ struct decoder_handle {
 	unsigned char (*get_channels)(struct decoder*);
 	unsigned long (*get_bitrate)(struct decoder*);
 	int (*read)(struct decoder*, unsigned char*, size_t);
+	int (*flush)(struct decoder*);
 	int (*close)(struct decoder*);
 };
 
@@ -44,6 +45,7 @@ unsigned long decoder_get_samplerate(struct decoder_handle *h);
 unsigned char decoder_get_channels(struct decoder_handle *h);
 unsigned long decoder_get_bitrate(struct decoder_handle *h);
 int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size);
+int decoder_flush(struct decoder_handle *h);
 int decoder_close(struct decoder_handle *h);
 
 #endif
