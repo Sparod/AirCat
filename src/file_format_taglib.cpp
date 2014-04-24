@@ -204,6 +204,7 @@ struct file_format *file_format_parse(const char *filename, int options)
 	if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file.file()))
 	{
 		f->type = FILE_FORMAT_MPEG;
+		f->stream_offset = mpeg->firstFrameOffset();
 
 		/* Get extended tags */
 		if(options != 0 && mpeg->ID3v2Tag())

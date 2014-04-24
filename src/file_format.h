@@ -64,6 +64,7 @@ struct file_format {
 	unsigned int bitrate;
 	unsigned long samplerate;
 	unsigned int channels;
+	size_t stream_offset;
 	/* Picture tag */
 	struct tag_picture picture;
 	/* Extended tags */
