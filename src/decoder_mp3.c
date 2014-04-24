@@ -242,6 +242,14 @@ int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer,
 		/* Synthethise PCM */
 		mad_synth_frame(&dec->Synth, &dec->Frame);
 
+		/* Check and update channels number */
+		if(dec->nb_channel != MAD_NCHANNELS(&dec->Frame.header))
+			dec->nb_channel = MAD_NCHANNELS(&dec->Frame.header);
+
+		/* Check and update samplerate */
+		if(dec->samplerate != dec->Header.samplerate)
+			dec->samplerate = dec->Header.samplerate;
+
 		/* Fill output buffer with PCM */
 		dec->pcm_remain = dec->Synth.pcm.length;
 		size += decoder_mp3_fill_output(dec, &output_buffer[size * 4],
