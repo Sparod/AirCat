@@ -40,10 +40,13 @@ struct file_handle {
 	/* File properties */
 	unsigned long samplerate;
 	unsigned long channels;
+	unsigned int bitrate;
 	unsigned long length;
 	size_t file_size;
+	size_t offset;
 	/* Mutex for thread safe status */
 	pthread_mutex_t mutex;
+	pthread_mutex_t flush_mutex;
 };
 
 /* Callback for decoder */
@@ -75,6 +78,7 @@ int file_open(struct file_handle **handle, const char *name)
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
+	pthread_mutex_init(&h->flush_mutex, NULL);
 
 	/* Check file */
 	if(stat(name, &st) != 0 || !S_ISREG(st.st_mode))
@@ -116,6 +120,8 @@ int file_open(struct file_handle **handle, const char *name)
 		/* Get information from decoder */
 		h->samplerate = decoder_get_samplerate(h->dec);
 		h->channels = decoder_get_channels(h->dec);
+		h->bitrate = decoder_get_bitrate(h->dec);
+		h->offset = 0;
 
 		/* Calculate stream length */
 		h->length = h->file_size * 8 / decoder_get_bitrate(h->dec);
@@ -125,6 +131,8 @@ int file_open(struct file_handle **handle, const char *name)
 		h->samplerate = h->format->samplerate;
 		h->channels = h->format->channels;
 		h->length = h->format->length;
+		h->bitrate = h->format->bitrate * 1000;
+		h->offset = h->format->stream_offset;
 	}
 
 	return 0;
@@ -154,7 +162,7 @@ int file_set_pos(struct file_handle *h, int pos)
 		return -1;
 
 	/* Calculate new position */
-	f_pos = 0;
+	f_pos = h->offset + (h->bitrate * pos / 8);
 	if(f_pos > h->file_size)
 		return -1;
 
@@ -165,9 +173,18 @@ int file_set_pos(struct file_handle *h, int pos)
 	if(fseek(h->fp, f_pos, SEEK_SET) != 0)
 		return -1;
 
+	/* Lock decoder access */
+	pthread_mutex_lock(&h->flush_mutex);
+
+	/* Flush decoder */
+	decoder_flush(h->dec);
+
 	/* Update position */
 	h->file_pos = f_pos;
 	h->pos = pos * h->samplerate * h->channels;
+
+	/* Unlock decoder access */
+	pthread_mutex_unlock(&h->flush_mutex);
 
 	/* Unlock file access */
 	pthread_mutex_unlock(&h->mutex);
@@ -222,8 +239,14 @@ int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 	if(h == NULL)
 		return -1;
 
+	/* Lock decoder access */
+	pthread_mutex_lock(&h->flush_mutex);
+
 	/* Read next PCM buffer */
 	ret = decoder_read(h->dec, buffer, size);
+
+	/* Unlock decoder access */
+	pthread_mutex_unlock(&h->flush_mutex);
 
 	/* Update output stream position */
 	if(ret > 0)

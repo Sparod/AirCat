@@ -32,6 +32,7 @@ int files_pause(struct files_handle *h);
 int files_stop(struct files_handle *h);
 int files_prev(struct files_handle *h);
 int files_next(struct files_handle *h);
+int files_seek(struct files_handle *h, unsigned long pos);
 char *files_get_json_status(struct files_handle *h, int add_pic);
 char *files_get_json_playlist(struct files_handle *h);
 char *files_get_json_list(struct files_handle *h, const char *path);

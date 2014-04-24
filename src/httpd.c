@@ -978,6 +978,20 @@ static int httpd_files_status(struct request_attr *attr)
 	return httpd_json_response(attr->connection, 200, str, strlen(str));
 }
 
+static int httpd_files_seek(struct request_attr *attr)
+{
+	unsigned long pos;
+
+	/* Get position from URL */
+	pos = strtoul(attr->res, NULL, 10);
+
+	/* Seek in stream */
+	if(files_seek(attr->handle->files, pos) != 0)
+		return httpd_json_msg(attr->connection, 400, "Bad position");
+
+	return httpd_json_msg(attr->connection, 200, "");
+}
+
 static int httpd_files_list(struct request_attr *attr)
 {
 	char *list = NULL;
@@ -1016,6 +1030,7 @@ struct url_table url_table[] = {
 	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
 	{"/files/prev", 1, HTTP_PUT, &httpd_files_prev},
 	{"/files/next", 1, HTTP_PUT, &httpd_files_next},
+	{"/files/seek/", 0, HTTP_PUT, &httpd_files_seek},
 	{"/files/status", 0, HTTP_GET, &httpd_files_status},
 	{"/files/list", 0, HTTP_GET, &httpd_files_list},
 	{0, 0, 0}

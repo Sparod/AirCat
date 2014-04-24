@@ -483,6 +483,21 @@ int files_next(struct files_handle *h)
 	return 0;
 }
 
+int files_seek(struct files_handle *h, unsigned long pos)
+{
+	int ret;
+
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
+	ret = file_set_pos(h->file, pos);
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
+}
+
 #define ADD_STRING(root, key, value) if(value != NULL) \
 	     json_object_object_add(root, key, json_object_new_string(value)); \
 	else \
