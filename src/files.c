@@ -252,7 +252,8 @@ int files_add(struct files_handle *h, const char *filename)
 	if(h->playlist_len == h->playlist_alloc)
 	{
 		/* Reallocate playlist */
-		p = realloc(h->playlist, PLAYLIST_ALLOC_SIZE *
+		p = realloc(h->playlist,
+			    (h->playlist_alloc + PLAYLIST_ALLOC_SIZE) *
 			    sizeof(struct files_playlist));
 		if(p == NULL)
 			return -1;
