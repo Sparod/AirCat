@@ -357,6 +357,9 @@ int files_play(struct files_handle *h, int index)
 	h->playlist_cur = index;
 	if(files_new_player(h) != 0)
 	{
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
+
 		h->playlist_cur = -1;
 		h->is_playing = 0;
 		return -1;
