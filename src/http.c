@@ -6,7 +6,7 @@
  * 	- Basic Auth
  *	- Follow redirection
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -313,17 +313,27 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	char buffer[MAX_SIZE_HEADER];
 	char *location;
 	char *auth = NULL;
+	char *temp_url;
 	int code = 0;
 	int size = 0;
 	int ret = 0;
 
+	/* Local temporary URL */
+	temp_url = strdup(url);
+
 	/* Parse URL */
-	if(http_parse_url(h, url) < 0)
+	if(http_parse_url(h, temp_url) < 0)
+	{
+		free(temp_url);
 		return -1;
+	}
 
 	/* Connect */
 	if(http_connect(h) < 0)
+	{
+		free(temp_url);
 		return -1;
+	}
 
 	/* Make HTTP request */
 	if(h->proxy.use)
@@ -358,6 +368,7 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	if (ret != size)
 	{
 		http_close(h);
+		free(temp_url);
 		return -1;
 	}
 
@@ -365,6 +376,7 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 	if (type == HTTP_POST && write(h->sock, post_buffer, post_length) != post_length)
 	{
 		http_close(h);
+		free(temp_url);
 		return -1;
 	}
 
@@ -406,6 +418,9 @@ static int http_send_request(struct http_handle *h, const char *url, int type, u
 			free(auth);
 		}
 	}
+
+	/* Free temp URL used for request */
+	free(temp_url);
 
 	return code;
 }
