@@ -11,6 +11,8 @@ aircat_SOURCES = main.c \
 		 http.c \
 		 files.c \
 		 file.c \
+		 file_mp3.c \
+		 file_mp4.c \
 		 file_format.c \
 		 shoutcast.c \
 		 rtsp.c \
@@ -59,6 +61,7 @@ EXTRA_DIST = http.h \
 	     avahi.h \
 	     files.h \
 	     file.h \
+	     file_private.h \
 	     file_format.h \
 	     shoutcast.h \
 	     rtsp.h \

@@ -1,7 +1,7 @@
 /*
  * shoutcast.c - A ShoutCast Client
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,18 +28,31 @@
 #include "config.h"
 #endif
 
+#define BUFFER_SIZE 8192
+
 struct shout_handle {
-	struct http_handle *http;	// HTTP Client handle
-	unsigned int metaint;		// Metaint from shoutcast server
-	unsigned int remaining;		// Remaining bytes before next metadata block
-	int meta_len;			// Metadata string length
-	char meta_buffer[16*255];	// Metadata string
-	struct radio_info info;		// Radio infos
-	struct decoder_handle *dec;	// Decoder structure
+	/* HTTP Client */
+	struct http_handle *http;
+	/* Metadata handling */
+	unsigned int metaint;
+	unsigned int remaining;
+	int meta_len;
+	char meta_buffer[16*255];
+	/* Radio info */
+	struct radio_info info;
+	/* Decoder and stream properties */
+	struct decoder_handle *dec;
+	unsigned long samplerate;
+	unsigned char channels;
+	/* Input buffer and PCM output cache */
+	unsigned char in_buffer[BUFFER_SIZE];
+	unsigned long in_len;
+	unsigned long pcm_remaining;
 };
 
-/* Callback for decoder */
-static int shoutcast_read_stream(void * user_data, unsigned char *buffer, size_t size);
+static int shoutcast_read_stream(struct shout_handle *h);
+static int shoutcast_sync_mp3_stream(struct shout_handle *h);
+static int shoutcast_sync_aac_stream(struct shout_handle *h);
 
 int shoutcast_open(struct shout_handle **handle, const char *url)
 {
@@ -53,6 +66,15 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	if(*handle == NULL)
 		return -1;
 	h = *handle;
+
+	/* Init structure */
+	h->http = NULL;
+	h->metaint = 0;
+	h->remaining = 0;
+	h->meta_len = 0;
+	h->dec = NULL;
+	h->in_len = 0;
+	h->pcm_remaining = 0;
 
 	/* Set to zero radio_info structure */
 	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
@@ -81,16 +103,16 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->info.url = http_get_header(h->http, "icy-url", 0);
 	p = http_get_header(h->http, "icy-br", 0);
 	if(p != NULL)
-	h->info.bitrate = atoi(p);
+		h->info.bitrate = atoi(p);
 	p = http_get_header(h->http, "icy-pub", 0);
 	if(p != NULL)
-	h->info.pub = atoi(p);
+		h->info.pub = atoi(p);
 	p = http_get_header(h->http, "icy-private", 0);
 	if(p != NULL)
-	h->info.private = atoi(p);
+		h->info.private = atoi(p);
 	p = http_get_header(h->http, "icy-metaint", 0);
 	if(p != NULL)
-	h->info.metaint = atoi(p);
+		h->info.metaint = atoi(p);
 	/* TODO: ice-audio-info: */
 	p = http_get_header(h->http, "content-type", 0);
 	if(p != NULL)
@@ -110,12 +132,31 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->metaint = h->info.metaint;
 	h->remaining = h->metaint;
 
+	/* Fill input buffer */
+	shoutcast_read_stream(h);
+
 	/* Open decoder */
 	if(h->info.type == MPEG_STREAM)
+	{
 		type = CODEC_MP3;
+
+		/* Sync to first frame */
+		if(shoutcast_sync_mp3_stream(h) != 0)
+			return -1;
+	}
 	else
+	{
 		type = CODEC_AAC;
-	decoder_open(&h->dec, type, &shoutcast_read_stream, h);
+
+		/* Sync to first frame */
+		if(shoutcast_sync_aac_stream(h) != 0)
+			return -1;
+	}
+
+	/* Open decoder */
+	if(decoder_open(&h->dec, type, h->in_buffer, h->in_len, &h->samplerate,
+			&h->channels) != 0)
+		return -1;
 
 	return 0;
 }
@@ -125,7 +166,7 @@ unsigned long shoutcast_get_samplerate(struct shout_handle *h)
 	if(h == NULL)
 		return 0;
 
-	return decoder_get_samplerate(h->dec);
+	return h->samplerate;
 }
 
 unsigned char shoutcast_get_channels(struct shout_handle *h)
@@ -133,12 +174,207 @@ unsigned char shoutcast_get_channels(struct shout_handle *h)
 	if(h == NULL)
 		return 0;
 
-	return decoder_get_channels(h->dec);
+	return h->channels;
+}
+
+static int shoutcast_sync_mp3_stream(struct shout_handle *h)
+{
+	unsigned int bitrates[2][3][15] = {
+		{ /* MPEG-1 */
+			{0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352,
+			 384, 416, 448},
+			{0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224,
+			 256, 320, 384},
+			{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224,
+			 256, 320}
+		},
+		{ /* MPEG-2 LSF, MPEG-2.5 */
+			{0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176,
+			 192, 224, 256},
+			{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128,
+			 144, 160},
+			{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128,
+			 144, 160}
+		}
+	};
+	unsigned int samplerates[3][4] = {
+		{44100, 48000, 32000, 0},
+		{22050, 24000, 16000, 0},
+		{11025, 8000, 8000, 0}
+	};
+	int mpeg, layer, padding;
+	unsigned long samplerate;
+	unsigned int bitrate;
+	int tmp;
+	int len;
+	int i;
+
+	/* Sync input buffer to first MP3 header */
+	for(i = 0; i < h->in_len - 3; i++)
+	{
+		if(h->in_buffer[i] == 0xFF &&
+		   h->in_buffer[i+1] != 0xFF &&
+		   (h->in_buffer[i+1] & 0xE0) == 0xE0)
+		{
+			/* Get Mpeg version */
+			mpeg = 3 - ((h->in_buffer[i+1] >> 3) & 0x03);
+			if(mpeg == 2)
+				continue;
+			if(mpeg == 3)
+				mpeg = 2;
+
+			/* Get Layer */
+			layer = 3 - ((h->in_buffer[i+1] >> 1) & 0x03);
+			if(layer == 3)
+				continue;
+
+			/* Get bitrate */
+			tmp = (h->in_buffer[i+2] >> 4) & 0x0F;
+			if(tmp == 0 || tmp == 15)
+				continue;
+			else
+			{
+				if(mpeg != 2)
+					bitrate = bitrates[mpeg][layer][tmp];
+				else
+					bitrate = bitrates[1][layer][tmp];
+			}
+
+			/* Get samplerate */
+			tmp = (h->in_buffer[i+2] >> 2) & 0x03;
+			if(tmp == 3)
+				continue;
+			else
+				samplerate = samplerates[mpeg][tmp];
+
+			/* Get padding */
+			padding = (h->in_buffer[i+2] >> 1) & 0x01;
+
+			/* Calculate length */
+			if(layer == 0)
+			{
+				/* Layer I */
+				len = ((12 * bitrate * 1000 / samplerate) +
+				       padding) * 4;
+			}
+			else
+			{
+				/* Layer II or III */
+				len = (144 * bitrate * 1000 / samplerate) +
+				      padding;
+			}
+
+			/* Check presence of next frame */
+			if(i + len + 2 > h->in_len ||
+			   h->in_buffer[i+len] != 0xFF ||
+			   h->in_buffer[i+len+1] == 0xFF ||
+			   (h->in_buffer[i+len+1] & 0xE0) != 0xE0)
+				continue;
+
+			/* Move to first frame */
+			memmove(h->in_buffer, &h->in_buffer[i],
+				h->in_len-i);
+			h->in_len -= i;
+
+			/* Refill input buffer */
+			shoutcast_read_stream(h);
+
+			return 0;
+		}
+	}
+
+	return -1;
+}
+
+static int shoutcast_sync_aac_stream(struct shout_handle *h)
+{
+	int len;
+	int i;
+
+	/* Sync input buffer to first ADTS header */
+	for(i = 0; i < h->in_len - 5; i++)
+	{
+		if(h->in_buffer[i] == 0xFF &&
+		   (h->in_buffer[i+1] & 0xF6) == 0xF0)
+		{
+			/* Get frame length */
+			len = ((h->in_buffer[i+3] & 0x3) << 11) |
+			      (h->in_buffer[i+4] << 3) |
+			      (h->in_buffer[i+5] >> 5);
+
+			/* Check next frame */
+			if(i + len + 2 > h->in_len ||
+			   h->in_buffer[i+len] != 0xFF ||
+			   (h->in_buffer[i+len+1] & 0xF6) != 0xF0)
+				continue;
+
+			/* Move to first frame */
+			memmove(h->in_buffer, &h->in_buffer[i],
+				h->in_len-i);
+			h->in_len -= i;
+
+			/* Refill input buffer */
+			shoutcast_read_stream(h);
+
+			return 0;
+		}
+	}
+
+	return -1;
 }
 
 int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 {
-	return decoder_read(h->dec, buffer, size);
+	struct decoder_info info;
+	int total_samples = 0;
+	int samples;
+
+	if(h == NULL)
+		return -1;
+
+	/* Process remaining pcm data */
+	if(h->pcm_remaining > 0)
+	{
+		/* Get remaining pcm data from decoder */
+		samples = decoder_decode(h->dec, NULL, 0, buffer, size, &info);
+		if(samples < 0)
+			return -1;
+
+		h->pcm_remaining -= samples;
+		total_samples += samples;
+	}
+
+	/* Fill output buffer */
+	while(total_samples < size)
+	{
+		/* Fill input buffer as possible */
+		shoutcast_read_stream(h);
+
+		/* Decode next frame */
+		samples = decoder_decode(h->dec, h->in_buffer, h->in_len,
+					 &buffer[total_samples * 4],
+					 size - total_samples, &info);
+		if(samples < 0)
+			return total_samples;
+
+		/* Move input buffer to next frame */
+		if(info.used < h->in_len)
+		{
+			memmove(h->in_buffer, &h->in_buffer[info.used],
+				h->in_len - info.used);
+			h->in_len -=  info.used;
+		}
+		else
+		{
+			h->in_len = 0;
+		}
+
+		/* Update remaining counter */
+		h->pcm_remaining = info.remaining;
+		total_samples += samples;
+	}
+
+	return total_samples;
 }
 
 struct radio_info *shoutcast_get_info(struct shout_handle *h)
@@ -153,50 +389,66 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 
 int shoutcast_close(struct shout_handle *h)
 {
+	if(h == NULL)
+		return 0;
+
 	/* Close decoder */
-	decoder_close(h->dec);
+	if(h->dec != NULL)
+		decoder_close(h->dec);
 
 	/* Close HTTP */
-	http_close(h->http);
+	if(h->http != NULL)
+		http_close(h->http);
 
+	/* Free handler */
 	free(h);
 
 	return 0;
 }
 
-static int shoutcast_read_stream(void * user_data, unsigned char *buffer, size_t size)
+static int shoutcast_read_stream(struct shout_handle *h)
 {
-	struct shout_handle *h = (struct shout_handle*) user_data;
-	int read_len = 0;
-	int meta_len = 0;
 	unsigned char c;
+	int meta_len = 0;
+	int read_len = 0;
+	unsigned long in_len;
 
-	/* If metadata enabled, read until next metadata */
-	if(h->metaint > 0 && size > h->remaining)
-		read_len = h->remaining;
-	else
-		read_len = size;
+	/* Calculate input size to read */
+	in_len = BUFFER_SIZE - h->in_len;
 
-	/* Read */
-	read_len = http_read(h->http, buffer, read_len);
-
-	/* If metadata enabled */
-	if(h->metaint > 0)
+	/* Fill input buffer */
+	while(in_len > 0)
 	{
-		/* Update remaining bytes before next metadata */
-		h->remaining -= read_len;
+		/* Get size to read */
+		if(h->metaint > 0)
+			read_len = in_len > h->remaining ? h->remaining :
+							    in_len;
 
-		/* Read metadata block */
-		if(h->remaining == 0)
+		/* Fill inpput buffer */
+		read_len = http_read(h->http, &h->in_buffer[h->in_len],
+				     read_len);
+		if(read_len < 0)
+			break;
+
+		/* Update input buffer size */
+		h->remaining -= read_len;
+		h->in_len += read_len;
+		in_len -= read_len;
+
+		/* Process if metadata */
+		if(h->metaint > 0 && h->remaining == 0)
 		{
 			/* Read size */
 			http_read(h->http, &c, 1);
-			meta_len = c*16;
+			meta_len = c * 16;
 
 			/* Read string */
 			if(meta_len > 0)
 			{
-				h->meta_len = http_read(h->http, (unsigned char*)h->meta_buffer, meta_len);
+				h->meta_len = http_read(h->http,
+						 (unsigned char*)h->meta_buffer,
+						 meta_len);
+				h->meta_buffer[h->meta_len] = '\0';
 			}
 
 			/* Reset remaining bytes */
@@ -204,6 +456,6 @@ static int shoutcast_read_stream(void * user_data, unsigned char *buffer, size_t
 		}
 	}
 
-	return read_len;
+	return 0;
 }
 

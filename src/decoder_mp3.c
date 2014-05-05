@@ -1,7 +1,7 @@
 /*
  * decoder_mp3.c - A MP3 Decoder based on mad
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-
 #include <mad.h>
 
 #include "decoder_mp3.h"
@@ -28,146 +27,75 @@
 #include "config.h"
 #endif
 
-#define BUFFER_SIZE 8192
-
 struct decoder {
 	struct mad_stream Stream;
-	struct mad_header Header;
 	struct mad_frame Frame;
 	struct mad_synth Synth;
-	/* Read Callback */
-	int (*input_callback)(void *, unsigned char *, size_t);
-	void *user_data;
-	/* Input buffer */
-	unsigned char buffer[BUFFER_SIZE+MAD_BUFFER_GUARD];
 	/* Output cursor */
 	unsigned long pcm_remain;
-	/* Infos */
-	unsigned long samplerate;
-	unsigned char nb_channel;
-	unsigned long bitrate;
 };
 
-static long decoder_mp3_fill(struct decoder *dec);
-static long decoder_mp3_fill_output(struct decoder *dec,
-				    unsigned char *output_buffer,
-				    size_t output_size);
-
-int decoder_mp3_open(struct decoder **decoder, void *input_callback,
-		     void *user_data)
+int decoder_mp3_open(struct decoder **decoder, unsigned char *config,
+		     size_t config_size, unsigned long *samplerate,
+		     unsigned char *channels)
 {
+	struct mad_header header;
 	struct decoder *dec;
 
+	/* Alloc structure */
 	*decoder = malloc(sizeof(struct decoder));
 	if(*decoder == NULL)
 		return -1;
 	dec = *decoder;
-
-	dec->input_callback = input_callback;
-	dec->user_data = user_data;
+	
+	/* Init structure */
+	dec->pcm_remain = 0;
 
 	/* Initialize mad */
 	mad_stream_init(&dec->Stream);
-	mad_header_init(&dec->Header);
 	mad_frame_init(&dec->Frame);
 	mad_synth_init(&dec->Synth);
 
-	/* PCM data remaining in output buffer */
-	dec->pcm_remain = 0;
-
-	/* Parse first header to get samplerate and number of channel */
-	decoder_mp3_fill(dec);
-	while(mad_header_decode(&dec->Header, &dec->Stream))
+	/* Decoder first frame */
+	if(config != NULL && config_size > 0)
 	{
-		if(MAD_RECOVERABLE(dec->Stream.error))
-		{
-			continue;
-		}
-		else
-		{
-			if(dec->Stream.error == MAD_ERROR_BUFLEN)
-			{
-				/* Refill buffer */
-				if(decoder_mp3_fill(dec) < 0)
-					return -1;
-			}
-			else
-			{
-				break;
-			}
-		}
-	}
+		/* Parse first frame in config buffer */
+		mad_header_init(&header);
 
-	/* Get infos */
-	dec->samplerate = dec->Header.samplerate;
-	dec->nb_channel = MAD_NCHANNELS(&dec->Header);
-	dec->bitrate = dec->Header.bitrate;
+		/* Fill mad stream with first frame */
+		mad_stream_buffer(&dec->Stream, config, config_size);
+
+		/* Parse config */
+		if(mad_header_decode(&header, &dec->Stream) != 0)
+			return -1;
+
+		/* Get infos */
+		if(samplerate != NULL)
+			*samplerate = header.samplerate;
+		if(channels != NULL)
+			*channels = MAD_NCHANNELS(&header);
+
+		/* Free header parser */
+		mad_header_finish(&header);
+	}
 
 	return 0;
-}
-
-unsigned long decoder_mp3_get_samplerate(struct decoder* dec)
-{
-	return dec->samplerate;
-}
-
-unsigned char decoder_mp3_get_channels(struct decoder *dec)
-{
-	return dec->nb_channel;
-}
-
-unsigned long decoder_mp3_get_bitrate(struct decoder *dec)
-{
-	return dec->bitrate;
-}
-
-static long decoder_mp3_fill(struct decoder *dec)
-{
-	long size = 0;
-	size_t remaining = 0;
-
-	if(dec->Stream.buffer == NULL)
-	{
-		size = BUFFER_SIZE;
-		remaining = 0;
-	}
-	else
-	{
-		remaining = dec->Stream.bufend - dec->Stream.next_frame;
-		size = BUFFER_SIZE - remaining;
-		memmove(dec->buffer, dec->Stream.next_frame, remaining);
-	}
-
-	/* Read data from callback */
-	size = dec->input_callback(dec->user_data, &dec->buffer[remaining],
-				   size);
-	if(size < 0)
-		return -1;
-
-	mad_stream_buffer(&dec->Stream, dec->buffer, size+remaining);
-	dec->Stream.error = 0;
-
-	return size+remaining;
 }
 
 #ifdef USE_FLOAT
 inline float mad_scale(mad_fixed_t sample)
 {
-	return (float) (sample / (float) (1L << MAD_F_FRACBITS));
+    return (float) (sample / (float) (1L << MAD_F_FRACBITS));
 }
-#else
+#else /* FIXME */
 inline int32_t mad_scale(mad_fixed_t sample)
 {
-	/* Round sample */
-	sample += (1L << 4);
+    if (sample >= MAD_F_ONE)
+        sample = MAD_F_ONE - 1;
+    else if (sample < -MAD_F_ONE)
+        sample = -MAD_F_ONE;
 
-	/* Clip */
-	if (sample >= MAD_F_ONE)
-		sample = MAD_F_ONE - 1;
-	else if (sample < -MAD_F_ONE)
-		sample = -MAD_F_ONE;
-
-	return (sample << 3) & 0xFFFFFF00;
+    return sample << 3;
 }
 #endif
 
@@ -183,16 +111,16 @@ static long decoder_mp3_fill_output(struct decoder *dec,
 	unsigned short pos;
 	int i;
 
-	pos = dec->Synth.pcm.length-dec->pcm_remain;
+	pos = dec->Synth.pcm.length - dec->pcm_remain;
 
 	for(i = 0; pos < dec->Synth.pcm.length && i < output_size;
-	    pos++, i += dec->nb_channel)
+	    pos++, i += dec->Synth.pcm.channels)
 	{
 		/* Left channel */
 		*(p++) = mad_scale(dec->Synth.pcm.samples[0][pos]);
 
 		/* Right channel */
-		if(dec->nb_channel == 2)
+		if(dec->Synth.pcm.channels == 2)
 			*(p++) = mad_scale(dec->Synth.pcm.samples[1][pos]);
 	}
 
@@ -201,84 +129,78 @@ static long decoder_mp3_fill_output(struct decoder *dec,
 	return i;
 }
 
-int decoder_mp3_read(struct decoder *dec, unsigned char *output_buffer,
-		     size_t output_size)
+int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
+		       size_t in_size, unsigned char *out_buffer,
+		       size_t out_size, struct decoder_info *info)
 {
 	unsigned short size = 0;
 
 	/* Empty remaining PCM before decoding another frame */
-	if(dec->pcm_remain > 0)
+	if(dec->pcm_remain > 0 || in_buffer == NULL)
 	{
-		size = decoder_mp3_fill_output(dec, output_buffer, output_size);
-		if(dec->pcm_remain > 0 || size == output_size)
-			return size;
+		size = decoder_mp3_fill_output(dec, out_buffer, out_size);
+
+		/* Update buffer */
+		info->used = 0;
+		info->remaining = dec->pcm_remain;
+
+		return size;
 	}
 
-	/* Fill all buffer */
-	while(size < output_size)
+	/* Check input size */
+	if(in_size == 0)
+		return 0;
+
+	/* Add frame to stream */
+	mad_stream_buffer(&dec->Stream, in_buffer, in_size);
+
+	/* Decode a new frame */
+	while(mad_frame_decode(&dec->Frame, &dec->Stream))
 	{
-		/* Decode a new frame */
-		while(mad_frame_decode(&dec->Frame, &dec->Stream))
+		if(MAD_RECOVERABLE(dec->Stream.error))
 		{
-			if(MAD_RECOVERABLE(dec->Stream.error))
-			{
-				continue;
-			}
-			else
-			{
-				if(dec->Stream.error == MAD_ERROR_BUFLEN)
-				{
-					/* Refill buffer */
-					if(decoder_mp3_fill(dec) < 0)
-						return -1;
-				}
-				else
-				{
-					break;
-				}
-			}
+			/* Needs more frame */
+			continue;
 		}
+		else
+		{
+			/* Update buffer */
+			info->used = dec->Stream.next_frame - dec->Stream.buffer;
+			info->remaining = 0;
 
-		/* Synthethise PCM */
-		mad_synth_frame(&dec->Synth, &dec->Frame);
-
-		/* Check and update channels number */
-		if(dec->nb_channel != MAD_NCHANNELS(&dec->Frame.header))
-			dec->nb_channel = MAD_NCHANNELS(&dec->Frame.header);
-
-		/* Check and update samplerate */
-		if(dec->samplerate != dec->Header.samplerate)
-			dec->samplerate = dec->Header.samplerate;
-
-		/* Fill output buffer with PCM */
-		dec->pcm_remain = dec->Synth.pcm.length;
-		size += decoder_mp3_fill_output(dec, &output_buffer[size * 4],
-						output_size - size);
+			if(dec->Stream.error == MAD_ERROR_BUFLEN)
+				return DECODER_ERROR_BUFLEN;
+			else
+				return DECODER_ERROR_SYNC;
+		}
 	}
+
+	/* Synthethise PCM */
+	mad_synth_frame(&dec->Synth, &dec->Frame);
+
+	/* Fill output buffer with PCM */
+	dec->pcm_remain = dec->Synth.pcm.length;
+	size = decoder_mp3_fill_output(dec, out_buffer, out_size);
+
+	/* Update buffer */
+	info->used = dec->Stream.next_frame - dec->Stream.buffer;
+	info->remaining = dec->pcm_remain;
 
 	return size;
-}
-int decoder_mp3_flush(struct decoder *dec)
-{
-	/* Flush PCM buffer */
-	dec->pcm_remain = 0;
-
-	/* Flush input buffer */
-	dec->Stream.buffer = NULL;
-
-	return 0;
 }
 
 int decoder_mp3_close(struct decoder *dec)
 {
+	if(dec == NULL)
+		return 0;
+
 	/* Close mad */
 	mad_synth_finish(&dec->Synth);
 	mad_frame_finish(&dec->Frame);
-	mad_header_finish(&dec->Header);
 	mad_stream_finish(&dec->Stream);
 
-	if(dec != NULL)
-		free(dec);
+	/* Free decoder */
+	free(dec);
 
 	return 0;
 }
@@ -286,11 +208,6 @@ int decoder_mp3_close(struct decoder *dec)
 struct decoder_handle decoder_mp3 = {
 	.dec = NULL,
 	.open = &decoder_mp3_open,
-	.get_samplerate = &decoder_mp3_get_samplerate,
-	.get_channels = &decoder_mp3_get_channels,
-	.get_bitrate = &decoder_mp3_get_bitrate,
-	.read = &decoder_mp3_read,
-	.flush = &decoder_mp3_flush,
+	.decode = &decoder_mp3_decode,
 	.close = &decoder_mp3_close,
 };
-

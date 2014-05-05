@@ -1,7 +1,7 @@
 /*
  * raop.c - A RAOP Server
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,12 +60,14 @@ struct raop_handle {
 	unsigned char aes_iv[16];	// AES IV
 	/* Decoder */
 	struct decoder_handle *dec;	// Decoder structure
-	unsigned char alac_header[55];	// ALAC file header
-	int first;
+	/* Input buffer */
+	unsigned char packet[MAX_PACKET_SIZE];
+	unsigned long packet_len;
+	unsigned long pcm_remaining;
+	/* Stream properties */
+	unsigned long samplerate;
+	unsigned char channels;
 };
-
-/* Callback for decoder */
-static int raop_read_stream(void * user_data, unsigned char *buffer, size_t size);
 
 /* Callbacks for RTP */
 static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len);
@@ -126,9 +128,11 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 
 int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 {
-	struct raop_handle *h;
+	unsigned int config_size = 0;
+	unsigned char config[55];
 	struct rtp_attr r_attr;
-	int codec;
+	struct raop_handle *h;
+	int codec = CODEC_NO;
 
 	/* Alloc structure */
 	*handle = malloc(sizeof(struct raop_handle));
@@ -138,6 +142,8 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 
 	/* Init structure */
 	h->transport = attr->transport;
+	h->packet_len = 0;
+	h->pcm_remaining = 0;
 
 	/* Prepare openssl for AES */
 	AES_set_decrypt_key(attr->aes_key, 128, &h->aes);
@@ -186,24 +192,115 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	if(attr->codec == RAOP_ALAC)
 	{
 		codec = CODEC_ALAC;
-		raop_prepare_alac(h->alac_header, attr->format);
-		h->first = 1;
+		raop_prepare_alac(config, attr->format);
+		config_size = 55;
 	}
 	else if(attr->codec == RAOP_AAC)
+	{
 		codec = CODEC_AAC;
+		config_size = 0;
+	}
 
 	/* Open decoder */
-	decoder_open(&h->dec, codec, &raop_read_stream, h);
+	if(decoder_open(&h->dec, codec, config, config_size, &h->samplerate,
+		     &h->channels) != 0)
+		return -1;
+
+	return 0;
+}
+
+static int raop_get_next_packet(struct raop_handle *h)
+{
+	unsigned char packet[MAX_PACKET_SIZE];
+	unsigned char iv[16];
+	size_t in_size;
+	size_t read_len, aes_len;
+
+	in_size = MAX_PACKET_SIZE - h->packet_len;
+	if(in_size == 0)
+		return 0;
+
+	/* Read next packet */
+	if(h->transport == RAOP_TCP)
+	{
+		/* Read packet from TCP */
+		read_len = raop_tcp_read(h->tcp, packet, in_size);
+	}
+	else
+	{
+		/* Read RTP packet */
+		read_len = rtp_read(h->rtp, packet, in_size);
+	}
+
+	/* If a packet has been received: decrypt it */
+	if(read_len > 0)
+	{
+		/* Decrypt AES packet */
+		aes_len = read_len & ~0xf;
+		memcpy(iv, h->aes_iv, sizeof(h->aes_iv));
+		AES_cbc_encrypt(packet, &h->packet[h->packet_len], aes_len,
+				&h->aes, iv, AES_DECRYPT);
+		memcpy(&h->packet[h->packet_len+aes_len], packet+aes_len,
+		       read_len - aes_len);
+
+		h->packet_len += read_len;
+	}
 
 	return 0;
 }
 
 int raop_read(struct raop_handle *h, unsigned char *buffer, size_t size)
 {
+	struct decoder_info info;
+	int total_samples = 0;
+	int samples;
+
 	if(h == NULL)
 		return -1;
 
-	return decoder_read(h->dec, buffer, size);
+	/* Process remaining pcm data */
+	if(h->pcm_remaining > 0)
+	{
+		/* Get remaining pcm data from decoder */
+		samples = decoder_decode(h->dec, NULL, 0, buffer, size, &info);
+		if(samples < 0)
+			return -1;
+
+		h->pcm_remaining -= samples;
+		total_samples += samples;
+	}
+
+	/* Fill output buffer */
+	while(total_samples < size)
+	{
+		/* Get next packet */
+		raop_get_next_packet(h);
+
+		/* Decode next frame */
+		samples = decoder_decode(h->dec, h->packet, h->packet_len,
+					 &buffer[total_samples * 4],
+					 size - total_samples, &info);
+		if(samples <= 0)
+			return total_samples;
+
+		/* Move input buffer to next frame */
+		if(info.used < h->packet_len)
+		{
+			memmove(h->packet, &h->packet[info.used],
+				h->packet_len - info.used);
+			h->packet_len -=  info.used;
+		}
+		else
+		{
+			h->packet_len = 0;
+		}
+
+		/* Update remaining counter */
+		h->pcm_remaining = info.remaining;
+		total_samples += samples;
+	}
+
+	return total_samples;
 }
 
 unsigned long raop_get_samplerate(struct raop_handle *h)
@@ -211,7 +308,7 @@ unsigned long raop_get_samplerate(struct raop_handle *h)
 	if(h == NULL)
 		return 0;
 
-	return decoder_get_samplerate(h->dec);
+	return h->samplerate;
 }
 
 unsigned char raop_get_channels(struct raop_handle *h)
@@ -219,7 +316,7 @@ unsigned char raop_get_channels(struct raop_handle *h)
 	if(h == NULL)
 		return 0;
 
-	return decoder_get_channels(h->dec);
+	return h->channels;
 }
 
 int raop_close(struct raop_handle *h)
@@ -300,43 +397,3 @@ static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count)
 	/* Send the resent packet request */
 	rtp_send_rtcp(h->rtp, request, 8);
 }
-
-static int raop_read_stream(void * user_data, unsigned char *buffer, size_t size)
-{
-	struct raop_handle *h = (struct raop_handle*) user_data;
-	unsigned char packet[MAX_PACKET_SIZE];
-	unsigned char iv[16];
-	size_t read_len, aes_len;
-
-	/* First of all: return alac file header */
-	if(h->first)
-	{
-		memcpy(buffer, h->alac_header, 55);
-		h->first = 0;
-		return 55;
-	}
-
-	/* Read a packet */
-	if(h->transport == RAOP_TCP)
-	{
-		/* Read packet from TCP */
-		read_len = raop_tcp_read(h->tcp, packet, MAX_PACKET_SIZE);
-	}
-	else
-	{
-		/* Read RTP packet */
-		read_len = rtp_read(h->rtp, packet, MAX_PACKET_SIZE);
-	}
-
-	if(read_len > 0)
-	{
-		/* Decrypt AES packet */
-		aes_len = read_len & ~0xf;
-		memcpy(iv, h->aes_iv, sizeof(h->aes_iv));
-		AES_cbc_encrypt(packet, buffer, aes_len, &h->aes, iv, AES_DECRYPT);
-		memcpy(buffer+aes_len, packet+aes_len, read_len-aes_len);
-	}
-
-	return read_len;
-}
-

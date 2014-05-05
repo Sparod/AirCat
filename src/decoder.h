@@ -1,7 +1,7 @@
 /*
  * decoder.h - Decoder base
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,15 +19,24 @@
 #ifndef _DECODER_H
 #define _DECODER_H
 
+/* Output status for decoder */
+struct decoder_info {
+	unsigned long used;		// Bytes consumed from input buffer
+	unsigned long remaining;	// Remaining samples in decoder
+};
+
+enum {
+	DECODER_ERROR_BUFLEN = -1,
+	DECODER_ERROR_SYNC = -2
+};
+
 /* Generic handle */
 struct decoder_handle {
 	struct decoder *dec;
-	int (*open)(struct decoder**, void*, void*);
-	unsigned long (*get_samplerate)(struct decoder*);
-	unsigned char (*get_channels)(struct decoder*);
-	unsigned long (*get_bitrate)(struct decoder*);
-	int (*read)(struct decoder*, unsigned char*, size_t);
-	int (*flush)(struct decoder*);
+	int (*open)(struct decoder**, unsigned char *, size_t, unsigned long*,
+		    unsigned char*);
+	int (*decode)(struct decoder*, unsigned char*, size_t, unsigned char*,
+		      size_t, struct decoder_info*);
 	int (*close)(struct decoder*);
 };
 
@@ -38,14 +47,12 @@ enum {
 	CODEC_AAC
 };
 
-
 int decoder_open(struct decoder_handle **handle, int codec,
-		 void *input_callback, void *user_data);
-unsigned long decoder_get_samplerate(struct decoder_handle *h);
-unsigned char decoder_get_channels(struct decoder_handle *h);
-unsigned long decoder_get_bitrate(struct decoder_handle *h);
-int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size);
-int decoder_flush(struct decoder_handle *h);
+		 unsigned char *buffer, size_t len, unsigned long *samplerate,
+		 unsigned char *channels);
+int decoder_decode(struct decoder_handle *h, unsigned char *in_buffer,
+		   size_t in_size, unsigned char *out_buffer,
+		   size_t out_size, struct decoder_info *info);
 int decoder_close(struct decoder_handle *h);
 
 #endif

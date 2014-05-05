@@ -1,7 +1,7 @@
 /*
  * decoder.c - Decoder base
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,13 +26,12 @@
 #include "decoder_mp3.h"
 
 int decoder_open(struct decoder_handle **handle, int codec,
-		 void *input_callback, void *user_data)
+		 unsigned char *buffer, size_t len, unsigned long *samplerate,
+		 unsigned char *channels)
 {
 	struct decoder_handle *h;
 
-	if(input_callback == NULL)
-		return -1;
-
+	/* Alloc structure */
 	*handle = malloc(sizeof(struct decoder_handle));
 	if(*handle == NULL)
 		return -1;
@@ -56,53 +55,24 @@ int decoder_open(struct decoder_handle **handle, int codec,
 		return -1;
 	}
 
-	return h->open(&h->dec, input_callback, user_data);
+	return h->open(&h->dec, buffer, len, samplerate, channels);
 }
 
-unsigned long decoder_get_samplerate(struct decoder_handle *h)
-{
-	if(h == NULL || h->dec == NULL)
-		return 0;
-
-	return h->get_samplerate(h->dec);
-}
-
-unsigned char decoder_get_channels(struct decoder_handle *h)
-{
-	if(h == NULL || h->dec == NULL)
-		return 0;
-
-	return h->get_channels(h->dec);
-}
-
-unsigned long decoder_get_bitrate(struct decoder_handle *h)
-{
-	if(h == NULL || h->dec == NULL)
-		return 0;
-
-	return h->get_bitrate(h->dec);
-}
-
-int decoder_read(struct decoder_handle *h, unsigned char *buffer, size_t size)
-{
-	if(h == NULL || h->dec == NULL || buffer == NULL)
-		return -1;
-
-	return h->read(h->dec, buffer, size);
-}
-
-int decoder_flush(struct decoder_handle *h)
+int decoder_decode(struct decoder_handle *h, unsigned char *in_buffer,
+		   size_t in_size, unsigned char *out_buffer,
+		   size_t out_size, struct decoder_info *info)
 {
 	if(h == NULL || h->dec == NULL)
 		return -1;
 
-	return h->flush(h->dec);
+	return h->decode(h->dec, in_buffer, in_size, out_buffer, out_size,
+			 info);
 }
 
 int decoder_close(struct decoder_handle *h)
 {
 	if(h == NULL)
-		return -1;
+		return 0;
 
 	if(h->dec != NULL)
 		h->close(h->dec);

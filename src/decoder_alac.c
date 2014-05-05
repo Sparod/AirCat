@@ -1,7 +1,7 @@
 /*
  * decoder_alac.c - A AppleLossless Decoder
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -88,66 +88,52 @@ struct alac_decoder {
 };
 
 struct decoder {
-	/* Read Callback */
-	int (*input_callback)(void *, unsigned char *, size_t);
-	void *user_data;
+	/* PCM output */
 	unsigned char buffer[BUFFER_SIZE];
 	unsigned long pcm_length;
 	unsigned long pcm_remain;
 	/* ALAC params */
 	struct alac_decoder alac;
-	unsigned long bitrate;
 };
 
 static const int host_bigendian = 0;
 
 static int decoder_alac_init(struct alac_decoder *alac,
-			     unsigned char *in_buffer);
+			     unsigned char *in_buffer, size_t in_size);
 static void decoder_alac_decode_frame(struct alac_decoder *alac,
 				      unsigned char *in_buffer,
 				      void *out_buffer, int *output_size);
 
-int decoder_alac_open(struct decoder **decoder, void *input_callback,
-		      void *user_data)
+int decoder_alac_open(struct decoder **decoder, unsigned char *config,
+		      size_t config_size, unsigned long *samplerate,
+		      unsigned char *channels)
 {
 	struct decoder *dec;
 
+	/* Alloc structure */
 	*decoder = malloc(sizeof(struct decoder));
 	if(*decoder == NULL)
 		return -1;
 	dec = *decoder;
 
 	/* Init decoder structure */
-	dec->input_callback = input_callback;
-	dec->user_data = user_data;
 	dec->pcm_length = 0;
 	dec->pcm_remain = 0;
 
-	/* Get first ALAC header to get infos */
-	dec->input_callback(dec->user_data, dec->buffer, BUFFER_SIZE);
+	/* Init alac decoder with 0 */
+	memset(&dec->alac, 0, sizeof(struct alac_decoder));
 
 	/* Init ALAC parameters */
-	decoder_alac_init(&dec->alac, dec->buffer);
+	if(decoder_alac_init(&dec->alac, config, config_size) < 0)
+		return -1;
 
-	/* Compite birate */
-	dec->bitrate = 0;
+	/* Get samplerate and channels */
+	if(samplerate != NULL)
+		*samplerate = dec->alac.samplerate;
+	if(channels != NULL)
+		*channels = dec->alac.numchannels;
 
 	return 0;
-}
-
-unsigned long decoder_alac_get_samplerate(struct decoder* dec)
-{
-	return dec->alac.samplerate;
-}
-
-unsigned char decoder_alac_get_channels(struct decoder *dec)
-{
-	return dec->alac.numchannels;
-}
-
-unsigned long decoder_alac_get_bitrate(struct decoder *dec)
-{
-	return dec->bitrate;
 }
 
 static long decoder_alac_fill_output(struct decoder *dec,
@@ -186,57 +172,56 @@ static long decoder_alac_fill_output(struct decoder *dec,
 	return size;
 }
 
-int decoder_alac_read(struct decoder *dec, unsigned char *output_buffer,
-		      size_t output_size)
+int decoder_alac_decode(struct decoder *dec, unsigned char *in_buffer,
+			size_t in_size, unsigned char *out_buffer,
+			size_t out_size, struct decoder_info *info)
 {
-	unsigned char packet[PACKET_SIZE];
-	int size = 0;
 	int decode_size;
+	int size = 0;
 
 	/* Empty remaining PCM before decoding another frame */
-	if(dec->pcm_remain > 0)
+	if(dec->pcm_remain > 0 || in_buffer == NULL)
 	{
-		size = decoder_alac_fill_output(dec, output_buffer,
-						output_size);
-		if(dec->pcm_remain > 0 || size == output_size)
-			return size;
+		size = decoder_alac_fill_output(dec, out_buffer, out_size);
+
+		/* Fill decoder info */
+		info->used = 0;
+		info->remaining = dec->pcm_remain;
+
+		return size;
 	}
 
-	/* Fill all buffer */
-	while(size < output_size)
-	{
-		/* Get an ALAC frame */
-		decode_size = dec->input_callback(dec->user_data, packet,
-						  PACKET_SIZE);
-		if(decode_size <= 0)
-			return size;
+	/* Check input size */
+	if(in_size == 0)
+		return 0;
 
-		/* Decode the frame */
-		decoder_alac_decode_frame(&dec->alac, packet, dec->buffer,
+	/* Decode the frame */
+	decoder_alac_decode_frame(&dec->alac, in_buffer, dec->buffer,
 					  &decode_size);
+					  
+	if(decode_size <= 0)
+		return -1;
 
-		/* Fill output buffer with PCM */
-		dec->pcm_remain = decode_size / 2;
-		dec->pcm_length = decode_size / 2;
-		size += decoder_alac_fill_output(dec, &output_buffer[size * 4],
-						 output_size - size);
-	}
+	/* Fill output buffer with PCM */
+	dec->pcm_remain = decode_size / 2;
+	dec->pcm_length = decode_size / 2;
+
+	size = decoder_alac_fill_output(dec, out_buffer, out_size);
+
+	/* Fill decoder info */
+	info->used = in_size;
+	info->remaining = dec->pcm_remain;
+
 	return size;
-}
-
-int decoder_alac_flush(struct decoder *dec)
-{
-	/* Flush PCM buffer */
-	dec->pcm_length = 0;
-	dec->pcm_remain = 0;
-
-	return 0;
 }
 
 int decoder_alac_close(struct decoder *dec)
 {
-	if(dec != NULL)
-		free(dec);
+	if(dec == NULL)
+		return 0;
+
+	/* Free decoder */
+	free(dec);
 
 	return 0;
 }
@@ -244,18 +229,18 @@ int decoder_alac_close(struct decoder *dec)
 struct decoder_handle decoder_alac = {
 	.dec = NULL,
 	.open = &decoder_alac_open,
-	.get_samplerate = &decoder_alac_get_samplerate,
-	.get_channels = &decoder_alac_get_channels,
-	.get_bitrate = &decoder_alac_get_bitrate,
-	.read = &decoder_alac_read,
-	.flush = &decoder_alac_flush,
+	.decode = &decoder_alac_decode,
 	.close = &decoder_alac_close,
 };
 
-static int decoder_alac_init(struct alac_decoder *alac, unsigned char *in_buffer)
+static int decoder_alac_init(struct alac_decoder *alac,
+			     unsigned char *in_buffer, size_t in_size)
 {
 	unsigned char *ptr = in_buffer;
 	int i;
+
+	if(in_size < 55)
+		return -1;
 
 	/* Get ALAC parameters from buffer */
 	ptr += 4; /* size */

@@ -1,9 +1,7 @@
 /*
  * decoder_aac.c - A AAC Decoder based on faad2
  *
- * /!\ EXPERIMENTAL /!\
- *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +19,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+
 #include <neaacdec.h>
 
 #include "decoder_aac.h"
@@ -37,13 +37,6 @@
 
 struct decoder {
 	NeAACDecHandle hDec;
-	/* Read Callback */
-	int (*input_callback)(void *, unsigned char *, size_t);
-	void *user_data;
-	/* Input buffer */
-	unsigned char buffer[BUFFER_SIZE];
-	unsigned long buffer_pos;
-	unsigned long buffer_size;
 	/* Output buffer */
 	unsigned char *pcm_buffer;
 	unsigned long pcm_length;
@@ -51,62 +44,26 @@ struct decoder {
 	/* Infos */
 	unsigned long samplerate;
 	unsigned char nb_channel;
-	unsigned long bitrate;
 };
 
-static long decoder_aac_fill(struct decoder *dec, unsigned long bytes);
-static long decoder_aac_fill_output(struct decoder *dec,
-				    unsigned char *output_buffer,
-				    size_t output_size);
-
-#define FRAME_LEN(b, p) ((((unsigned int) b[p+3] & 0x3)) << 11) | \
-			(((unsigned int) b[p+4]) << 3) | \
-			(b[p+5] >> 5);
-
-/* FIXME */
-static int decoder_aac_sync(struct decoder *dec)
-{
-	size_t frame_length;
-
-	while(1)
-	{
-		/* Look for a ADTS header */
-		if(dec->buffer[dec->buffer_pos] == 0xFF &&
-		   (dec->buffer[dec->buffer_pos+1] & 0xF6) == 0xF0)
-		{
-			/* Check if syncword on next frame with calculated 
-			 * frame length
-			 */
-			frame_length = FRAME_LEN(dec->buffer, dec->buffer_pos);
-			decoder_aac_fill(dec, 0);
-			if(dec->buffer[dec->buffer_pos+frame_length] == 0xFF)
-			{
-				decoder_aac_fill(dec, 0);
-				return 0;
-			}
-		}
-
-		decoder_aac_fill(dec, 1);
-	}
-}
-
-int decoder_aac_open(struct decoder **decoder, void *input_callback,
-		     void *user_data)
+int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
+		     size_t dec_config_size, unsigned long *samplerate,
+		     unsigned char *channels)
 {
 	NeAACDecConfigurationPtr config;
-	NeAACDecFrameInfo frameInfo;
 	struct decoder *dec;
+	int ret;
 
+	/* Alloc structure */
 	*decoder = malloc(sizeof(struct decoder));
 	if(*decoder == NULL)
 		return -1;
 	dec = *decoder;
 
-	dec->input_callback = input_callback;
-	dec->user_data = user_data;
-
-	dec->buffer_size = 0;
-	dec->buffer_pos = 0;
+	/* Init structure */
+	dec->pcm_buffer = NULL;
+	dec->pcm_length = 0;
+	dec->pcm_remain = 0;
 
 	/* Initialize faad */
 	dec->hDec = NeAACDecOpen();
@@ -123,82 +80,34 @@ int decoder_aac_open(struct decoder **decoder, void *input_callback,
 	/* PCM data remaining in output buffer */
 	dec->pcm_remain = 0;
 
-	/* FIXME: Sync with AAC header */
-	decoder_aac_fill(dec, 0);
-	decoder_aac_sync(dec);
-
-	/* Parse first frame to init decoder */
-	if(NeAACDecInit(dec->hDec, &dec->buffer[dec->buffer_pos],
-			dec->buffer_size, &dec->samplerate, &dec->nb_channel)
-	   < 0)
+	/* Check if ADTS or ADIF header */
+	if((dec_config[0] == 0xFF && (dec_config[1] & 0xF6) == 0xF0) ||
+	   memcmp(dec_config, "ADIF", 4) == 0)
 	{
-		NeAACDecClose(dec->hDec);
-		return 1;
-	}
-
-	/* Decode first frame and get informations */
-	NeAACDecDecode(dec->hDec, &frameInfo, &dec->buffer[dec->buffer_pos],
-		       dec->buffer_size);
-
-	/* Compute birate */
-	dec->bitrate = frameInfo.bytesconsumed * 8 * dec->samplerate *
-		       dec->nb_channel / frameInfo.samples;
-
-	return 0;
-}
-
-unsigned long decoder_aac_get_samplerate(struct decoder* dec)
-{
-	return dec->samplerate;
-}
-
-unsigned char decoder_aac_get_channels(struct decoder *dec)
-{
-	return dec->nb_channel;
-}
-
-unsigned long decoder_aac_get_bitrate(struct decoder *dec)
-{
-	return dec->bitrate;
-}
-
-/* FIXME */
-static long decoder_aac_fill(struct decoder *dec, unsigned long bytes)
-{
-	size_t size = 0;
-	size_t remaining = 0;
-	long bread = 0;
-
-	if(dec->buffer_size == 0)
-	{
-		remaining = 0;
-		size = BUFFER_SIZE;
+		/* Init decoder from frame */
+		ret = NeAACDecInit(dec->hDec, dec_config, dec_config_size,
+				   &dec->samplerate, &dec->nb_channel);
 	}
 	else
 	{
-		dec->buffer_pos += bytes;
-		dec->buffer_size -= bytes;
-		if(dec->buffer_size >= FAAD_MIN_STREAMSIZE*2)
-			return 0;
-
-		remaining = dec->buffer_size;
-		size = dec->buffer_pos;
-		memmove(dec->buffer, &dec->buffer[size], remaining);
+		/* Init decoder */
+		ret = NeAACDecInit2(dec->hDec, dec_config, dec_config_size,
+				    &dec->samplerate, &dec->nb_channel);
 	}
 
-	dec->buffer_pos = 0;
-
-	/* Read data from callback */
-	while(dec->buffer_size < FAAD_MIN_STREAMSIZE*2)
+	/* Check init return */
+	if(ret < 0)
 	{
-		bread = dec->input_callback(dec->user_data,
-					    &dec->buffer[remaining], size);
-		if(bread < 0)
-			return -1;
-		dec->buffer_size += bread;
-		remaining += bread;
-		size -= bread;
+		NeAACDecClose(dec->hDec);
+		dec->hDec = NULL;
+		return -1;
 	}
+
+	/* Retunr samplerate and channels */
+	if(samplerate != NULL)
+		*samplerate = dec->samplerate;
+	if(channels != NULL)
+		*channels = dec->nb_channel;
 
 	return 0;
 }
@@ -251,78 +160,61 @@ static long decoder_aac_fill_output(struct decoder *dec,
 	return size;
 }
 
-int decoder_aac_read(struct decoder *dec, unsigned char *output_buffer,
-		     size_t output_size)
+int decoder_aac_decode(struct decoder *dec, unsigned char *in_buffer,
+		       size_t in_size, unsigned char *out_buffer,
+		       size_t out_size, struct decoder_info *info)
 {
 	NeAACDecFrameInfo frameInfo;
 	unsigned short size = 0;
 
 	/* Empty remaining PCM before decoding another frame */
-	if(dec->pcm_remain > 0)
+	if(dec->pcm_remain > 0 || in_buffer == NULL)
 	{
-		size = decoder_aac_fill_output(dec, output_buffer, output_size);
-		if(dec->pcm_remain > 0 || size == output_size)
-			return size;
-	}
-
-	/* FIXME: */
-	/* Fill all buffer */
-	while(size < output_size)
-	{
-		/* Decode a new frame */
-		dec->pcm_buffer = (unsigned char*) NeAACDecDecode(dec->hDec,
-						  &frameInfo,
-						  &dec->buffer[dec->buffer_pos],
-						  dec->buffer_size);
-
-		if (frameInfo.error > 0)
-		{
-			return 0;
-		}
-
-		if(frameInfo.samples == 0)
-		{
-			dec->pcm_buffer = NeAACDecDecode(dec->hDec, &frameInfo,
-						  &dec->buffer[dec->buffer_pos],
-						  dec->buffer_size);
-			return 0;
-		}
-
-		if(dec->pcm_buffer == NULL)
-			return 0;
+		size = decoder_aac_fill_output(dec, out_buffer, out_size);
 
 		/* Update buffer */
-		decoder_aac_fill(dec, frameInfo.bytesconsumed);
+		info->used = 0;
+		info->remaining = dec->pcm_remain;
 
-		/* Fill output buffer with PCM */
-		dec->pcm_remain = frameInfo.samples;
-		dec->pcm_length = frameInfo.samples;
-		size += decoder_aac_fill_output(dec, &output_buffer[size * 4],
-						output_size - size);
+		return size;
 	}
+
+	/* Decode a new frame */
+	dec->pcm_buffer = (unsigned char*) NeAACDecDecode(dec->hDec, &frameInfo,
+							  in_buffer, in_size);
+
+	if(frameInfo.error > 0)
+	{
+		/* Update buffer */
+		info->used = frameInfo.bytesconsumed;
+		info->remaining = 0;
+
+		return 0;
+	}
+
+	/* Fill output buffer with PCM */
+	dec->pcm_remain = frameInfo.samples;
+	dec->pcm_length = frameInfo.samples;
+	size = decoder_aac_fill_output(dec, out_buffer, out_size);
+
+	/* Update buffer */
+	info->used = frameInfo.bytesconsumed;
+	info->remaining = dec->pcm_remain;
 
 	return size;
 }
 
-int decoder_aac_flush(struct decoder *dec)
-{
-	/* Flush PCM buffer */
-	dec->pcm_remain = 0;
-
-	/* Flush input buffer */
-	dec->buffer_size = 0;
-	dec->buffer_pos = 0;
-
-	return 0;
-}
-
 int decoder_aac_close(struct decoder *dec)
 {
-	/* Close mad */
-	NeAACDecClose(dec->hDec);
+	if(dec == NULL)
+		return  0;
 
-	if(dec != NULL)
-		free(dec);
+	/* Close faad */
+	if(dec->hDec != NULL)
+		NeAACDecClose(dec->hDec);
+
+	/* Free structure */
+	free(dec);
 
 	return 0;
 }
@@ -330,11 +222,6 @@ int decoder_aac_close(struct decoder *dec)
 struct decoder_handle decoder_aac = {
 	.dec = NULL,
 	.open = &decoder_aac_open,
-	.get_samplerate = &decoder_aac_get_samplerate,
-	.get_channels = &decoder_aac_get_channels,
-	.get_bitrate = &decoder_aac_get_bitrate,
-	.read = &decoder_aac_read,
-	.flush = &decoder_aac_flush,
+	.decode = &decoder_aac_decode,
 	.close = &decoder_aac_close,
 };
-

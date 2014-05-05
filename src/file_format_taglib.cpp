@@ -24,6 +24,7 @@
 #include <taglib/fileref.h>
 #include <taglib/tbytevector.h>
 #include <taglib/mpegfile.h>
+#include <taglib/mp4file.h>
 #include <taglib/id3v2tag.h>
 #include <taglib/attachedpictureframe.h>
 
@@ -160,6 +161,39 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
 	}
 }
 
+static void tag_read_from_mp4(MP4::Tag *tag, struct file_format *f,
+				int options)
+{
+	MP4::CoverArtList covr;
+
+	if(tag->itemListMap().contains("covr"))
+	{
+		covr = tag->itemListMap()["covr"].toCoverArtList();
+
+		/* Get mime type */
+		if(covr[0].format() == MP4::CoverArt::PNG)
+		{
+			COPY_STRING(f->picture.mime, "image/png");
+		}
+		else
+		{
+			COPY_STRING(f->picture.mime, "image/jpeg");
+		}
+
+		/* Get picture */
+		f->picture.size = covr[0].data().size();
+		f->picture.data = (unsigned char *) malloc(f->picture.size);
+		if(f->picture.data == NULL)
+		{
+			f->picture.size = 0;
+			return;
+		}
+
+		/* Copy data */
+		memcpy(f->picture.data, covr[0].data().data(), f->picture.size);
+	}
+}
+
 struct file_format *file_format_parse(const char *filename, int options)
 {
 	AudioProperties *prop;
@@ -169,12 +203,12 @@ struct file_format *file_format_parse(const char *filename, int options)
 
 	file = FileRef(filename);
 
-	if(file.isNull())
-		return NULL;
-
 	/* Allocate tag structure */
 	f = (struct file_format*) calloc(1, sizeof(struct file_format));
 	if(f == NULL)
+		return NULL;
+
+	if(file.isNull())
 		return NULL;
 
 	tag = file.tag();
@@ -209,6 +243,14 @@ struct file_format *file_format_parse(const char *filename, int options)
 		/* Get extended tags */
 		if(options != 0 && mpeg->ID3v2Tag())
 			tag_read_from_id3v2(mpeg->ID3v2Tag(), f, options);
+	}
+	else if(MP4::File *mp4 = dynamic_cast<MP4::File*>(file.file()))
+	{
+		f->type = FILE_FORMAT_AAC;
+
+		/* Get extended tags */
+		if(options != 0 && mp4->tag())
+			tag_read_from_mp4(mp4->tag(), f, options);
 	}
 	else
 		f->type = FILE_FORMAT_UNKNOWN;
