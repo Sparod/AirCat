@@ -426,6 +426,9 @@ int files_stop(struct files_handle *h)
 	h->file = NULL;
 	h->prev_file = NULL;
 
+	/* Rreset playlist position */
+	h->playlist_cur = -1;
+
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
@@ -636,7 +639,7 @@ char *files_get_json_playlist(struct files_handle *h)
 
 char *files_get_json_list(struct files_handle *h, const char *path)
 {
-	char *ext[] = { ".mp3", ".m4a", ".ogg", ".wav", NULL };
+	char *ext[] = { ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav", NULL };
 	struct json_object *root = NULL, *dir_list, *file_list, *tmp;
 	struct dirent *entry;
 	struct stat s;
