@@ -203,12 +203,12 @@ struct file_format *file_format_parse(const char *filename, int options)
 
 	file = FileRef(filename);
 
+	if(file.isNull())
+		return NULL;
+
 	/* Allocate tag structure */
 	f = (struct file_format*) calloc(1, sizeof(struct file_format));
 	if(f == NULL)
-		return NULL;
-
-	if(file.isNull())
 		return NULL;
 
 	tag = file.tag();

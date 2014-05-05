@@ -85,17 +85,22 @@ int decoder_mp3_open(struct decoder **decoder, unsigned char *config,
 #ifdef USE_FLOAT
 inline float mad_scale(mad_fixed_t sample)
 {
-    return (float) (sample / (float) (1L << MAD_F_FRACBITS));
+	return (float) (sample / (float) (1L << MAD_F_FRACBITS));
 }
-#else /* FIXME */
+#else
 inline int32_t mad_scale(mad_fixed_t sample)
 {
-    if (sample >= MAD_F_ONE)
-        sample = MAD_F_ONE - 1;
-    else if (sample < -MAD_F_ONE)
-        sample = -MAD_F_ONE;
 
-    return sample << 3;
+	/* Round sample */
+	sample += (1L << 4);
+
+	/* Clip */
+	if (sample >= MAD_F_ONE)
+		sample = MAD_F_ONE - 1;
+	else if (sample < -MAD_F_ONE)
+		sample = -MAD_F_ONE;
+
+	return (sample << 3) & 0xFFFFFF00;
 }
 #endif
 
