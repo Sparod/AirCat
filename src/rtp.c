@@ -2,7 +2,7 @@
  * rtp.c - A Tiny RTP Receiver
  * Inspired by VLC RTP access module
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

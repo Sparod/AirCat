@@ -1,7 +1,7 @@
 /*
  * decoder_aac.h - A AAC Decoder based on faad2
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
