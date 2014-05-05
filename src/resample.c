@@ -1,7 +1,7 @@
 /*
  * resample.c - Samplerate and channel converter based on libsoxr
  *
- * Copyright (c) 2013   A. Dilly
+ * Copyright (c) 2014   A. Dilly
  *
  * AirCat is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,15 +60,33 @@ struct resample_handle {
 	} * out_specs;
 };
 
-static size_t resample_input_callback(void *user_data, soxr_cbuf_t *buffer, size_t len)
+static size_t resample_input_callback(void *user_data, soxr_cbuf_t *buffer,
+				      size_t len)
 {
 	struct resample_handle *h = (struct resample_handle*) user_data;
+	ssize_t size;
 
 	/* Read one block into the buffer */
-	len = h->input_callback(h->user_data, h->buffer, len * h->in_nb_channel) / h->in_nb_channel;
+	size = h->input_callback(h->user_data, h->buffer,
+				 len * h->in_nb_channel) / h->in_nb_channel;
+
+	if(size < 0)
+	{
+		/* End of stream */
+		return 0;
+	}
+	else if(size == 0)
+	{
+		/* No data */
+		memset(h->buffer, 0, len * h->in_nb_channel * 4);
+		*buffer = h->buffer;
+		return len;
+	}
+	else
+		len = size;
 
 	/* Down-mixing channels: inspired from remix effect from sox  */
-	if(h->in_nb_channel > h->out_nb_channel)
+	if(len > 0 && h->in_nb_channel > h->out_nb_channel)
 	{
 #ifdef USE_FLOAT
 		float sample = 0;
@@ -88,24 +106,27 @@ static size_t resample_input_callback(void *user_data, soxr_cbuf_t *buffer, size
 			for(j = 0; j < h->out_nb_channel; j++)
 			{
 				sample = 0;
-				for(k = 0; k < h->out_specs[j].num_in_channels; k++)
+				for(k = 0; k < h->out_specs[j].num_in_channels;
+				    k++)
 				{
-					sample += p_in[h->out_specs[j].in_specs[k].channel_num] * h->out_specs[j].in_specs[k].multiplier;
+					sample += 
+				   p_in[h->out_specs[j].in_specs[k].channel_num]
+				   * h->out_specs[j].in_specs[k].multiplier;
 				}
 				*(p_out++) = sample;
 			}
 		}
 	}
 
-	if(len <= 0)
-		*buffer = NULL;
-	else
-		*buffer = h->buffer;
+	*buffer = h->buffer;
 
 	return len;
 }
 
-int resample_open(struct resample_handle **handle, unsigned long in_samplerate, unsigned char in_nb_channel, unsigned long out_samplerate, unsigned char out_nb_channel, void *input_callback, void *user_data)
+int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
+		  unsigned char in_nb_channel, unsigned long out_samplerate,
+		  unsigned char out_nb_channel, void *input_callback,
+		  void *user_data)
 {
 	struct resample_handle *h;
 	soxr_io_spec_t io_spec;
@@ -149,20 +170,29 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate, 
 	if(h->out_specs == NULL)
 		return -1;
 
-	/* Calculate coeff for down/up-mixing: inspired from remix effect from sox */
+	/* Calculate coeff for down/up-mixing: inspired from remix effect from
+	 * sox library.
+	 */
 	if(h->in_nb_channel > h->out_nb_channel)
 	{
-		/* Down-mixing */ /* FIXME: for channels > 2 needs to add center on left and right */
+		/* Down-mixing */
+		/* FIXME: for channels > 2 needs to add center on L and R */
 		for(i = 0; i < h->out_nb_channel; i++)
 		{
-			unsigned in_per_out = (h->in_nb_channel + h->out_nb_channel - 1 - i) / h->out_nb_channel;
-			h->out_specs[i].in_specs = malloc(in_per_out*sizeof(*h->out_specs[i].in_specs));
+			unsigned in_per_out = (h->in_nb_channel +
+					       h->out_nb_channel - 1 - i) /
+					      h->out_nb_channel;
+			h->out_specs[i].in_specs = malloc(in_per_out * 
+					     sizeof(*h->out_specs[i].in_specs));
 			h->out_specs[i].num_in_channels = in_per_out;
 
 			for (j = 0; j < in_per_out; ++j)
 			{
-				h->out_specs[i].in_specs[j].channel_num = j * h->out_nb_channel + i;
-				h->out_specs[i].in_specs[j].multiplier = 1. / in_per_out;
+				h->out_specs[i].in_specs[j].channel_num = j *
+							     h->out_nb_channel +
+							     i;
+				h->out_specs[i].in_specs[j].multiplier = 1. /
+								     in_per_out;
 			}
 		}
 	}
@@ -171,8 +201,10 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate, 
 		/* Up-mixing */
 		for(i = 0; i < h->out_nb_channel; i++)
 		{
-			h->out_specs[i].in_specs = malloc(sizeof(h->out_specs[i].in_specs));
-			h->out_specs[i].in_specs[0].channel_num = i % h->in_nb_channel;
+			h->out_specs[i].in_specs = malloc(
+					      sizeof(h->out_specs[i].in_specs));
+			h->out_specs[i].in_specs[0].channel_num = i %
+							       h->in_nb_channel;
 		}
 	}
 
@@ -184,12 +216,15 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate, 
 #endif
 
 	/* Create converter */
-	h->soxr = soxr_create((double)in_samplerate, (double)out_samplerate, min(in_nb_channel, out_nb_channel), NULL, &io_spec, NULL, NULL);
+	h->soxr = soxr_create((double)in_samplerate, (double)out_samplerate,
+			      min(in_nb_channel, out_nb_channel), NULL,
+			      &io_spec, NULL, NULL);
 	if(h->soxr == NULL)
 		return -1;
 
 	/* Set input callback for libsoxr */
-	if(soxr_set_input_fn(h->soxr, (soxr_input_fn_t)resample_input_callback, h, BUFFER_SIZE) < 0)
+	if(soxr_set_input_fn(h->soxr, (soxr_input_fn_t)resample_input_callback,
+			     h, BUFFER_SIZE) < 0)
 		return -1;
 
 	return 0;
@@ -197,10 +232,12 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate, 
 
 int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
 {
+	size_t len;
+	size_t i;
+
 	/* Up-mixing channels: inspired from remix effect from sox */
 	if(h->in_nb_channel < h->out_nb_channel)
 	{
-		size_t i, len;
 #ifdef USE_FLOAT
 		float *p_in = (float*) h->buffer_out;
 		float *p_out = (float*) buffer;
@@ -214,20 +251,28 @@ int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
 		if(h->size_out < size)
 			size = h->size_out;
 
-		len = soxr_output(h->soxr, h->buffer_out, size / h->in_nb_channel);
+		len = soxr_output(h->soxr, h->buffer_out,
+				  size / h->in_nb_channel);
 
 		for(i = len; i--; p_in += h->in_nb_channel)
 		{
 			for(j = 0; j < h->out_nb_channel; j++)
 			{
-				*(p_out++) = p_in[h->out_specs[j].in_specs[0].channel_num];
+				*(p_out++) = 
+				  p_in[h->out_specs[j].in_specs[0].channel_num];
 			}
 		}
-
-		return len * h->out_nb_channel;
 	}
 	else
-		return soxr_output(h->soxr, buffer, size/h->out_nb_channel)*h->out_nb_channel;
+	{
+		len = soxr_output(h->soxr, buffer, size / h->out_nb_channel);
+	}
+
+	/* End of stream */
+	if(len == 0)
+		return -1;
+
+	return len * h->out_nb_channel;
 }
 
 int resample_close(struct resample_handle *h)
