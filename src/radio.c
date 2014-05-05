@@ -31,6 +31,7 @@ struct radio_handle {
 	struct output_stream *stream;
 	/* Radio player */
 	struct shout_handle *shout;
+	struct radio_item *radio;
 	/* Radio list */
 	struct radio_list_handle *list;
 };
@@ -50,6 +51,7 @@ int radio_open(struct radio_handle **handle, struct output_handle *o)
 	h->list = NULL;
 	h->output = o;
 	h->stream = NULL;
+	h->radio = NULL;
 
 	/* Load radio list */
 	if(radio_list_open(&h->list, config.radio_list_file) != 0)
@@ -60,12 +62,36 @@ int radio_open(struct radio_handle **handle, struct output_handle *o)
 
 int radio_play(struct radio_handle *h, const char *id)
 {
+	unsigned long samplerate;
+	unsigned char channels;
+
 	if(id == NULL)
 		return -1;
 
 	/* Radio module must be enabled */
 	if(config.radio_enabled != 1)
 		return 0;
+
+	/* Stop previous radio */
+	radio_stop(h);
+
+	/* Get radio item */
+	h->radio = radio_list_get_radio(h->list, id);
+	if(h->radio == NULL)
+		return -1;
+
+	/* Open radio */
+	if(shoutcast_open(&h->shout, h->radio->url) != 0)
+		return -1;
+
+	/* Get samplerate and channels */
+	samplerate = shoutcast_get_samplerate(h->shout);
+	channels = shoutcast_get_channels(h->shout);
+
+	/* Open new Audio stream output and play */
+	h->stream = output_add_stream(h->output, samplerate, channels,
+				      &shoutcast_read, h->shout);
+	output_play_stream(h->output, h->stream);
 
 	return 0;
 }
@@ -74,6 +100,19 @@ int radio_stop(struct radio_handle *h)
 {
 	if(h == NULL || h->shout == NULL)
 		return 0;
+
+	if(h->stream != NULL)
+		output_remove_stream(h->output, h->stream);
+
+	if(h->shout != NULL)
+		shoutcast_close(h->shout);
+
+	if(h->radio != NULL)
+		radio_list_free_radio_item(h->radio);
+
+	h->stream = NULL;
+	h->shout = NULL;
+	h->radio = NULL;
 
 	return 0;
 }
@@ -97,6 +136,9 @@ int radio_close(struct radio_handle *h)
 {
 	if(h == NULL)
 		return 0;
+
+	/* Stop radio */
+	radio_stop(h);
 
 	/* Free radio list */
 	if(h->list != NULL)
