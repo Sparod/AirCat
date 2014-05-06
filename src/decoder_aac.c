@@ -73,7 +73,7 @@ int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
 #ifdef USE_FLOAT
 	config->outputFormat = FAAD_FMT_FLOAT;
 #else
-	config->outputFormat = FAAD_FMT_32BIT;
+	config->outputFormat = FAAD_FMT_24BIT;
 #endif
 	NeAACDecSetConfiguration(dec->hDec, config);
 
@@ -149,7 +149,7 @@ static long decoder_aac_fill_output(struct decoder *dec,
 		size_t i;
 		for(i = 0; i < size; i++)
 		{
-			*(p_out++) = *p_in == 0x80000000 ? 0x7FFFFFFF : *p_in;
+			*(p_out++) = (*p_in << 8);
 			p_in++;
 		}
 	}
