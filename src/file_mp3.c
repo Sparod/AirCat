@@ -61,9 +61,20 @@ struct mp3_frame {
 };
 
 struct mp3_demux {
+	/* Xing/VBRI specific */
 	unsigned long nb_bytes;
 	unsigned int nb_frame;
 	unsigned int quality;
+	unsigned char *toc;
+	/* VBRI sepcific */
+	unsigned int version;
+	unsigned int delay;
+	unsigned char *vbri_toc;
+	unsigned int toc_scale;
+	unsigned int toc_size;
+	unsigned int toc_count;
+	unsigned int toc_frames;
+	/* First frame offset */
 	unsigned long offset;
 };
 
@@ -145,29 +156,25 @@ static int file_mp3_parse_xing(struct mp3_frame *f, unsigned char *buffer,
 		return -1;
 
 	/* Calculate header position */
-	if(f->channels == 0)
-	{
-		offset = 13;
-		if(f->mpeg == 0)
-			offset += 8;
-	}
-	else
-	{
-		offset = 21;
-		if(f->mpeg == 0)
-			offset += 15;
-	}
-
-	/* Check header ID */
-	if(offset > f->length ||
-	   strncasecmp((char*)&buffer[offset], "Xing", 4) != 0 ||
-	   strncasecmp((char*)&buffer[offset], "Info", 4) != 0)
+	offset = f->channels == 0 ?
+		(f->mpeg == 0 ? 21 : 13) : (f->mpeg == 0 ? 36 : 21);
+	if(offset + 120 > f->length)
 		return -1;
 
 	/* Set buffer ptr */
 	buffer += offset;
 
+	/* Ignore Xing header begining with LAME */
+	if(strncasecmp((char*)buffer, "LAME", 4) == 0)
+		return 0;
+
+	/* Check header ID */
+	if(strncasecmp((char*)buffer, "Xing", 4) != 0 &&
+	   strncasecmp((char*)buffer, "Info", 4) != 0)
+		return -1;
+
 	/* Get flags */
+	buffer += 4;
 	flags = (unsigned char) READ32(buffer);
 
 	/* Number of Frames */
@@ -182,6 +189,11 @@ static int file_mp3_parse_xing(struct mp3_frame *f, unsigned char *buffer,
 	if(flags & 0x0004)
 	{
 		/* Copy TOC */
+		d->toc = malloc(100);
+		if(d->toc != NULL)
+			memcpy(d->toc, buffer, 100);
+
+		/* Update position */
 		buffer += 100;
 	}
 
@@ -195,15 +207,10 @@ static int file_mp3_parse_xing(struct mp3_frame *f, unsigned char *buffer,
 static int file_mp3_parse_vbri(struct mp3_frame *f, unsigned char *buffer,
 			       size_t len, struct mp3_demux *d)
 {
-	unsigned int frames_toc;
-	unsigned int scale_toc;
-	unsigned int size_toc;
-	unsigned int nb_toc;
-	unsigned int version;
-	unsigned int delay;
+	unsigned int size;
 
 	/* Needs all frame */
-	if(f->length > len)
+	if(f->length > len && f->length < 62)
 		return -1;
 
 	/* Go to VBRI header */
@@ -217,44 +224,57 @@ static int file_mp3_parse_vbri(struct mp3_frame *f, unsigned char *buffer,
 	buffer += 4;
 
 	/* Get version ID */
-	version = READ16(buffer);
+	d->version = READ16(buffer);
 
 	/* Get delay */
-	delay = READ16(buffer);
+	d->delay = READ16(buffer);
 
 	/* Quality indicator */
 	d->quality = READ16(buffer);
 
 	/* Number of Bytes */
 	d->nb_bytes = READ32(buffer);
+	if(d->nb_bytes == 0)
+		return 0;
 
 	/* Number of Frames */
 	d->nb_frame = READ32(buffer);
+	if(d->nb_frame == 0)
+		return 0;
 
 	/* Number of entries within TOC */
-	nb_toc = READ16(buffer);
+	d->toc_count = READ16(buffer);
+	if(d->toc_count == 0)
+		return 0;
 
 	/* Scale factor of TOC */
-	scale_toc = READ16(buffer);
+	d->toc_scale = READ16(buffer);
+	if(d->toc_scale == 0)
+		return 0;
 
 	/* Size per table entry in bytes (max 4) */
-	size_toc = READ16(buffer);
-	if(size_toc > 4)
-		return -1;
+	d->toc_size = READ16(buffer);
+	if(d->toc_size > 4 || d->toc_size == 0)
+		return 0;
 
 	/* Frames per table entry */
-	frames_toc = READ16(buffer);
+	d->toc_frames = READ16(buffer);
+	if(d->toc_frames == 0 || d->toc_frames * (d->toc_count+1) < d->nb_frame)
+		return 0;
 
-	/* TOC entries */
+
+	/* Calculate TOC size */
+	size = d->toc_size * d->toc_count;
+	if(f->length < 62 + size)
+		return 0;
+
+
+	/* Copy TOC */
+	d->vbri_toc = malloc(size);
+	if(d->vbri_toc != NULL)
+		memcpy(d->vbri_toc, buffer, size);
 
 	return 0;
-}
-
-static int file_mp3_parse_lame(struct mp3_frame *f, unsigned char *buffer,
-			       size_t len, struct mp3_demux *d)
-{
-	/* Not yet implemented */
-	return -1;
 }
 
 int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
@@ -262,7 +282,7 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 {
 	struct mp3_frame frame;
 	struct mp3_demux *d;
-	unsigned long size;
+	unsigned long id3_size = 0;
 	long first = -1;
 	int i;
 
@@ -274,16 +294,16 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 	if(memcmp(h->in_buffer, "ID3", 3) == 0)
 	{
 		/* Get ID3 size */
-		size = (h->in_buffer[6] << 21) | (h->in_buffer[7] << 14) |
+		id3_size = (h->in_buffer[6] << 21) | (h->in_buffer[7] << 14) |
 		       (h->in_buffer[8] << 7) | h->in_buffer[9];
-		size += 10;
+		id3_size += 10;
 
 		/* Add footer size */
 		if(h->in_buffer[5] & 0x20)
-			size += 10;
+			id3_size += 10;
 
 		/* Skip ID3 in file */
-		file_seek_input(h, size, SEEK_CUR);
+		file_seek_input(h, id3_size, SEEK_CUR);
 	}
 
 	/* Complete input buffer */
@@ -326,7 +346,6 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 
 	/* Parse Xing/Lame/VBRI header */
 	if(file_mp3_parse_xing(&frame, h->in_buffer, h->in_size, d) == 0 ||
-	   file_mp3_parse_lame(&frame, h->in_buffer, h->in_size, d) == 0 ||
 	   file_mp3_parse_vbri(&frame, h->in_buffer, h->in_size, d) == 0)
 	{
 		/* Move to next frame */
@@ -335,7 +354,7 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 	}
 
 	/* Update position of stream */
-	d->offset = first;
+	d->offset = first + id3_size;
 
 	/* Update samplerate and channels */
 	*samplerate = frame.samplerate;
@@ -360,11 +379,63 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 {
 	struct mp3_demux *d = h->demux_data;
 	unsigned long f_pos;
+	unsigned long f_size;
+	float p, fa, fb, fx;
+	float a, b;
+	int i, j;
 
 	/* Calculate new position */
-	f_pos = (h->file_size - d->offset) * pos / h->length;
-	if(f_pos > h->file_size)
-		return -1;
+	if(d->vbri_toc != NULL)
+	{
+		/* Use TOC from VBRI header */
+		i = pos * (d->toc_count - 1) / h->length;
+		i = i > d->toc_count - 1 ? d->toc_count - 1 : i;
+		a = i * h->length * d->toc_count * 1.0;
+
+		fa = 0.0;
+		for(j = i; j >= 0; j--)
+			fa += (d->vbri_toc[j] * d->toc_scale);
+
+		if (i + 1 < d->toc_count)
+		{
+			b = (i + 1) * h->length / d->toc_count;
+			fb = fa + (d->vbri_toc[i+1] * d->toc_scale);
+		}
+		else
+		{
+			b = h->length;
+			fb = d->nb_bytes;
+		}
+
+		f_pos = fa + ((fb - fa) / (b - a)) * ((float)(pos) - a);
+	}
+	else if(d->toc != NULL)
+	{
+		/* Use TOC from Xing header */
+		p = pos * 100.0 / h->length;
+		if(p > 100.0)
+			p = 100.0;
+		i = (int) p > 99 ? 99 : (int) p;
+
+		fa = d->toc[i];
+		fb = i < 99 ? d->toc[i+1] : 256.0;
+		fx = fa + (fb - fa) * (p - i);
+
+		/* Get position */
+		f_size = d->nb_bytes > 0 ? d->nb_bytes :
+					   h->file_size - d->offset;
+		f_pos = (1.0 / 256.0) * fx * f_size;
+	}
+	else
+	{
+		/* Compute aprox position */
+		f_pos = (h->file_size - d->offset) * pos / h->length;
+		if(f_pos > h->file_size)
+			return -1;
+	}
+
+	/* Add id3_tag offset */
+	f_pos += d->offset;
 
 	/* Seek in file */
 	if(file_seek_input(h, f_pos, SEEK_SET) != 0)
@@ -378,8 +449,17 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 
 void file_mp3_free(struct file_handle *h)
 {
+	struct mp3_demux *d;
+
 	if(h == NULL || h->demux_data == NULL)
 		return;
+
+	d = h->demux_data;
+
+	if(d->toc != NULL)
+		free(d->toc);
+	if(d->vbri_toc != NULL)
+		free(d->vbri_toc);
 
 	free(h->demux_data);
 	h->demux_data = NULL;
@@ -391,3 +471,4 @@ struct file_demux file_mp3_demux = {
 	.set_pos = &file_mp3_set_pos,
 	.free = &file_mp3_free,
 };
+
