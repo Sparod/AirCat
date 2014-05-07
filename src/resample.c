@@ -38,18 +38,19 @@ struct resample_handle {
 	soxr_t soxr;
 	/* Samplerate converter configuration */
 	unsigned long in_samplerate;
-	unsigned char in_nb_channel;
+	unsigned char in_channels;
 	unsigned long out_samplerate;
-	unsigned char out_nb_channel;
+	unsigned char out_channels;
 	/* Input callback */
 	int (*input_callback)( void *, unsigned char *, size_t);
 	void *user_data;
 	/* Input buffer */
-	unsigned char *buffer;
-	size_t size;
+	unsigned char *in_buffer;
+	size_t in_size;
+	size_t in_len;
 	/* Output buffer (mono -> stereo) */
-	unsigned char *buffer_out;
-	size_t size_out;
+	unsigned char *out_buffer;
+	size_t out_size;
 	/* Mixing table: inspired from remix effect from sox */
 	struct {
 		unsigned num_in_channels;
@@ -60,72 +61,9 @@ struct resample_handle {
 	} * out_specs;
 };
 
-static size_t resample_input_callback(void *user_data, soxr_cbuf_t *buffer,
-				      size_t len)
-{
-	struct resample_handle *h = (struct resample_handle*) user_data;
-	ssize_t size;
-
-	/* Read one block into the buffer */
-	size = h->input_callback(h->user_data, h->buffer,
-				 len * h->in_nb_channel) / h->in_nb_channel;
-
-	if(size < 0)
-	{
-		/* End of stream */
-		return 0;
-	}
-	else if(size == 0)
-	{
-		/* No data */
-		memset(h->buffer, 0, len * h->in_nb_channel * 4);
-		*buffer = h->buffer;
-		return len;
-	}
-	else
-		len = size;
-
-	/* Down-mixing channels: inspired from remix effect from sox  */
-	if(len > 0 && h->in_nb_channel > h->out_nb_channel)
-	{
-#ifdef USE_FLOAT
-		float sample = 0;
-		float *p_in = (float*) h->buffer;
-		float *p_out = (float*) h->buffer;
-#else
-		int32_t sample = 0;
-		int32_t *p_in = (int32_t*) h->buffer;
-		int32_t *p_out = (int32_t*) h->buffer;
-
-#endif
-		size_t i;
-		int j, k;
-
-		for(i = len; i--; p_in += h->in_nb_channel)
-		{
-			for(j = 0; j < h->out_nb_channel; j++)
-			{
-				sample = 0;
-				for(k = 0; k < h->out_specs[j].num_in_channels;
-				    k++)
-				{
-					sample += 
-				   p_in[h->out_specs[j].in_specs[k].channel_num]
-				   * h->out_specs[j].in_specs[k].multiplier;
-				}
-				*(p_out++) = sample;
-			}
-		}
-	}
-
-	*buffer = h->buffer;
-
-	return len;
-}
-
 int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
-		  unsigned char in_nb_channel, unsigned long out_samplerate,
-		  unsigned char out_nb_channel, void *input_callback,
+		  unsigned char in_channels, unsigned long out_samplerate,
+		  unsigned char out_channels, void *input_callback,
 		  void *user_data)
 {
 	struct resample_handle *h;
@@ -146,42 +84,46 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 
 	/* Set samplerate and channel values */
 	h->in_samplerate = in_samplerate ;
-	h->in_nb_channel = in_nb_channel;
+	h->in_channels = in_channels;
 	h->out_samplerate = out_samplerate;
-	h->out_nb_channel = out_nb_channel;
+	h->out_channels = out_channels;
 
 	/* Alloc buffer */
-	h->size = BUFFER_SIZE*max(in_nb_channel, out_nb_channel);
-	h->buffer = malloc(h->size*4); //32-bit wide sample
-	if(h->buffer == NULL)
+	h->in_len = 0;
+	h->in_size = BUFFER_SIZE * max(in_channels, out_channels);
+	h->in_buffer = malloc(h->in_size * 4); //32-bit wide sample
+	if(h->in_buffer == NULL)
 		return -1;
 
 	/* Alloc a second buffer for in channel < out_channel */
-	if(in_nb_channel < out_nb_channel)
+	if(in_channels < out_channels)
 	{
-		h->size_out = BUFFER_SIZE*in_nb_channel;
-		h->buffer_out = malloc(h->size_out*4); //32-bit wide sample
-		if(h->buffer_out == NULL)
+		h->out_size = BUFFER_SIZE * in_channels;
+		h->out_buffer = malloc(h->out_size * 4); //32-bit wide sample
+		if(h->out_buffer == NULL)
 			return -1;
 	}
 
 	/* Prepapre values for down/up-mixing */
-	h->out_specs = malloc(h->out_nb_channel*sizeof(*h->out_specs));
-	if(h->out_specs == NULL)
-		return -1;
+	if(in_channels != out_channels)
+	{
+		h->out_specs = malloc(h->out_channels * sizeof(*h->out_specs));
+		if(h->out_specs == NULL)
+			return -1;
+	}
 
 	/* Calculate coeff for down/up-mixing: inspired from remix effect from
 	 * sox library.
 	 */
-	if(h->in_nb_channel > h->out_nb_channel)
+	if(h->in_channels > h->out_channels)
 	{
 		/* Down-mixing */
 		/* FIXME: for channels > 2 needs to add center on L and R */
-		for(i = 0; i < h->out_nb_channel; i++)
+		for(i = 0; i < h->out_channels; i++)
 		{
-			unsigned in_per_out = (h->in_nb_channel +
-					       h->out_nb_channel - 1 - i) /
-					      h->out_nb_channel;
+			unsigned in_per_out = (h->in_channels +
+					       h->out_channels - 1 - i) /
+					      h->out_channels;
 			h->out_specs[i].in_specs = malloc(in_per_out * 
 					     sizeof(*h->out_specs[i].in_specs));
 			h->out_specs[i].num_in_channels = in_per_out;
@@ -189,22 +131,22 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 			for (j = 0; j < in_per_out; ++j)
 			{
 				h->out_specs[i].in_specs[j].channel_num = j *
-							     h->out_nb_channel +
+							     h->out_channels +
 							     i;
 				h->out_specs[i].in_specs[j].multiplier = 1. /
 								     in_per_out;
 			}
 		}
 	}
-	else
+	else if(h->in_channels < h->out_channels)
 	{
 		/* Up-mixing */
-		for(i = 0; i < h->out_nb_channel; i++)
+		for(i = 0; i < h->out_channels; i++)
 		{
 			h->out_specs[i].in_specs = malloc(
 					      sizeof(h->out_specs[i].in_specs));
 			h->out_specs[i].in_specs[0].channel_num = i %
-							       h->in_nb_channel;
+							       h->in_channels;
 		}
 	}
 
@@ -217,62 +159,151 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 
 	/* Create converter */
 	h->soxr = soxr_create((double)in_samplerate, (double)out_samplerate,
-			      min(in_nb_channel, out_nb_channel), NULL,
+			      min(in_channels, out_channels), NULL,
 			      &io_spec, NULL, NULL);
 	if(h->soxr == NULL)
-		return -1;
-
-	/* Set input callback for libsoxr */
-	if(soxr_set_input_fn(h->soxr, (soxr_input_fn_t)resample_input_callback,
-			     h, BUFFER_SIZE) < 0)
 		return -1;
 
 	return 0;
 }
 
-int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
+static int resample_down_mix(struct resample_handle *h, unsigned char *buffer,
+			     size_t len, unsigned char in_channels,
+			     unsigned char out_channels)
 {
-	size_t len;
-	size_t i;
-
-	/* Up-mixing channels: inspired from remix effect from sox */
-	if(h->in_nb_channel < h->out_nb_channel)
-	{
 #ifdef USE_FLOAT
-		float *p_in = (float*) h->buffer_out;
-		float *p_out = (float*) buffer;
+	float sample = 0;
+	float *p_in = (float*) buffer;
+	float *p_out = (float*) buffer;
 #else
-		int32_t *p_in = (int32_t*) h->buffer_out;
-		int32_t *p_out = (int32_t*) buffer;
+	int32_t sample = 0;
+	int32_t *p_in = (int32_t*) buffer;
+	int32_t *p_out = (int32_t*) buffer;
+
 #endif
-		int j;
+	size_t i, j, k;
 
-		size = size * h->in_nb_channel / h->out_nb_channel;
-		if(h->size_out < size)
-			size = h->size_out;
+	if(len <= 0)
+		return 0;
 
-		len = soxr_output(h->soxr, h->buffer_out,
-				  size / h->in_nb_channel);
-
-		for(i = len; i--; p_in += h->in_nb_channel)
+	/* Down-mixing channels: inspired from remix effect from sox  */
+	for(i = len; i--; p_in += in_channels)
+	{
+		for(j = 0; j < h->out_channels; j++)
 		{
-			for(j = 0; j < h->out_nb_channel; j++)
+			sample = 0;
+			for(k = 0; k < h->out_specs[j].num_in_channels; k++)
 			{
-				*(p_out++) = 
-				  p_in[h->out_specs[j].in_specs[0].channel_num];
+				sample +=
+				   p_in[h->out_specs[j].in_specs[k].channel_num]
+				   * h->out_specs[j].in_specs[k].multiplier;
 			}
+			*(p_out++) = sample;
 		}
 	}
-	else
+
+	return len * out_channels / in_channels;
+}
+
+static int resample_up_mix(struct resample_handle *h, unsigned char *in_buffer,
+			   unsigned char *out_buffer, size_t len,
+			   unsigned char in_channels,
+			   unsigned char out_channels)
+{
+#ifdef USE_FLOAT
+	float *p_in = (float*) in_buffer;
+	float *p_out = (float*) out_buffer;
+#else
+	int32_t *p_in = (int32_t*) in_buffer;
+	int32_t *p_out = (int32_t*) out_buffer;
+#endif
+	int i, j;
+
+	/* Up-mixing channels: inspired from remix effect from sox */
+	for(i = len; i--; p_in += in_channels)
 	{
-		len = soxr_output(h->soxr, buffer, size / h->out_nb_channel);
+		for(j = 0; j < out_channels; j++)
+		{
+			*(p_out++) = 
+			  p_in[h->out_specs[j].in_specs[0].channel_num];
+		}
 	}
 
-	/* End of stream */
-	if(len == 0)
-		return -1;
+	return len *out_channels / in_channels;
+}
 
-	return len * h->out_nb_channel;
+int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
+{
+	size_t in_consumed, out_samples;
+	unsigned char *p_in, *p_out;
+	unsigned long total_size = 0;
+	size_t in_scale; // samples * _scale => bytes * channels */
+	size_t out_len;
+	ssize_t len; // => samples * channels
+
+	while(total_size < size)
+	{
+		/* Fill as possible input buffer */
+		len = h->input_callback(h->user_data, &h->in_buffer[h->in_len],
+					(h->in_size - h->in_len) / 4);
+		if(len == 0)
+			break;
+
+		/* Down-mixing channels */
+		if(len > 0)
+		{
+			if(h->in_channels > h->out_channels)
+			{
+				len = resample_down_mix(h,
+						       &h->in_buffer[h->in_len],
+						       len, h->in_channels,
+						       h->out_channels);
+			}
+			h->in_len += len * 4;
+		}
+
+		/* End of stream handling */
+		p_in = len < 0 && h->in_len == 0 ? NULL : h->in_buffer;
+		in_scale = h->in_channels > h->out_channels ?
+							h->out_channels * 4 :
+							h->in_channels * 4;
+		p_out = h->in_channels < h->out_channels ? h->out_buffer :
+							&buffer[total_size * 4];
+		out_len = (size - total_size) / h->out_channels;
+		if(h->in_channels < h->out_channels)
+			out_len *= h->in_channels;
+
+		/* Process data */
+		soxr_process(h->soxr, p_in, h->in_len / in_scale, &in_consumed,
+			     p_out, out_len, &out_samples);
+
+		/* Update input buffer position */
+		h->in_len -= in_consumed * in_scale;
+		if(h->in_len > 0)
+		{
+			/* Move remaining data in input buffer */
+			memmove(h->in_buffer,
+				&h->in_buffer[in_consumed*in_scale], h->in_len);
+		}
+
+		/* End of stream and all remaining data has been consumed */
+		if(len < 0 && out_samples == 0)
+			return -1;
+
+		/* Up-mixing channels: inspired from remix effect from sox */
+		if(out_samples > 0 && h->in_channels < h->out_channels)
+		{
+			resample_up_mix(h, h->out_buffer,
+					&buffer[total_size * 4],
+					out_samples * h->in_channels,
+					h->in_channels, h->out_channels);
+		}
+
+		/* Update total size */
+		total_size += out_samples * h->out_channels;
+	}
+
+	return total_size;
 }
 
 int resample_close(struct resample_handle *h)
@@ -288,17 +319,17 @@ int resample_close(struct resample_handle *h)
 	if(h->out_specs != NULL)
 	{
 		int i;
-		for(i = 0; i < h->out_nb_channel; i++)
+		for(i = 0; i < h->out_channels; i++)
 			if(h->out_specs[i].in_specs != NULL)
 				free(h->out_specs[i].in_specs);
 		free(h->out_specs);
 	}
 
 	/* Free buffer */
-	if(h->buffer != NULL)
-		free(h->buffer);
-	if(h->buffer_out != NULL)
-		free(h->buffer_out);
+	if(h->in_buffer != NULL)
+		free(h->in_buffer);
+	if(h->out_buffer != NULL)
+		free(h->out_buffer);
 
 	/* Free structure */
 	free(h);
