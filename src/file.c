@@ -134,8 +134,8 @@ int file_open(struct file_handle **handle, const char *name)
 
 	/* Samplerate fix: bad samplerate and/or channels in mp4 header */
 	if(h->format->type == FILE_FORMAT_AAC &&
-	   (dec_samplerate != 0 && dec_samplerate != h->samplerate) ||
-	   (dec_channels != 0 && dec_channels != h->channels))
+	   ((dec_samplerate != 0 && dec_samplerate != h->samplerate) ||
+	   (dec_channels != 0 && dec_channels != h->channels)))
 	{
 		h->samplerate = dec_samplerate;
 		h->channels = dec_channels;
@@ -313,7 +313,7 @@ int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
 	struct decoder_info info;
 	int total_samples = 0;
 	int samples;
-	int len;
+	int len = 0;
 
 	if(h == NULL)
 		return -1;
