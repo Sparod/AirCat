@@ -149,14 +149,14 @@ static long decoder_alac_fill_output(struct decoder *dec,
 	unsigned long size;
 	int i;
 
-	pos = dec->pcm_length-dec->pcm_remain;
+	pos = (dec->pcm_length - dec->pcm_remain) * 2;
 	if(output_size < dec->pcm_remain)
 		size = output_size;
 	else
 		size = dec->pcm_remain;
 
 	/* Copy samples to output buffer */
-	for(i = 0; i < size*2; i+=2)
+	for(i = 0; i < size * 2; i += 2)
 	{
 #ifdef USE_FLOAT
 		*p++ = (float)((int32_t) (dec->buffer[i+1+pos] << 24) |
