@@ -89,7 +89,7 @@ int radio_play(struct radio_handle *h, const char *id)
 	channels = shoutcast_get_channels(h->shout);
 
 	/* Open new Audio stream output and play */
-	h->stream = output_add_stream(h->output, samplerate, channels,
+	h->stream = output_add_stream(h->output, samplerate, channels, 0,
 				      &shoutcast_read, h->shout);
 	output_play_stream(h->output, h->stream);
 
