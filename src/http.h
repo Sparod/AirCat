@@ -18,16 +18,26 @@
 #ifndef TINY_HTTP_H
 #define TINY_HTTP_H
 
-enum {HTTP_USER_AGENT, HTTP_PROXY, HTTP_PROXY_HOST, HTTP_PROXY_PORT, HTTP_FOLLOW_REDIRECT, HTTP_EXTRA_HEADER};
+enum {
+	HTTP_USER_AGENT,
+	HTTP_PROXY,
+	HTTP_PROXY_HOST,
+	HTTP_PROXY_PORT,
+	HTTP_FOLLOW_REDIRECT,
+	HTTP_EXTRA_HEADER
+};
+
 struct http_handle;
 
-struct http_handle *http_init();
+int http_open(struct http_handle **h);
 
 int http_set_option(struct http_handle *h, int option, char *value);
 
-int http_get(struct http_handle *h, const char *url);
-int http_head(struct http_handle *h, const char *url);
-int http_post(struct http_handle *h, const char *url, unsigned char *buffer, int length);
+#define http_get(h, u) http_request(h, u, "GET", NULL, 0)
+#define http_head(h, u) http_request(h, u, "HEAD", NULL, 0)
+#define http_post(h, u, b, l) http_request(h, u, "POST", b, l)
+int http_request(struct http_handle *h, const char *url, const char *method,
+		 unsigned char *buffer, unsigned long len);
 
 char *http_get_header(struct http_handle *h, const char *name, int case_sensitive);
 

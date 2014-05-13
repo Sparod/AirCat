@@ -45,64 +45,52 @@
 #include "utils.h"
 #include "http.h"
 
-enum {HTTP_GET, HTTP_HEAD, HTTP_POST};
-
 struct http_header {
 	char *name;
 	char *value;
 	struct http_header *next;
 };
 
-struct http_request {
-	char *user_agent;
-	char *hostname;
-	unsigned int port;
-	char *auth;
-	char *resource;
-	char *extra;
-};
-
-struct http_proxy {
-	int use;
-	char *hostname;
-	unsigned int port;
-};
-
 struct http_handle {
+	/* Socket */
 	int sock;
+	char *hostname;
+	unsigned int port;
+	/* SSL part */
 	int is_ssl;
 #ifdef HAVE_OPENSSL
 	SSL *ssl;
 	SSL_CTX *ssl_ctx;
 #endif
+	/* Proxy config */
+	int proxy_use;
+	char *proxy_hostname;
+	unsigned int proxy_port;
 	int follow;
-	struct http_proxy proxy;
-	struct http_request req;
+	/* Request and associated headers */
+	char *user_agent;
+	char *extra;
+	int keep_alive;
 	struct http_header *headers;
 };
 
-static int http_parse_url(struct http_handle *h, const char *url);
-static int http_connect(struct http_handle *h);
-static int http_send_request(struct http_handle *h, const char *url, int type, unsigned char *post_buffer, int post_length);
-static int http_parse_header(struct http_handle *h);
-static int http_copy_options(struct http_handle *h2, struct http_handle *h);
-static int http_copy(struct http_handle *h, struct http_handle *h2);
-static int http_close_free(struct http_handle *h, int free);
+#define FREE_STR(s) if(s != NULL) free(s); s = NULL;
 
-struct http_handle *http_init()
+int http_open(struct http_handle **handle)
 {
 	struct http_handle *h;
 
-	h = malloc(sizeof(struct http_handle));
+	/* Alloc structure */
+	*handle = malloc(sizeof(struct http_handle));
+	if(*handle == NULL)
+		return -1;
+	h = *handle;
 
+	/* Init structure */
+	memset(h, 0, sizeof(struct http_handle));
 	h->sock = -1;
-	h->follow = 1;
-	h->is_ssl = 0;
-	memset((unsigned char*)&(h->proxy), 0, sizeof(struct http_proxy));
-	memset((unsigned char*)&(h->req), 0, sizeof(struct http_request));
-	h->headers = NULL;
 
-	return h;
+	return 0;
 }
 
 int http_set_option(struct http_handle *h, int option, char *value)
@@ -110,19 +98,22 @@ int http_set_option(struct http_handle *h, int option, char *value)
 	switch (option)
 	{
 		case HTTP_USER_AGENT:
-			h->req.user_agent = strdup(value);
+			h->user_agent = strdup(value);
 			break;
 		case HTTP_PROXY:
-			h->proxy.use = strcmp(value, "yes") == 0 ? 1 : 0;
+			h->proxy_use = strcmp(value, "yes") == 0 ? 1 : 0;
 			break;
 		case HTTP_PROXY_HOST:
-			h->proxy.hostname = strdup(value);
+			h->proxy_hostname = strdup(value);
 			break;
 		case HTTP_PROXY_PORT:
-			h->proxy.port = atoi(value);
+			h->proxy_port = atoi(value);
 			break;
 		case HTTP_EXTRA_HEADER:
-			h->req.extra = strdup(value);
+			h->extra = strdup(value);
+			break;
+		case HTTP_FOLLOW_REDIRECT:
+			h->follow = strcmp(value, "yes") == 0 ? 1 : 0;
 			break;
 		default:
 			return -1;
@@ -131,151 +122,49 @@ int http_set_option(struct http_handle *h, int option, char *value)
 	return 0;
 }
 
-int http_get(struct http_handle *h, const char *url)
-{
-	return http_send_request(h, url, HTTP_GET, NULL, 0);
-}
-
-int http_head(struct http_handle *h, const char *url)
-{
-	return http_send_request(h, url, HTTP_HEAD, NULL, 0);
-}
-
-int http_post(struct http_handle *h, const char *url, unsigned char *buffer, int length)
-{
-	return http_send_request(h, url, HTTP_POST, buffer, length);
-}
-
-char *http_get_header(struct http_handle *h, const char *name, int case_sensitive)
-{
-	struct http_header *header;
-	int (*_strcmp)(const char*, const char*);
-	if(case_sensitive)
-		_strcmp = &strcmp;
-	else
-		_strcmp = &strcasecmp;
-
-	header = h->headers;
-	while(header != NULL)
-	{
-		if(_strcmp(name, header->name) == 0)
-			return header->value;
-		header = header->next;
-	}
-
-	return NULL;
-}
-
-int http_read(struct http_handle *h, unsigned char *buffer, int size)
-{
-	if(h->sock < 0)
-		return -1;
-
-#ifdef HAVE_OPENSSL
-	if(h->is_ssl)
-		return SSL_read(h->ssl, buffer, size);
-	else
-#endif
-		return read(h->sock, buffer, size);
-}
-
-int http_close(struct http_handle *h)
-{
-	return http_close_free(h, 1);
-}
-
-/* Private functions */
-
-static int http_parse_url(struct http_handle *h, const char *url)
-{
-	char *temp;
-
-	h->req.port = 80;
-
-	/* Remove http:// and https:// */
-	if(strncmp(url, "http://", 7) == 0)
-	{
-		url += 7;
-	}
-	else if(strncmp(url, "https://", 8) == 0)
-	{
-		url += 8;
-		h->req.port = 443;
-		h->is_ssl = 1;
-#ifndef HAVE_OPENSSL
-		fprintf(stderr, "HTTPS not yet supported!\n");
-		return -1;
-#endif
-	}
-
-	/* Scheme: http://username:password@hostname:port/resource?data */
-
-	/* Separate in two url (search first '/') */
-	temp = strchr(url, '/');
-	if(temp != NULL)
-	{
-		*temp = '\0';
-		h->req.resource = temp+1;
-	}
-
-	/* Separate auth and hostname part (search first '@') */
-	temp = strchr(url, '@');
-	if(temp != NULL)
-	{
-		*temp = '\0';
-		h->req.hostname = temp+1;
-		h->req.auth = (char*)url;
-	}
-	else
-		h->req.hostname = (char*)url;
-
-	/* Separate hostname and port (search first ':') */
-	temp = strchr(h->req.hostname, ':');
-	if(temp != NULL)
-	{
-		*temp = '\0';
-		h->req.port = atoi(temp+1);
-	}
-
-	return 0;
-}
-
-static int http_connect(struct http_handle *h)
+static int http_connect(struct http_handle *h, char *hostname,
+			unsigned int port)
 {
 	struct sockaddr_in server_addr;
 	struct hostent *server_ip;
 
-	/* Open socket to shoutcast */
-	h->sock = socket(AF_INET, SOCK_STREAM, 0);
-	if (h->sock < 0)
+	/* Check if a socket is already opened */
+	if(h->sock >= 0)
 	{
-		return -1;
+		/* Check keep_alive and if hostname/port have changed */
+		if(h->keep_alive && strcmp(h->hostname, hostname) == 0 &&
+		   h->port == port)
+			return 0;
+
+		/* Close previous socket */
+		close(h->sock);
 	}
+
+	/* Reset hostname and port */
+	FREE_STR(h->hostname);
+	h->port = 0;
+
+	/* Open socket to HTTP server */
+	h->sock = socket(AF_INET, SOCK_STREAM, 0);
+	if(h->sock < 0)
+		return -1;
 
 	/* Get ip address from hostname */
-	if(h->proxy.use)
-		server_ip = gethostbyname(h->proxy.hostname);
-	else
-		server_ip = gethostbyname(h->req.hostname);
+	server_ip = gethostbyname(h->proxy_use ? h->proxy_hostname : hostname);
 	if (server_ip == NULL)
-	{
 		return -1;
-	}
 
 	/* Set shoutcast server address */
-	memset((unsigned char *)&server_addr, 0, sizeof(server_addr));
+	memset(&server_addr, 0, sizeof(server_addr));
 	server_addr.sin_family = AF_INET;
-	memcpy((char *)&server_addr.sin_addr.s_addr, (char *)server_ip->h_addr, server_ip->h_length);
-	if(h->proxy.use)
-		server_addr.sin_port = htons(h->proxy.port);
-	else
-		server_addr.sin_port = htons(h->req.port);
+	server_addr.sin_port = htons(h->proxy_use ? h->proxy_port : port);
+	memcpy(&server_addr.sin_addr.s_addr, server_ip->h_addr,
+	       server_ip->h_length);
 
 	/* Connect to HTTP server */
-	if (connect(h->sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-	{
+	if(connect(h->sock, (struct sockaddr *)&server_addr,
+		   sizeof(server_addr)) < 0)
 		return -1;
-	}
 
 #ifdef HAVE_OPENSSL
 	/* Create connection if HTTPS */
@@ -304,131 +193,33 @@ static int http_connect(struct http_handle *h)
 	}
 #endif
 
+	/* Set hostname and port */
+	h->hostname = strdup(hostname);
+	h->port = port;
+
 	return 0;
 }
 
-static int http_send_request(struct http_handle *h, const char *url, int type, unsigned char *post_buffer, int post_length)
+static void http_free_header(struct http_handle *h)
 {
-	char *method[] = {"GET", "HEAD", "POST"};
-	char buffer[MAX_SIZE_HEADER];
-	char *location;
-	char *auth = NULL;
-	char *temp_url;
-	int code = 0;
-	int size = 0;
-	int ret = 0;
+	struct http_header *temp;
 
-	/* Local temporary URL */
-	temp_url = strdup(url);
-
-	/* Parse URL */
-	if(http_parse_url(h, temp_url) < 0)
+	while(h->headers != NULL)
 	{
-		free(temp_url);
-		return -1;
+		temp = h->headers;
+		h->headers = h->headers->next;
+
+		FREE_STR(temp->name);
+		FREE_STR(temp->value);
+
+		free(temp);
 	}
-
-	/* Connect */
-	if(http_connect(h) < 0)
-	{
-		free(temp_url);
-		return -1;
-	}
-
-	/* Make HTTP request */
-	if(h->proxy.use)
-		size = sprintf(buffer, "%s http://%s/%s HTTP/1.0\r\n", method[type], h->req.hostname, h->req.resource == NULL ? "" : h->req.resource);
-	else
-		size = sprintf(buffer, "%s /%s HTTP/1.0\r\n", method[type], h->req.resource == NULL ? "" : h->req.resource);
-	size += sprintf(&buffer[size], "Host: %s\r\n", h->req.hostname);
-	size += sprintf(&buffer[size], "User-Agent: %s\r\n", h->req.user_agent == NULL ? DEFAULT_USER_AGENT : h->req.user_agent);
-	size += sprintf(&buffer[size], "Connection: keep-alive\r\n");
-	if(type == HTTP_POST)
-	{
-		size += sprintf(&buffer[size], "Content-type: application/x-www-form-urlencoded\r\n");
-		size += sprintf(&buffer[size], "Content-Length: %d\r\n", post_length);
-	}
-	if(h->req.auth != NULL)
-	{
-		auth = base64_encode(h->req.auth, strlen(h->req.auth));
-		size += sprintf(&buffer[size], "Authorization: Basic %s\r\n", auth);
-		free(auth);
-	}
-	if(h->req.extra != NULL)
-		size += sprintf(&buffer[size], "%s", h->req.extra);
-	size += sprintf(&buffer[size], "\r\n");
-
-	/* Send HTTP request */
-#ifdef HAVE_OPENSSL
-	if(h->is_ssl)
-		ret = SSL_write(h->ssl, buffer, size);
-	else
-#endif
-		ret = write(h->sock, buffer, size);
-	if (ret != size)
-	{
-		http_close(h);
-		free(temp_url);
-		return -1;
-	}
-
-	/* Send data */
-	if (type == HTTP_POST && write(h->sock, post_buffer, post_length) != post_length)
-	{
-		http_close(h);
-		free(temp_url);
-		return -1;
-	}
-
-	/* Parse header */
-	code = http_parse_header(h);
-	/* Follow redirection */
-	if(h->follow && (code == 301 || code == 302))
-	{
-		struct http_handle *h2;
-
-		/* Get redirection from header */
-		location = (char*)http_get_header(h, "Location", 0);
-
-		/* Regenerate url if auth */
-		if(h->req.auth != NULL)
-		{
-			auth = malloc((strlen(h->req.auth)+strlen(location)+2)*sizeof(char));
-			ret = (strstr(location, "//")-location);
-			location[ret] = 0;
-			sprintf(auth, "%s//%s@%s", location, h->req.auth, &location[ret+2]);
-			location = auth;
-		}
-
-		/* Init a new connection */
-		h2 = http_init();
-
-		/* Copy options from current connection */
-		http_copy_options(h2, h);
-
-		/* Send new request */
-		code = http_send_request(h2, location, type, post_buffer, post_length);
-
-		/* Close current connection and copy new connection in current */
-		http_copy(h, h2);
-
-		/* If url has been regenerated */
-		if(h->req.auth != NULL)
-		{
-			free(auth);
-		}
-	}
-
-	/* Free temp URL used for request */
-	free(temp_url);
-
-	return code;
 }
 
 static int http_read_line(struct http_handle *h, char *buffer, int length)
 {
-	int i;
 	int ret;
+	int i;
 
 	for(i = 0; i < length-1; i++)
 	{
@@ -458,13 +249,17 @@ static int http_parse_header(struct http_handle *h)
 	char *temp, *end;
 	int size = 0;
 
+	/* Free previous header */
+	http_free_header(h);
+
 	/* Read first line */
-	size = 	http_read_line(h, buffer, MAX_SIZE_LINE);
+	size = http_read_line(h, buffer, MAX_SIZE_LINE);
 	if(size > 100) //Too long for a first line in HTTP protocol
 		return -1;
 
 	/* Verify protocol */
-	if(strncmp(buffer, "HTTP/1.", 7) != 0 && strncmp(buffer, "ICY", 3) != 0) // HACK for Shoutcast !
+	if(strncmp(buffer, "HTTP/1.", 7) != 0 &&
+	   strncmp(buffer, "ICY", 3) != 0) // HACK for Shoutcast !
 		return -1;
 
 	/* Get status code */
@@ -502,83 +297,225 @@ static int http_parse_header(struct http_handle *h)
 	return status_code;
 }
 
-/* Copy options from h -> h2 */
-static int http_copy_options(struct http_handle *h2, struct http_handle *h)
+int http_request(struct http_handle *h, const char *url, const char *method,
+		 unsigned char *buffer, unsigned long length)
 {
-	if(h == NULL || h2 == NULL)
-		return -1;
+	char req[MAX_SIZE_HEADER];
+	int protocol = URL_HTTP;
+	char *hostname = NULL;
+	char *username = NULL;
+	char *password = NULL;
+	char *resource = NULL;
+	char *location = NULL;
+	char *auth = NULL;
+	unsigned int port = 0;
+	int code = -1;
+	int ret = 0;
+	int len;
 
-	if(h->req.user_agent != NULL)
-		h2->req.user_agent = strdup(h->req.user_agent);
-	if(h->proxy.hostname != NULL)
-		h2->proxy.hostname = strdup(h->proxy.hostname);
-	if(h->req.extra != NULL)
-		h2->req.extra = strdup(h->req.extra);
-	h2->proxy.use = h->proxy.use;
-	h2->proxy.port = h->proxy.port;
+	/* Parse URL */
+	ret = parse_url(url, &protocol, &hostname, &port, &username, &password,
+			&resource);
+	if(ret < 0 || port == 0)
+		goto end;
 
-	return 0;
+	/* Check Protocol */
+	if(protocol == URL_HTTPS)
+	{
+		h->is_ssl = 1;
+#ifndef HAVE_OPENSSL
+		fprintf(stderr, "SSL is not supported!\n");
+		goto end;
+#endif
+	}
+
+	/* Connect to HTTP server */
+	if(http_connect(h, hostname, port) != 0)
+		goto end;
+
+	/* Generate Auth string */
+	if(username != NULL || password != NULL)
+	{
+		auth = NULL;//"Authorization: Basic %s"
+	}
+
+	/* Make HTTP request */
+	len = snprintf(req, MAX_SIZE_HEADER,
+		       "%s %s%s HTTP/1.0\r\n"
+		       "Host: %s\r\n"
+		       "User-Agent: %s\r\n"
+		       "Connection: %s\r\n"
+		       "Content-type: %s\r\n"
+		       "Content-Length: %lu\r\n"
+		       "%s"
+		       "%s"
+		       "\r\n",
+		       method, h->proxy_use ? "" : "/", h->proxy_use ? url :
+					       resource != NULL ? resource : "",
+		       hostname,
+		       h->user_agent == NULL ? DEFAULT_USER_AGENT :
+					       h->user_agent,
+		       h->keep_alive ? "keep-alive" : "close",
+		       length > 0 ? "application/x-www-form-urlencoded" : "",
+		       length,
+		       auth != NULL ? auth : "",
+		       h->extra != NULL ? h->extra : "");
+
+	/* Send HTTP request */
+#ifdef HAVE_OPENSSL
+	if(h->is_ssl)
+		len = SSL_write(h->ssl, req, len);
+	else
+#endif
+		len = write(h->sock, req, len);
+	if(len <= 0)
+		goto end;
+
+	/* Send data buffer */
+	while(length > 0)
+	{
+#ifdef HAVE_OPENSSL
+		if(h->is_ssl)
+			len = SSL_write(h->ssl, buffer, length);
+		else
+#endif
+			len = write(h->sock, buffer, length);
+		if(len < 0)
+			goto end;
+		length -= len;
+	}
+
+	/* Parse HTTP header response */
+	code = http_parse_header(h);
+
+	/* Follow redirection */
+	if(h->follow && (code == 301 || code == 302))
+	{
+		/* Get redirection from header */
+		location = http_get_header(h, "Location", 0);
+		if(location == NULL)
+			return code;
+		location = strdup(location);
+
+		/* Regenerate URL with username and/or password */
+		if(username != NULL || password != NULL)
+		{
+			/* Allocate a new URL */
+			len = username != NULL ? strlen(username) : 0;
+			len += password != NULL ? strlen(password) : 0;
+			len += 1;
+			auth = malloc(len + strlen(location) + 1);
+			if(auth == NULL)
+			{
+				free(location);
+				return code;
+			}
+
+			/* Copy string */
+			strcpy(auth, location);
+			url = strstr(location, "//");
+			if(url != NULL)
+				url += 2;
+			else
+				url = location;
+			memmove((char*)url+len, url, len);
+			snprintf((char*)url, len, "%s:%s", username, password);
+
+			/* Copy to location and free previous one */
+			free(location);
+			location = auth;
+		}
+
+		/* Send new request */
+		code = http_request(h, location, method, buffer, length);
+
+		/* Free new URL */
+		free(location);
+	}
+
+end:
+	/* Free strings from URL parser */
+	FREE_STR(hostname);
+	FREE_STR(username);
+	FREE_STR(password);
+	FREE_STR(resource);
+
+	return code;
 }
 
-/* Copy h2 -> h */
-static int http_copy(struct http_handle *h, struct http_handle *h2)
+char *http_get_header(struct http_handle *h, const char *name,
+		      int case_sensitive)
 {
-	if(h == NULL || h2 == NULL)
-		return -1;
+	int (*_strcmp)(const char*, const char*);
+	struct http_header *header;
 
-	/* Close socket and free only members of structure */
-	http_close_free(h, 0);
+	if(h == NULL)
+		return NULL;
 
-	/* Copy memory of h2 -> h */
-	memcpy((unsigned char*)h, (unsigned char*)h2, sizeof(struct http_handle));
+	/* Select cmp function */
+	if(case_sensitive)
+		_strcmp = &strcmp;
+	else
+		_strcmp = &strcasecmp;
 
-	/* Free only structure but not its members */
-	free(h2);
+	/* Parse all headers */
+	header = h->headers;
+	while(header != NULL)
+	{
+		if(_strcmp(name, header->name) == 0)
+			return header->value;
 
-	return 0;
+		header = header->next;
+	}
+
+	return NULL;
 }
 
-static int http_close_free(struct http_handle *h, int do_free)
+int http_read(struct http_handle *h, unsigned char *buffer, int size)
+{
+	if(h == NULL || h->sock < 0)
+		return -1;
+
+	/* */
+
+#ifdef HAVE_OPENSSL
+	if(h->is_ssl)
+		return SSL_read(h->ssl, buffer, size);
+	else
+#endif
+		return read(h->sock, buffer, size);
+}
+
+int http_close(struct http_handle *h)
 {
 	if(h == NULL)
 		return 0;
 
 	/* Close socket */
-	if(h->sock != -1)
+	if(h->sock >= 0)
 	{
 #ifdef HAVE_OPENSSL
 		if(h->is_ssl)
 		{
-			SSL_free(h->ssl);
-			SSL_CTX_free(h->ssl_ctx);
+			if(h->ssl != NULL)
+				SSL_free(h->ssl);
+			if(h->ssl_ctx != NULL)
+				SSL_CTX_free(h->ssl_ctx);
 		}
 #endif
 		close(h->sock);
 	}
-	h->sock = -1;
 
-	/* Free memory */
-	while(h->headers != NULL)
-	{
-		struct http_header *temp = h->headers;
-		h->headers = h->headers->next;
-		if(temp->name != NULL)
-			free(temp->name);
-		if(temp->value != NULL)
-			free(temp->value);
-		free(temp);
-	}
-	if(h->req.user_agent != NULL)
-		free(h->req.user_agent);
-	if(h->req.extra != NULL)
-		free(h->req.extra);
-	if(h->proxy.hostname != NULL)
-		free(h->proxy.hostname);
+	/* Free headers */
+	http_free_header(h);
 
-	/* Free structure */
-	if(do_free)
-		free(h);
+	/* Free hostname */
+	FREE_STR(h->hostname);
+
+	/* Free config strings */
+	FREE_STR(h->user_agent);
+	FREE_STR(h->extra);
+	FREE_STR(h->proxy_hostname);
 
 	return 0;
 }
-

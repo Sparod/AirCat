@@ -125,3 +125,75 @@ int base64_decode(char *buffer)
 	return (int)(buffer - s);
 }
 
+int parse_url(const char *url, int *protocol, char **hostname,
+	      unsigned int *port, char **username, char **password,
+	      char **resource)
+{
+	const char *_hostname;
+	const char *_port;
+	const char *_username;
+	const char *_password;
+	const char *_resource;
+
+	if(url == NULL)
+		return -1;
+
+	/* Set default values */
+	*protocol = URL_HTTP;
+	*port = 80;
+
+	/* Get protocol type HTTP(S) */
+	if(strncmp(url, "http://", 7) == 0)
+		url += 7;
+	else if(strncmp(url, "https://", 8) == 0)
+	{
+		url += 8;
+		*port = 443;
+		*protocol = URL_HTTPS;
+	}
+
+	/* Scheme: http://username:password@hostname:port/resource?data */
+
+	/* Get resource Separate in two url (search first '/') */
+	_resource = strchr(url, '/');
+	if(_resource != NULL)
+		*resource = strdup(_resource + 1);
+	else
+		_resource = url + strlen(url);
+
+	/* Separate auth and hostname part (search first '@') */
+	_hostname = strchr(url, '@');
+	if(_hostname != NULL)
+	{
+		/* Get username and password */
+		_password = strchr(url, ':');
+		if(_password != NULL && _password < _hostname)
+		{
+			*password = strndup(_password + 1,
+					    _hostname - _password - 1);
+		}
+		else
+			_password = _hostname;
+
+		*username = strndup(url, _password - url);
+	}
+	else
+		_hostname = url - 1;
+
+	/* Get port */
+	_port = strchr(_hostname, ':');
+	if(_port != NULL)
+		*port = strtol(_port + 1, NULL, 10);
+	else
+		_port = _resource;
+
+	/* Get hostname */
+	*hostname = strndup(_hostname + 1, _port - _hostname - 1);
+
+	/* Need at least an hostname */
+	if(*hostname == NULL)
+		return -1;
+
+	return 0;
+}
+

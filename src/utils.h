@@ -23,5 +23,11 @@
 char *base64_encode(const char *buffer, int length);
 int base64_decode(char *buffer);
 
+/* URL parser */
+enum { URL_HTTP, URL_HTTPS };
+int parse_url(const char *url, int *protocol, char **hostname,
+	      unsigned int *port, char **username, char **password,
+	      char **resource);
+
 #endif
 
