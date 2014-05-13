@@ -308,6 +308,10 @@ static void output_alsa_free_stream(struct output_stream *s)
 	if(s->res != NULL)
 		resample_close(s->res);
 
+	/* Free cache buffer */
+	if(s->cache != NULL)
+		free(s->cache);
+
 	/* Free stream */
 	free(s);
 }
