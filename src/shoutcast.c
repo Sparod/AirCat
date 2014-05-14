@@ -29,6 +29,8 @@
 #endif
 
 #define BUFFER_SIZE 8192
+#define SHOUT_TIMEOUT 100
+#define SHOUT_SYNC_TIMEOUT 1000
 
 struct shout_handle {
 	/* HTTP Client */
@@ -60,6 +62,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	int code = 0;
 	int type;
 	char *p;
+	int i;
 
 	/* Alloc structure */
 	*handle = malloc(sizeof(struct shout_handle));
@@ -133,7 +136,9 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->remaining = h->metaint;
 
 	/* Fill input buffer */
-	shoutcast_read_stream(h);
+	for(i = 0; i < SHOUT_SYNC_TIMEOUT / SHOUT_TIMEOUT && 
+		   h->in_len < BUFFER_SIZE; i++)
+		shoutcast_read_stream(h);
 
 	/* Open decoder */
 	if(h->info.type == MPEG_STREAM)
@@ -425,10 +430,12 @@ static int shoutcast_read_stream(struct shout_handle *h)
 							    in_len;
 
 		/* Fill inpput buffer */
-		read_len = http_read(h->http, &h->in_buffer[h->in_len],
-				     read_len);
-		if(read_len < 0)
+		read_len = http_read_timeout(h->http, &h->in_buffer[h->in_len],
+					     read_len, SHOUT_TIMEOUT);
+		if(read_len == 0)
 			break;
+		else if(read_len < 0)
+			return -1;
 
 		/* Update input buffer size */
 		h->remaining -= read_len;
