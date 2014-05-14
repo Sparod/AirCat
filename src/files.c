@@ -120,7 +120,7 @@ static int files_new_player(struct files_handle *h)
 	channels = file_get_channels(h->file);
 
 	/* Open new Audio stream output and play */
-	h->stream = output_add_stream(h->output, samplerate, channels, 0,
+	h->stream = output_add_stream(h->output, samplerate, channels, 0, 0,
 				      &file_read, h->file);
 	output_play_stream(h->output, h->stream);
 

@@ -476,7 +476,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 
 			/* Create audio stream output */
 			cdata->stream = output_add_stream(sdata->output, 44100,
-							  2, 0, &raop_read,
+							  2, 0, 0, &raop_read,
 							  cdata->raop);
 
 			/* Send answer */

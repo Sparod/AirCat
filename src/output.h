@@ -30,7 +30,7 @@ struct output_handle {
 	unsigned int (*get_volume)(struct output *);
 	struct output_stream *(*add_stream)(struct output *,
 						   unsigned long, unsigned char,
-						   unsigned long, void *,
+						   unsigned long, int, void *,
 						   void *);
 	int (*play_stream)(struct output *, struct output_stream *);
 	int (*pause_stream)(struct output *, struct output_stream *);
@@ -54,6 +54,7 @@ struct output_stream *output_add_stream(struct output_handle *h,
 					unsigned long samplerate,
 					unsigned char nb_channel,
 					unsigned long cache,
+					int use_cache_thread,
 					void *input_callback, void *user_data);
 int output_play_stream(struct output_handle *h, struct output_stream *s);
 int output_pause_stream(struct output_handle *h, struct output_stream *s);

@@ -63,13 +63,14 @@ struct output_stream *output_add_stream(struct output_handle *h,
 					unsigned long samplerate,
 					unsigned char nb_channel,
 					unsigned long cache,
+					int use_cache_thread,
 					void *input_callback, void *user_data)
 {
 	if(h == NULL || h->out == NULL)
 		return NULL;
 
 	return h->add_stream(h->out, samplerate, nb_channel, cache,
-			     input_callback, user_data);
+			     use_cache_thread, input_callback, user_data);
 }
 
 int output_play_stream(struct output_handle *h, struct output_stream *s)
