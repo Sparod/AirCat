@@ -21,7 +21,7 @@
 
 struct cache_handle;
 
-int cache_open(struct cache_handle **handle, unsigned long size,
+int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	       void *input_callback, void *user_data);
 int cache_read(struct cache_handle *h, unsigned char *buffer, size_t size);
 int cache_close(struct cache_handle *h);
