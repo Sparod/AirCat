@@ -25,6 +25,7 @@ aircat_SOURCES = main.c \
 		 decoder_mp3.c \
 		 decoder_alac.c \
 		 resample.c \
+		 cache.c \
 		 output.c \
 		 output_alsa.c
 
@@ -74,6 +75,7 @@ EXTRA_DIST = http.h \
 	     decoder_mp3.h \
 	     decoder_alac.h \
 	     resample.h \
+	     cache.h \
 	     output.h \
 	     output_alsa.h
 
