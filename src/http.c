@@ -33,6 +33,7 @@
 #define MAX_SIZE_HEADER 8192
 #define MAX_SIZE_LINE 512
 #define DEFAULT_USER_AGENT "tiny_http 0.1"
+#define MAX_FOLLOW 10
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -66,7 +67,10 @@ struct http_handle {
 	int proxy_use;
 	char *proxy_hostname;
 	unsigned int proxy_port;
+	/* Follow redirect */
 	int follow;
+	int i_follow;
+	int max_follow;
 	/* Request and associated headers */
 	char *user_agent;
 	char *extra;
@@ -89,6 +93,7 @@ int http_open(struct http_handle **handle)
 	/* Init structure */
 	memset(h, 0, sizeof(struct http_handle));
 	h->sock = -1;
+	h->max_follow = MAX_FOLLOW;
 
 	return 0;
 }
@@ -114,6 +119,11 @@ int http_set_option(struct http_handle *h, int option, char *value)
 			break;
 		case HTTP_FOLLOW_REDIRECT:
 			h->follow = strcmp(value, "yes") == 0 ? 1 : 0;
+			break;
+		case HTTP_MAX_REDIRECT:
+			h->max_follow = atoi(value);
+			if(h->max_follow <= 0)
+				h->max_follow = 1;
 			break;
 		default:
 			return -1;
@@ -309,6 +319,7 @@ int http_request(struct http_handle *h, const char *url, const char *method,
 	char *location = NULL;
 	char *auth = NULL;
 	unsigned int port = 0;
+	int first_req = 0;
 	int code = -1;
 	int ret = 0;
 	int len;
@@ -389,8 +400,14 @@ int http_request(struct http_handle *h, const char *url, const char *method,
 	code = http_parse_header(h);
 
 	/* Follow redirection */
-	if(h->follow && (code == 301 || code == 302))
+	if(h->follow && (code == 301 || code == 302) &&
+	   h->i_follow < h->max_follow)
 	{
+		/* Increment nb follow */
+		if(h->i_follow == 0)
+			first_req = 1;
+		h->i_follow++;
+
 		/* Get redirection from header */
 		location = http_get_header(h, "Location", 0);
 		if(location == NULL)
@@ -431,6 +448,10 @@ int http_request(struct http_handle *h, const char *url, const char *method,
 
 		/* Free new URL */
 		free(location);
+
+		/* Reset follow counter for next request */
+		if(first_req)
+			h->i_follow = 0;
 	}
 
 end:
@@ -470,7 +491,6 @@ char *http_get_header(struct http_handle *h, const char *name,
 
 	return NULL;
 }
-
 
 int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 		      long timeout)
