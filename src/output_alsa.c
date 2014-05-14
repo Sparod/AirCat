@@ -27,6 +27,7 @@
 #include "output.h"
 
 #include "resample.h"
+#include "cache.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -54,13 +55,7 @@ struct output_stream {
 	/* Stream volume */
 	unsigned int volume;
 	/* Stream cache */
-	unsigned char *cache;
-	unsigned long cache_size;
-	unsigned long cache_len;
-	unsigned long cache_pos;
-	int cache_is_ready;
-	int (*cache_input_callback)(void *, unsigned char *, size_t);
-	void *cache_user_data;
+	struct cache_handle *cache;
 	/* Next output stream in list */
 	struct output_stream *next;
 };
@@ -145,55 +140,6 @@ unsigned int output_alsa_get_volume(struct output *h)
 	return volume;
 }
 
-static int output_alsa_cache_callback(struct output_stream *s,
-				      unsigned char *buffer, size_t size)
-{
-	unsigned long in_size;
-	long len;
-
-	/* Check data availability in cache */
-	if(s->cache_is_ready)
-	{
-		/* Some data is available */
-		if(size > s->cache_len)
-			size = s->cache_len;
-
-		/* Read in cache */
-		memcpy(buffer, s->cache, size*4);
-		s->cache_len -= size;
-		memmove(s->cache, &s->cache[size*4], s->cache_len*4);
-
-		/* No more data is available */
-		if(s->cache_len == 0)
-			s->cache_is_ready = 0;
-	}
-	else
-		size = 0;
-
-	/* Check cache status */
-	if(s->cache_len < s->cache_size)
-	{
-		/* Fill cache with some samples */
-		in_size = s->cache_size - s->cache_len;
-		len = s->cache_input_callback(s->cache_user_data,
-					      &s->cache[s->cache_len*4],
-					      in_size);
-		if(len < 0)
-		{
-			if(s->cache_len == 0)
-				return -1;
-			return size;
-		}
-		s->cache_len += len;
-
-		/* Cache is full */
-		if(s->cache_len == s->cache_size)
-			s->cache_is_ready = 1;
-	}
-
-	return size;
-}
-
 struct output_stream *output_alsa_add_stream(struct output *h,
 					     unsigned long samplerate,
 					     unsigned char nb_channel,
@@ -202,6 +148,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 					     void *user_data)
 {
 	struct output_stream *s;
+	unsigned long size;
 
 	/* Alloc the stream handler */
 	s = malloc(sizeof(struct output_stream));
@@ -215,10 +162,6 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->is_playing = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
-	s->cache_size = 0;
-	s->cache_len = 0;
-	s->cache_pos = 0;
-	s->cache_is_ready = 0;
 
 	/* Use resampler module if samplerate or/and channels are different */
 	if(samplerate != h->samplerate || nb_channel != h->nb_channel)
@@ -238,17 +181,15 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	/* Add cache */
 	if(cache > 0)
 	{
-		/* Allocate cache */
-		s->cache_size = s->samplerate * s->nb_channel * cache / 1000;
-		s->cache = malloc(s->cache_size * 4);
-		if(s->cache == NULL)
+		/* Open a new cache */
+		size = h->samplerate * s->nb_channel * cache / 1000;
+		if(cache_open(&s->cache, size, s->input_callback, s->user_data)
+		   != 0)
 			goto error;
 
-		/* Add cache */
-		s->cache_input_callback = s->input_callback;
-		s->cache_user_data = s->user_data;
-		s->input_callback = &output_alsa_cache_callback;
-		s->user_data = s;
+		/* replace callback with cache */
+		s->input_callback = (void*) &cache_read;
+		s->user_data = s->cache;
 	}
 
 	/* Add stream to stream list */
@@ -310,7 +251,7 @@ static void output_alsa_free_stream(struct output_stream *s)
 
 	/* Free cache buffer */
 	if(s->cache != NULL)
-		free(s->cache);
+		cache_close(s->cache);
 
 	/* Free stream */
 	free(s);
