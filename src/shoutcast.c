@@ -29,7 +29,7 @@
 #endif
 
 #define BUFFER_SIZE 8192
-#define SHOUT_TIMEOUT 100
+#define SHOUT_TIMEOUT 1
 #define SHOUT_SYNC_TIMEOUT 1000
 
 struct shout_handle {
@@ -359,7 +359,7 @@ int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 		samples = decoder_decode(h->dec, h->in_buffer, h->in_len,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
-		if(samples < 0)
+		if(samples <= 0)
 			return total_samples;
 
 		/* Move input buffer to next frame */
