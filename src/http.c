@@ -471,19 +471,42 @@ char *http_get_header(struct http_handle *h, const char *name,
 	return NULL;
 }
 
-int http_read(struct http_handle *h, unsigned char *buffer, int size)
+
+int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
+		      long timeout)
 {
+	struct timeval tv;
+	fd_set readfs;
+
 	if(h == NULL || h->sock < 0)
 		return -1;
 
-	/* */
+	if(timeout >= 0)
+	{
+		/* Prepare a select */
+		FD_ZERO(&readfs);
+		FD_SET(h->sock, &readfs);
 
+		/* Set timeout */
+		tv.tv_sec = 0;
+		tv.tv_usec = timeout*1000;
+
+		if(select(h->sock + 1, &readfs, NULL, NULL, &tv) < 0)
+			return -1;
+	}
+
+	/* Read data from TCP socket */
+	if(timeout == -1 || FD_ISSET(h->sock, &readfs))
+	{
 #ifdef HAVE_OPENSSL
-	if(h->is_ssl)
-		return SSL_read(h->ssl, buffer, size);
-	else
+		if(h->is_ssl)
+			return SSL_read(h->ssl, buffer, size);
+		else
 #endif
-		return read(h->sock, buffer, size);
+			return read(h->sock, buffer, size);
+	}
+
+	return 0;
 }
 
 int http_close(struct http_handle *h)

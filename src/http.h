@@ -39,9 +39,12 @@ int http_set_option(struct http_handle *h, int option, char *value);
 int http_request(struct http_handle *h, const char *url, const char *method,
 		 unsigned char *buffer, unsigned long len);
 
-char *http_get_header(struct http_handle *h, const char *name, int case_sensitive);
+char *http_get_header(struct http_handle *h, const char *name,
+		      int case_sensitive);
 
-int http_read(struct http_handle *h, unsigned char *buffer, int size);
+#define http_read(h, b, s) http_read_timeout(h, b, s, -1)
+int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
+		      long timeout);
 
 int http_close(struct http_handle *h);
 
