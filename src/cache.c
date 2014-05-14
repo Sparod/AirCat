@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <pthread.h>
 
 #include "cache.h"
@@ -102,6 +103,9 @@ static void *cache_read_thread(void *user_data)
 	/* Read indefinitively the input callback */
 	while(!h->stop)
 	{
+		/* Sleep for 1ms */
+		usleep(1000);
+
 		/* Read next packet from input callback */
 		len += h->input_callback(h->user_data, &buffer[len*4],
 					 (BUFFER_SIZE / 4) - len);

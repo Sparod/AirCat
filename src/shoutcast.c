@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "http.h"
 #include "decoder.h"
@@ -29,7 +30,7 @@
 #endif
 
 #define BUFFER_SIZE 8192
-#define SHOUT_TIMEOUT 1
+#define SHOUT_TIMEOUT 10
 #define SHOUT_SYNC_TIMEOUT 1000
 
 struct shout_handle {
@@ -136,9 +137,14 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->remaining = h->metaint;
 
 	/* Fill input buffer */
-	for(i = 0; i < SHOUT_SYNC_TIMEOUT / SHOUT_TIMEOUT && 
+	for(i = 0; i < SHOUT_SYNC_TIMEOUT && 
 		   h->in_len < BUFFER_SIZE; i++)
+	{
 		shoutcast_read_stream(h);
+		usleep(1000);
+	}
+	if(h->in_len < 1024)
+		return -1;
 
 	/* Open decoder */
 	if(h->info.type == MPEG_STREAM)
