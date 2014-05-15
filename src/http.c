@@ -497,6 +497,7 @@ int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 {
 	struct timeval tv;
 	fd_set readfs;
+	int ret;
 
 	if(h == NULL || h->sock < 0)
 		return -1;
@@ -520,10 +521,16 @@ int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 	{
 #ifdef HAVE_OPENSSL
 		if(h->is_ssl)
-			return SSL_read(h->ssl, buffer, size);
+			ret = SSL_read(h->ssl, buffer, size);
 		else
 #endif
-			return read(h->sock, buffer, size);
+			ret = read(h->sock, buffer, size);
+
+		/* End of stream */
+		if(ret <= 0)
+			return -1;
+
+		return ret;
 	}
 
 	return 0;

@@ -339,6 +339,7 @@ int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 	struct decoder_info info;
 	int total_samples = 0;
 	int samples;
+	int ret;
 
 	if(h == NULL)
 		return -1;
@@ -359,14 +360,18 @@ int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 	while(total_samples < size)
 	{
 		/* Fill input buffer as possible */
-		shoutcast_read_stream(h);
+		ret = shoutcast_read_stream(h);
 
 		/* Decode next frame */
 		samples = decoder_decode(h->dec, h->in_buffer, h->in_len,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
+		{
+			if(ret < 0 && total_samples <= 0)
+				return -1;
 			return total_samples;
+		}
 
 		/* Move input buffer to next frame */
 		if(info.used < h->in_len)
