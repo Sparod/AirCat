@@ -532,16 +532,19 @@ static int shoutcast_read_stream(struct shout_handle *h)
 			{
 				h->meta_buffer[h->meta_len] = '\0';
 
-				/* Lock meta string access */
-				pthread_mutex_lock(&h->mutex);
+				if(h->meta_len > 0)
+				{
+					/* Lock meta string access */
+					pthread_mutex_lock(&h->mutex);
 
-				/* Copy string */
-				if(h->meta != NULL)
-					free(h->meta);
-				h->meta = strdup((char*)h->meta_buffer);
+					/* Copy string */
+					if(h->meta != NULL)
+						free(h->meta);
+					h->meta = strdup((char*)h->meta_buffer);
 
-				/* Unlock meta string access */
-				pthread_mutex_unlock(&h->mutex);
+					/* Unlock meta string access */
+					pthread_mutex_unlock(&h->mutex);
+				}
 
 				h->status = SHOUT_DATA;
 			}
