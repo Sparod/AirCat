@@ -99,20 +99,24 @@ static void *cache_read_thread(void *user_data)
 	unsigned char buffer[BUFFER_SIZE];
 	unsigned long in_size = 0;
 	unsigned long len = 0;
+	int ret = 0;
 
 	/* Read indefinitively the input callback */
 	while(!h->stop)
 	{
-		/* Sleep for 1ms */
-		usleep(1000);
-
-		/* Read next packet from input callback */
-		len += h->input_callback(h->user_data, &buffer[len*4],
-					 (BUFFER_SIZE / 4) - len);
-		if(len < 0)
-			break;
-		else if(len == 0)
-			continue;
+		/* Check buffer len */
+		if(len < BUFFER_SIZE / 4)
+		{
+			/* Read next packet from input callback */
+			ret = h->input_callback(h->user_data, &buffer[len*4],
+						(BUFFER_SIZE / 4) - len);
+			if(ret < 0)
+				break;
+			len += ret;
+		}
+		else
+			/* Buffer is already fill: sleep 1ms */
+			usleep(1000);
 
 		/* Lock cache access */
 		pthread_mutex_lock(&h->mutex);
