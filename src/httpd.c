@@ -800,6 +800,18 @@ static int httpd_radio_stop(struct request_attr *attr)
 	return httpd_json_msg(attr->connection, 200, "");
 }
 
+static int httpd_radio_status(struct request_attr *attr)
+{
+	char *stat;
+
+	/* Get radio status */
+	stat = radio_get_json_status(attr->handle->radio, 0);
+	if(stat == NULL)
+		return httpd_json_msg(attr->connection, 500, "No status");
+
+	return httpd_json_response(attr->connection, 200, stat, strlen(stat));
+}
+
 static int httpd_radio_cat_info(struct request_attr *attr)
 {
 	char *info;
@@ -1035,6 +1047,7 @@ struct url_table url_table[] = {
 	{"/radio/list", 0, HTTP_GET, &httpd_radio_list},
 	{"/radio/play", 0, HTTP_PUT, &httpd_radio_play},
 	{"/radio/stop", 1, HTTP_PUT, &httpd_radio_stop},
+	{"/radio/status", 0, HTTP_GET, &httpd_radio_status},
 	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
 	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
 	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},

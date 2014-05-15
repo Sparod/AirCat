@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <json.h>
+
 #include "config_file.h"
 #include "radio_list.h"
 #include "shoutcast.h"
@@ -115,6 +117,84 @@ int radio_stop(struct radio_handle *h)
 	h->radio = NULL;
 
 	return 0;
+}
+
+#define ADD_STRING(root, key, value) if(value != NULL) \
+	     json_object_object_add(root, key, json_object_new_string(value)); \
+	else \
+	     json_object_object_add(root, key, NULL);
+
+char *radio_get_json_status(struct radio_handle *h, int add_pic)
+{
+	struct json_object *root;
+	char *artist = NULL;
+	char *title = NULL;
+	char *str = NULL;
+
+	/* No radio playing */
+	if(h->radio == NULL)
+	{
+		return strdup("{ \"id\": null }");
+	}
+
+	/* Create JSON object */
+	root = json_object_new_object();
+	if(root == NULL)
+		return NULL;
+
+	/* Add radio infos */
+	ADD_STRING(root, "id", h->radio->id);
+	ADD_STRING(root, "name", h->radio->name);
+
+	/* Add current title */
+	if(h->shout != NULL)
+	{
+		/* Get string */
+		str = shoutcast_get_metadata(h->shout);
+		if(str != NULL)
+		{
+			/* Parse metadata */
+			artist = strstr(str, "StreamTitle='");
+			if(artist != NULL)
+			{
+				artist += 13;
+				title = strstr(artist, "';");
+				if(title != NULL)
+				{
+					*title = '\0';
+					title = strchr(artist, '-');
+					if(title != NULL)
+					{
+						*title = '\0';
+						title += 1;
+					}
+					else
+					{
+						artist = NULL;
+						title = artist;
+					}
+				}
+				else
+					artist = NULL;
+			}
+		}
+
+		/* Add title and artist */
+		ADD_STRING(root, "title", title);
+		ADD_STRING(root, "artist", artist);
+
+		/* Free string */
+		if(str != NULL)
+			free(str);
+	}
+
+	/* Get JSON string */
+	str = strdup(json_object_to_json_string(root));
+
+	/* Free JSON object */
+	json_object_put(root);
+
+	return str;
 }
 
 char *radio_get_json_category_info(struct radio_handle *h, const char *id)
