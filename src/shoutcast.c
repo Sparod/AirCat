@@ -30,16 +30,24 @@
 #endif
 
 #define BUFFER_SIZE 8192
-#define SHOUT_TIMEOUT 10
-#define SHOUT_SYNC_TIMEOUT 1000
+#define SHOUT_TIMEOUT 1
+#define SHOUT_SYNC_TIMEOUT 5000
+
+enum {
+	SHOUT_DATA,
+	SHOUT_META_LEN,
+	SHOUT_META_DATA
+};
 
 struct shout_handle {
 	/* HTTP Client */
 	struct http_handle *http;
 	/* Metadata handling */
+	int status;
 	unsigned int metaint;
 	unsigned int remaining;
 	int meta_len;
+	int meta_size;
 	char meta_buffer[16*255];
 	/* Radio info */
 	struct radio_info info;
@@ -79,6 +87,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->dec = NULL;
 	h->in_len = 0;
 	h->pcm_remaining = 0;
+	h->status = SHOUT_DATA;
 
 	/* Set to zero radio_info structure */
 	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
@@ -393,12 +402,12 @@ int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
 	return total_samples;
 }
 
-struct radio_info *shoutcast_get_info(struct shout_handle *h)
+const struct radio_info *shoutcast_get_info(struct shout_handle *h)
 {
 	return &h->info;
 }
 
-char *shoutcast_get_metadata(struct shout_handle *h)
+const char *shoutcast_get_metadata(struct shout_handle *h)
 {
 	return h->meta_buffer;
 }
@@ -424,10 +433,9 @@ int shoutcast_close(struct shout_handle *h)
 
 static int shoutcast_read_stream(struct shout_handle *h)
 {
-	unsigned char c;
-	int meta_len = 0;
-	int read_len = 0;
 	unsigned long in_len;
+	int read_len = 0;
+	unsigned char c;
 
 	/* Calculate input size to read */
 	in_len = BUFFER_SIZE - h->in_len;
@@ -435,41 +443,75 @@ static int shoutcast_read_stream(struct shout_handle *h)
 	/* Fill input buffer */
 	while(in_len > 0)
 	{
-		/* Get size to read */
-		if(h->metaint > 0)
-			read_len = in_len > h->remaining ? h->remaining :
-							    in_len;
-
-		/* Fill inpput buffer */
-		read_len = http_read_timeout(h->http, &h->in_buffer[h->in_len],
-					     read_len, SHOUT_TIMEOUT);
-		if(read_len == 0)
-			break;
-		else if(read_len < 0)
-			return -1;
-
-		/* Update input buffer size */
-		h->remaining -= read_len;
-		h->in_len += read_len;
-		in_len -= read_len;
-
-		/* Process if metadata */
-		if(h->metaint > 0 && h->remaining == 0)
+		if(h->status == SHOUT_DATA)
 		{
-			/* Read size */
-			http_read(h->http, &c, 1);
-			meta_len = c * 16;
+			/* Get size to read */
+			read_len = in_len;
+			if(h->metaint > 0 && read_len > h->remaining)
+				read_len = h->remaining;
 
-			/* Read string */
-			if(meta_len > 0)
+			/* Fill inpput buffer */
+			read_len = http_read_timeout(h->http,
+						     &h->in_buffer[h->in_len],
+						     read_len, SHOUT_TIMEOUT);
+			if(read_len <= 0)
 			{
-				h->meta_len = http_read(h->http,
-						 (unsigned char*)h->meta_buffer,
-						 meta_len);
-				h->meta_buffer[h->meta_len] = '\0';
+				if(read_len == 0)
+					break;
+				return -1;
 			}
 
-			/* Reset remaining bytes */
+			/* Update input buffer size */
+			h->remaining -= read_len;
+			h->in_len += read_len;
+			in_len -= read_len;
+
+			if(h->metaint > 0 && h->remaining == 0)
+				h->status = SHOUT_META_LEN;
+		}
+		if(h->status == SHOUT_META_LEN)
+		{
+			/* Read meta size */
+			read_len = http_read_timeout(h->http, &c, 1,
+						     SHOUT_TIMEOUT);
+			if(read_len <= 0)
+			{
+				if(read_len == 0)
+					break;
+				return -1;
+			}
+
+			/* Set meta size */
+			h->meta_size = c * 16;
+			h->meta_len = 0;
+			h->status = SHOUT_META_DATA;
+		}
+		if(h->status == SHOUT_META_DATA)
+		{
+			/* Read string */
+			read_len = h->meta_size - h->meta_len;
+			if(read_len > 0)
+			{
+				read_len = http_read_timeout(h->http,
+				   (unsigned char*)&h->meta_buffer[h->meta_len],
+				   read_len, SHOUT_TIMEOUT);
+				if(read_len <= 0)
+				{
+					if(read_len == 0)
+						break;
+					return -1;
+				}
+			}
+
+			/* Update position */
+			h->meta_len += read_len;
+			if(h->meta_len == h->meta_size)
+			{
+				h->meta_buffer[h->meta_len] = '\0';
+				h->status = SHOUT_DATA;
+			}
+
+			/* Refill remaining bytes before next Metadata */
 			h->remaining = h->metaint;
 		}
 	}

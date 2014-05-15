@@ -45,9 +45,9 @@ unsigned char shoutcast_get_channels(struct shout_handle *h);
 
 int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size);
 
-struct radio_info *shoutcast_get_info(struct shout_handle *h);
+const struct radio_info *shoutcast_get_info(struct shout_handle *h);
 
-char *shoutcast_get_metadata(struct shout_handle *h);
+const char *shoutcast_get_metadata(struct shout_handle *h);
 
 int shoutcast_close(struct shout_handle *h);
 
