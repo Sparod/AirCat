@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "http.h"
 #include "decoder.h"
@@ -48,9 +49,10 @@ struct shout_handle {
 	unsigned int remaining;
 	int meta_len;
 	int meta_size;
-	char meta_buffer[16*255];
+	unsigned char meta_buffer[16*255];
 	/* Radio info */
 	struct radio_info info;
+	char *meta;
 	/* Decoder and stream properties */
 	struct decoder_handle *dec;
 	unsigned long samplerate;
@@ -59,6 +61,8 @@ struct shout_handle {
 	unsigned char in_buffer[BUFFER_SIZE];
 	unsigned long in_len;
 	unsigned long pcm_remaining;
+	/* Mutex for thread safe */
+	pthread_mutex_t mutex;
 };
 
 static int shoutcast_read_stream(struct shout_handle *h);
@@ -84,6 +88,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->metaint = 0;
 	h->remaining = 0;
 	h->meta_len = 0;
+	h->meta = NULL;
 	h->dec = NULL;
 	h->in_len = 0;
 	h->pcm_remaining = 0;
@@ -177,6 +182,9 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	if(decoder_open(&h->dec, type, h->in_buffer, h->in_len, &h->samplerate,
 			&h->channels) != 0)
 		return -1;
+
+	/* Init thread mutex */
+	pthread_mutex_init(&h->mutex, NULL);
 
 	return 0;
 }
@@ -407,9 +415,20 @@ const struct radio_info *shoutcast_get_info(struct shout_handle *h)
 	return &h->info;
 }
 
-const char *shoutcast_get_metadata(struct shout_handle *h)
+char *shoutcast_get_metadata(struct shout_handle *h)
 {
-	return h->meta_buffer;
+	char *str = NULL;
+
+	/* Lock meta string access */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->meta != NULL)
+		str = strdup(h->meta);
+
+	/* Unlock meta string access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return str;
 }
 
 int shoutcast_close(struct shout_handle *h)
@@ -424,6 +443,10 @@ int shoutcast_close(struct shout_handle *h)
 	/* Close HTTP */
 	if(h->http != NULL)
 		http_close(h->http);
+
+	/* Free meta */
+	if(h->meta != NULL)
+		free(h->meta);
 
 	/* Free handler */
 	free(h);
@@ -493,8 +516,8 @@ static int shoutcast_read_stream(struct shout_handle *h)
 			if(read_len > 0)
 			{
 				read_len = http_read_timeout(h->http,
-				   (unsigned char*)&h->meta_buffer[h->meta_len],
-				   read_len, SHOUT_TIMEOUT);
+						   &h->meta_buffer[h->meta_len],
+						   read_len, SHOUT_TIMEOUT);
 				if(read_len <= 0)
 				{
 					if(read_len == 0)
@@ -508,6 +531,18 @@ static int shoutcast_read_stream(struct shout_handle *h)
 			if(h->meta_len == h->meta_size)
 			{
 				h->meta_buffer[h->meta_len] = '\0';
+
+				/* Lock meta string access */
+				pthread_mutex_lock(&h->mutex);
+
+				/* Copy string */
+				if(h->meta != NULL)
+					free(h->meta);
+				h->meta = strdup((char*)h->meta_buffer);
+
+				/* Unlock meta string access */
+				pthread_mutex_unlock(&h->mutex);
+
 				h->status = SHOUT_DATA;
 			}
 
