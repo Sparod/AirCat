@@ -22,7 +22,6 @@
 
 #include <json.h>
 
-#include "config_file.h"
 #include "radio_list.h"
 #include "shoutcast.h"
 #include "radio.h"
@@ -36,9 +35,14 @@ struct radio_handle {
 	struct radio_item *radio;
 	/* Radio list */
 	struct radio_list_handle *list;
+	/* Config part */
+	char *list_file;
 };
 
-int radio_open(struct radio_handle **handle, struct output_handle *o)
+static int radio_stop(struct radio_handle *h);
+static int radio_set_config(struct radio_handle *h, const struct config *c);
+
+static int radio_open(struct radio_handle **handle, struct module_attr *attr)
 {
 	struct radio_handle *h;
 
@@ -51,28 +55,28 @@ int radio_open(struct radio_handle **handle, struct output_handle *o)
 	/* Init structure */
 	h->shout = NULL;
 	h->list = NULL;
-	h->output = o;
+	h->output = attr->output;
 	h->stream = NULL;
 	h->radio = NULL;
+	h->list_file = NULL;
+
+	/* Load configuration */
+	radio_set_config(h, attr->config);
 
 	/* Load radio list */
-	if(radio_list_open(&h->list, config.radio_list_file) != 0)
+	if(radio_list_open(&h->list, h->list_file) != 0)
 		return -1;
 
 	return 0;
 }
 
-int radio_play(struct radio_handle *h, const char *id)
+static int radio_play(struct radio_handle *h, const char *id)
 {
 	unsigned long samplerate;
 	unsigned char channels;
 
 	if(id == NULL)
 		return -1;
-
-	/* Radio module must be enabled */
-	if(config.radio_enabled != 1)
-		return 0;
 
 	/* Stop previous radio */
 	radio_stop(h);
@@ -98,7 +102,7 @@ int radio_play(struct radio_handle *h, const char *id)
 	return 0;
 }
 
-int radio_stop(struct radio_handle *h)
+static int radio_stop(struct radio_handle *h)
 {
 	if(h == NULL || h->shout == NULL)
 		return 0;
@@ -124,7 +128,7 @@ int radio_stop(struct radio_handle *h)
 	else \
 	     json_object_object_add(root, key, NULL);
 
-char *radio_get_json_status(struct radio_handle *h, int add_pic)
+static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 {
 	struct json_object *root;
 	char *artist = NULL;
@@ -197,22 +201,63 @@ char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	return str;
 }
 
-char *radio_get_json_category_info(struct radio_handle *h, const char *id)
+static char *radio_get_json_category_info(struct radio_handle *h,
+					  const char *id)
 {
 	return radio_list_get_category_json(h->list, id);
 }
 
-char *radio_get_json_radio_info(struct radio_handle *h, const char *id)
+static char *radio_get_json_radio_info(struct radio_handle *h, const char *id)
 {
 	return radio_list_get_radio_json(h->list, id);
 }
 
-char *radio_get_json_list(struct radio_handle *h, const char *id)
+static char *radio_get_json_list(struct radio_handle *h, const char *id)
 {
 	return radio_list_get_list_json(h->list, id);
 }
 
-int radio_close(struct radio_handle *h)
+static int radio_set_config(struct radio_handle *h, const struct config *c)
+{
+	const char *file;
+
+	if(h == NULL)
+		return -1;
+
+	/* Parse config */
+	if(c != NULL)
+	{
+		/* Get radio list file */
+		if(h->list_file != NULL)
+			free(h->list_file);
+		h->list_file = NULL;
+		file = config_get_string(c, "list_file");
+		if(file != NULL)
+			h->list_file = strdup(file);
+	}
+
+	/* Set default values */
+	if(h->list_file == NULL)
+		h->list_file = strdup("/var/aircat/radio_list.json");
+
+	return 0;
+}
+
+static struct config *radio_get_config(struct radio_handle *h)
+{
+	struct config *c;
+
+	c = config_new_config();
+	if(c == NULL)
+		return NULL;
+
+	/* Set current radio list file */
+	config_set_string(c, "list_file", h->list_file);
+
+	return c;
+}
+
+static int radio_close(struct radio_handle *h)
 {
 	if(h == NULL)
 		return 0;
@@ -228,8 +273,125 @@ int radio_close(struct radio_handle *h)
 	if(h->shout != NULL)
 		shoutcast_close(h->shout);
 
+	/* Free list file */
+	if(h->list_file != NULL)
+		free(h->list_file);
+
 	free(h);
 
 	return 0;
 }
 
+#define HTTPD_RESPONSE(s) *buffer = (unsigned char*)s; \
+			  *size = strlen(s);
+
+static int radio_httpd_play(struct radio_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	/* Play radio */
+	radio_play(h, req->resource);
+
+	return 200;
+}
+
+static int radio_httpd_stop(struct radio_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	/* Stop current radio */
+	radio_stop(h);
+
+	return 200;
+}
+
+static int radio_httpd_status(struct radio_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	char *stat;
+
+	/* Get radio status */
+	stat = radio_get_json_status(h, 0);
+	if(stat == NULL)
+	{
+		HTTPD_RESPONSE(strdup("No status"));
+		return 500;
+	}
+
+	HTTPD_RESPONSE(stat);
+	return 200;
+}
+
+static int radio_httpd_cat_info(struct radio_handle *h, struct httpd_req *req,
+				unsigned char **buffer, size_t *size)
+{
+	char *info;
+
+	/* Get info about category */
+	info = radio_get_json_category_info(h, req->resource);
+	if(info == NULL)
+	{
+		HTTPD_RESPONSE(strdup("Radio not found"));
+		return 404;
+	}
+
+	HTTPD_RESPONSE(info);
+	return 200;
+}
+
+static int radio_httpd_info(struct radio_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	char *info;
+
+	/* Get info about radio */
+	info = radio_get_json_radio_info(h, req->resource);
+	if(info == NULL)
+	{
+		HTTPD_RESPONSE(strdup("Radio not found"));
+		return 404;
+	}
+
+	HTTPD_RESPONSE(info);
+	return 200;
+}
+
+static int radio_httpd_list(struct radio_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	char *list = NULL;
+
+	/* Get Radio list */
+	list = radio_get_json_list(h, req->resource);
+	if(list == NULL)
+	{
+		HTTPD_RESPONSE(strdup("No radio list"));
+		return 500;
+	}
+
+	HTTPD_RESPONSE(list);
+	return 200;
+}
+
+struct url_table radio_url[] = {
+	{"/category/info/", HTTPD_EXT_URL, HTTPD_GET, 0,
+						 (void*) &radio_httpd_cat_info},
+	{"/info/",          HTTPD_EXT_URL, HTTPD_GET, 0,
+						     (void*) &radio_httpd_info},
+	{"/list",           HTTPD_EXT_URL, HTTPD_GET, 0,
+						     (void*) &radio_httpd_list},
+	{"/play",           HTTPD_EXT_URL, HTTPD_PUT, 0,
+						     (void*) &radio_httpd_play},
+	{"/stop",           0,             HTTPD_PUT, 0,
+						     (void*) &radio_httpd_stop},
+	{"/status",         HTTPD_EXT_URL, HTTPD_GET, 0,
+						   (void*) &radio_httpd_status},
+	{0, 0, 0}
+};
+
+struct module radio_module = {
+	.name = "radio",
+	.open = (void*) &radio_open,
+	.close = (void*) &radio_close,
+	.set_config = (void*) &radio_set_config,
+	.get_config = (void*) &radio_get_config,
+	.urls = (void*) &radio_url,
+};

@@ -19,24 +19,14 @@
 #ifndef _HTTP_SERVER_H
 #define _HTTP_SERVER_H
 
-#include "airtunes.h"
+#include <json.h>
 
-struct httpd_attr{
-	/* Audio output module */
-	//struct output_handle *output;
-	/* Radio module */
-	struct radio_handle *radio;
-	/* Airtunes module */
-	struct airtunes_handle *airtunes;
-	/* Files module */
-	struct files_handle *files;
-	/* Config file */
-	char *config_filename;
-};
+#include "module.h"
 
 struct httpd_handle;
 
-int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr);
+int httpd_open(struct httpd_handle **handle, struct module *modules,
+	       int modules_count, struct config_handle *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);

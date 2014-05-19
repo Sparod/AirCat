@@ -19,29 +19,8 @@
 #ifndef _AIRTUNES_SERVER_H
 #define _AIRTUNES_SERVER_H
 
-#include "avahi.h"
-#include "output.h"
+#include "module.h"
 
-enum{
-	AIRTUNES_STARTING,
-	AIRTUNES_RUNNING,
-	AIRTUNES_STOPPING,
-	AIRTUNES_STOPPED
-};
-
-struct airtunes_handle;
-
-int airtunes_open(struct airtunes_handle **h, struct avahi_handle *a,
-		  struct output_handle *o);
-
-void airtunes_set_name(struct airtunes_handle *h, const char *name);
-void airtunes_set_port(struct airtunes_handle *h, unsigned int port);
-void airtunes_set_password(struct airtunes_handle *h, const char *password);
-
-int airtunes_start(struct airtunes_handle *h);
-int airtunes_stop(struct airtunes_handle *h);
-int airtunes_status(struct airtunes_handle *h);
-
-int airtunes_close(struct airtunes_handle *h);
+struct module airtunes_module;
 
 #endif

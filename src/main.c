@@ -23,12 +23,14 @@
 #include <signal.h>
 
 #include "config_file.h"
+#include "output.h"
+#include "avahi.h"
 #include "httpd.h"
+
+#include "module.h"
+#include "airtunes.h"
 #include "radio.h"
 #include "files.h"
-#include "airtunes.h"
-#include "avahi.h"
-#include "output.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -130,26 +132,34 @@ void signal_handler(int signum)
 
 int main(int argc, char* argv[])
 {
-	struct avahi_handle *avahi;
-	struct radio_handle *radio;
-	struct airtunes_handle *airtunes;
-	struct files_handle *files;
-	struct httpd_attr httpd_attr;
-	struct httpd_handle *httpd;
+	/* Common modules */
 	struct output_handle *output;
+	struct avahi_handle *avahi;
+	struct httpd_handle *httpd;
+	struct config_handle *config;
+	/* Modules */
+	struct module modules[] = {
+		airtunes_module,
+		radio_module,
+		files_module
+	};
+	struct module_attr attr;
+	int modules_count = sizeof(modules)/sizeof(struct module);
+	struct config *cfg;
+	/* Select on stdin */
 	struct timeval timeout;
 	fd_set fds;
-
-	/* Default AirCat configuration: overwritten by config_load() */
-	config_default();
+	int i;
 
 	/* Parse options */
 	parse_opt(argc, argv);
 
-	/* Load configuration file */
+	/* Set configuration filename */
 	if(config_file == NULL)
 		config_file = strdup(CONFIG_PATH "/aircat.conf");
-	config_load(config_file);
+
+	/* Open configuration */
+	config_open(&config, config_file);
 
 	/* Setup signal handler */
 	signal(SIGINT, signal_handler);
@@ -161,27 +171,35 @@ int main(int argc, char* argv[])
 	/* Open Output Module */
 	output_open(&output, OUTPUT_ALSA, 44100, 2);
 
-	/* Open Files Module */
-	files_open(&files, output);
+	/* Open all modules */
+	attr.avahi = avahi;
+	attr.output = output;
+	for(i = 0; i < modules_count; i++)
+	{
+		/* Open module */
+		if(modules[i].open == NULL)
+			continue;
 
-	/* Open Radio Module */
-	radio_open(&radio, output);
+		/* Get module configuration */
+		attr.config = config_get_config(config, modules[i].name);
 
-	/* Open Airtunes Server */
-	airtunes_open(&airtunes, avahi, output);
+		/* Open module */
+		if(modules[i].open(&modules[i].handle, &attr) != 0)
+		{
+			fprintf(stderr, "Failed to open %s module!\n",
+				modules[i].name);
+			if(modules[i].close != NULL)
+				modules[i].close(&modules[i].handle);
+			modules[i].handle = NULL;
+		}
 
-	/* Start Airtunes Server */
-	if(config.raop_enabled)
-		airtunes_start(airtunes);
-
-	/* Prepare attributes for HTTP Server */
-	httpd_attr.config_filename = config_file;
-	httpd_attr.radio = radio;
-	httpd_attr.airtunes = airtunes;
-	httpd_attr.files = files;
+		/* Free module configuration */
+		if(attr.config != NULL)
+			config_free_config((struct config *)attr.config);
+	}
 
 	/* Open HTTP Server */
-	httpd_open(&httpd, &httpd_attr);
+	httpd_open(&httpd, modules, modules_count, config);
 
 	/* Start HTTP Server */
 	httpd_start(httpd);
@@ -207,20 +225,24 @@ int main(int argc, char* argv[])
 	/* Stop HTTP Server */
 	httpd_stop(httpd);
 
-	/* Stop Airtunes Server */
-	airtunes_stop(airtunes);
-
 	/* Close HTTP Server */
 	httpd_close(httpd);
 
-	/* Close Airtunes Server */
-	airtunes_close(airtunes);
+	/* Close all modules */
+	for(i = 0; i < modules_count; i++)
+	{
+		/* Save module configuration */
+		if(modules[i].get_config != NULL)
+		{
+			cfg = modules[i].get_config(modules[i].handle);
+			config_set_config(config, modules[i].name, cfg);
+			config_free_config(cfg);
+		}
 
-	/* Close Radio Module */
-	radio_close(radio);
-
-	/* Close Files Module */
-	files_close(files);
+		/* Close module */
+		if(modules[i].close != NULL)
+			modules[i].close(modules[i].handle);
+	}
 
 	/* Close Output Module */
 	output_close(output);
@@ -228,10 +250,14 @@ int main(int argc, char* argv[])
 	/* Close Avahi Client */
 	avahi_close(avahi);
 
-	/* Free config */
+	/* Save configuration */
+	config_save(config);
+
+	/* Close Configuration */
 	if(config_file != NULL)
 		free(config_file);
-	config_free();
+	config_close(config);
 
 	return EXIT_SUCCESS;
 }
+

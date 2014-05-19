@@ -39,13 +39,6 @@
 
 #define OPAQUE "11733b200778ce33060f31c9af70a870ba96ddd4"
 
-enum {
-	HTTP_GET = 1,
-	HTTP_PUT = 2,
-	HTTP_POST = 4,
-	HTTP_DELETE = 8
-};
-
 struct mime_type {
 	const char *ext;
 	const char *mime;
@@ -78,26 +71,19 @@ struct request_attr {
 	struct request_data **req_data;
 };
 
-struct url_table {
-	const char *url;
-	int strict_cmp;
-	int method;
-	int (*process)(struct request_attr *);
-};
-
 struct httpd_handle {
 	/* MicroHTTPD handle */
 	struct MHD_Daemon *httpd;
-	char *realm;
 	char *opaque;
-	/* Radio module */
-	struct radio_handle *radio;
-	/* Airtunes module */
-	struct airtunes_handle *airtunes;
-	/* Files module */
-	struct files_handle *files;
-	/* Config file */
-	char *config_file;
+	/* Modules */
+	struct module *modules;
+	int modules_count;
+	/* Configuration */
+	struct config_handle *config;
+	char *name;
+	char *path;
+	char *password;
+	unsigned int port;
 };
 
 static int httpd_request(void * user_data, struct MHD_Connection *c,
@@ -106,8 +92,10 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 			 size_t *upload_data_size, void ** ptr);
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
+static int httpd_set_config(struct httpd_handle *h);
 
-int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr)
+int httpd_open(struct httpd_handle **handle, struct module *modules,
+	       int modules_count, struct config_handle *config)
 {
 	struct httpd_handle *h;
 
@@ -118,16 +106,18 @@ int httpd_open(struct httpd_handle **handle, struct httpd_attr *attr)
 	h = *handle;
 
 	/* Init structure */
-	if(config.name != NULL)
-		h->realm = strdup(config.name);
-	else
-		h->realm = strdup("AirCat");
 	h->opaque = strdup(OPAQUE);
-	h->config_file = strdup(attr->config_filename);
-	h->radio = attr->radio;
-	h->airtunes = attr->airtunes;
-	h->files = attr->files;
+	h->modules = modules;
+	h->modules_count = modules_count;
 	h->httpd = NULL;
+	h->name = NULL;
+	h->path = NULL;
+	h->password = NULL;
+	h->port = 0;
+	h->config = config;
+
+	/* Set configuration */
+	httpd_set_config(h);
 
 	return 0;
 }
@@ -142,7 +132,7 @@ int httpd_start(struct httpd_handle *h)
 		return 0;
 
 	/* Start HTTP server */
-	h->httpd = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, config.port, 
+	h->httpd = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, h->port, 
 			    NULL, NULL,
 			    &httpd_request, h,
 			    MHD_OPTION_NOTIFY_COMPLETED, &httpd_completed, NULL,
@@ -185,6 +175,54 @@ static int httpd_strcmp(const char *str1, const char *str2, int strict_cmp)
 	return 0;
 }
 
+static int httpd_set_config(struct httpd_handle *h)
+{
+	struct config *cfg;
+	const char *str;
+
+	/* Free previous values */
+	if(h->name != NULL)
+		free(h->name);
+	if(h->path != NULL)
+		free(h->path);
+	if(h->password != NULL)
+		free(h->password);
+	h->name = NULL;
+	h->path = NULL;
+	h->password = NULL;
+	h->port = 0;
+
+	/* Get configuration */
+	cfg = config_get_config(h->config, "general");
+	if(cfg != NULL)
+	{
+		/* Get values from configuration */
+		str = config_get_string(cfg, "name");
+		if(str != NULL)
+			h->name = strdup(str);
+		str = config_get_string(cfg, "web_path");
+		if(str != NULL)
+			h->path = strdup(str);
+		str = config_get_string(cfg, "password");
+		if(str != NULL)
+			h->password = strdup(str);
+		h->port = config_get_int(cfg, "port");
+
+		/* Free configuration */
+		config_free_config(cfg);
+	}
+
+	/* Set default values */
+	if(h->name == NULL)
+		h->name = strdup("AirCat");
+	if(h->path == NULL)
+		h->path = strdup("/var/aircat/www");
+	if(h->port == 0)
+		h->port = 8080;
+
+	return 0;
+}
+
 int httpd_close(struct httpd_handle *h)
 {
 	if(h == NULL)
@@ -194,33 +232,37 @@ int httpd_close(struct httpd_handle *h)
 	if(h->httpd != NULL)
 		httpd_stop(h);
 
-	/* Free Realm */
-	if(h->realm != NULL)
-		free(h->realm);
+	/* Free configuration */
+	if(h->name != NULL)
+		free(h->name);
+	if(h->path != NULL)
+		free(h->path);
+	if(h->password != NULL)
+		free(h->password);
 
 	/* Free opaque */
 	if(h->opaque != NULL)
 		free(h->opaque);
-
-	/* Free config file */
-	if(h->config_file != NULL)
-		free(h->config_file);
 
 	free(h);
 
 	return 0;
 }
 
+/******************************************************************************
+ *                              Common functions                              *
+ ******************************************************************************/
+
 static int httpd_get_method_code(const char *method)
 {
 	if(strcmp(method, MHD_HTTP_METHOD_GET) == 0)
-		return HTTP_GET;
+		return HTTPD_GET;
 	if(strcmp(method, MHD_HTTP_METHOD_PUT) == 0)
-		return HTTP_PUT;
+		return HTTPD_PUT;
 	if(strcmp(method, MHD_HTTP_METHOD_POST) == 0)
-		return HTTP_POST;
+		return HTTPD_POST;
 	if(strcmp(method, MHD_HTTP_METHOD_DELETE) == 0)
-		return HTTP_DELETE;
+		return HTTPD_DELETE;
 
 	return 0;
 }
@@ -242,6 +284,31 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
 
 	return ret;
 }
+
+static int httpd_data_response(struct MHD_Connection *c, int code,
+			       unsigned char *buffer, size_t len)
+{
+	struct MHD_Response *response;
+	int ret;
+
+	if(buffer == NULL || len == 0)
+		return httpd_response(c, code, "");
+
+	/* Create HTTP response with message */
+	response = MHD_create_response_from_data(len, buffer, MHD_YES, MHD_NO);
+
+	/* Queue it */
+	ret = MHD_queue_response(c, code, response);
+
+	/* Destroy local response */
+	MHD_destroy_response(response);
+
+	return ret;
+}
+
+/******************************************************************************
+ *                                File/Dir part                               *
+ ******************************************************************************/
 
 struct dir_data {
 	DIR *dir;
@@ -311,7 +378,8 @@ static void httpd_file_free_cb(void *user_data)
 		fclose(fp);
 }
 
-static int httpd_file_response(struct MHD_Connection *c, const char *url)
+static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
+			       const char *url)
 {
 	struct MHD_Response *response;
 	struct dir_data *d_data;
@@ -323,14 +391,14 @@ static int httpd_file_response(struct MHD_Connection *c, const char *url)
 	int i;
 
 	/* Verify web path */
-	if(config.web_path == NULL)
+	if(web_path == NULL)
 		return httpd_response(c, 500, "Web path not configured!");
 
 	/* Create file path */
-	path = malloc(strlen(config.web_path) + strlen(url) + 12);
+	path = malloc(strlen(web_path) + strlen(url) + 12);
 	if(path == NULL)
 		return httpd_response(c, 500, "Internal Error");
-	sprintf(path, "%s%s", config.web_path, url);
+	sprintf(path, "%s%s", web_path, url);
 
 	/* Get file properties */
 	if(stat(path, &s) != 0)
@@ -423,50 +491,6 @@ static int httpd_file_response(struct MHD_Connection *c, const char *url)
 	return ret;
 }
 
-/*
- * /!\ This function frees the json string!
- */
-static int httpd_json_response(struct MHD_Connection *c, int code, char *json,
-			       int len)
-{
-	struct MHD_Response *response;
-	int ret;
-
-	/* Create HTTP response with JSON data */
-	response = MHD_create_response_from_data(len, json, MHD_YES, MHD_NO);
-
-	/* Add header to specify JSON is type content */
-	MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE,
-				"application/json");
-	/* Add header to allow cross domain AJAX request */
-	MHD_add_response_header(response, "Access-Control-Allow-Origin", "*");
-
-	/* Queue it */
-	ret = MHD_queue_response(c, code, response);
-
-	/* Destroy local response */
-	MHD_destroy_response(response);
-
-	return ret;
-}
-
-static int httpd_json_msg(struct MHD_Connection *c, int code, const char *msg)
-{
-	int len = strlen(msg) + 14;
-	char *json;
-
-	json = malloc(sizeof(char)*len);
-	if(json == NULL)
-		return MHD_NO;
-
-	sprintf(json, "{ \"msg\": \"%s\" }", msg);
-
-	if(len == 14)
-		len = 1;
-
-	return httpd_json_response(c, code, json, len-1);
-}
-
 /******************************************************************************
  *                                JSON Parser                                 *
  ******************************************************************************/
@@ -546,550 +570,122 @@ static int httpd_parse_json(struct request_data **data, const char *buffer,
 }
 
 /******************************************************************************
- *                          Configuration Part                                *
- ******************************************************************************/
-
-static int httpd_config_reload(struct request_attr *attr)
-{
-	if(attr->handle->config_file != NULL &&
-	   config_load(attr->handle->config_file) == 0)
-		return httpd_json_msg(attr->connection, 200, "");
-
-	return httpd_json_msg(attr->connection, 500, "File cannot be loaded!");
-}
-
-static int httpd_config_save(struct request_attr *attr)
-{
-	if(attr->handle->config_file != NULL &&
-	   config_save(attr->handle->config_file) == 0)
-		return httpd_json_msg(attr->connection, 200, "");
-
-	return httpd_json_msg(attr->connection, 500, "File cannot be saved!");
-}
-
-static int httpd_config_default(struct request_attr *attr)
-{
-	config_default();
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-struct config_tab {
-	const char *name;
-	enum {NODE, STRING, BOOLEAN, NUMBER} type;
-	void *value;
-};
-
-struct config_tab config_radio_tab[] = {
-	{"enabled", BOOLEAN, &config.radio_enabled},
-	{0, 0, 0}
-};
-
-struct config_tab config_raop_tab[] = {
-	{"enabled", BOOLEAN, &config.raop_enabled},
-	{"name", STRING, &config.raop_name},
-	{"password", STRING, &config.raop_password},
-	{0, 0, 0}
-};
-
-struct config_tab config_files_tab[] = {
-	{"enabled", BOOLEAN, &config.files_enabled},
-	{0, 0, 0}
-};
-
-struct config_tab config_tab[] = {
-	{"name", STRING, &config.name},
-	{"password", STRING, &config.password},
-	{"port", NUMBER, &config.port},
-	{"radio", NODE, &config_radio_tab},
-	{"raop", NODE, &config_raop_tab},
-	{"files", NODE, &config_files_tab},
-	{0, 0, 0}
-};
-
-static void httpd_get_config(struct config_tab *tab, struct json_object *root)
-{
-	struct json_object *tmp;
-	const char *str;
-	int i;
-
-	/* Process config_tab */
-	for(i = 0; tab[i].name != NULL; i++)
-	{
-		/* Prepate JSON object */
-		tmp = NULL;
-
-		/* Get configuration and create new JSON objects */
-		switch(tab[i].type)
-		{
-			case NODE:
-				tmp = json_object_new_object();
-				httpd_get_config(tab[i].value, tmp);
-				break;
-			case STRING:
-				str = *((char**)tab[i].value);
-				if(str != NULL)
-					tmp = json_object_new_string(str);
-				break;
-			case NUMBER:
-				tmp = json_object_new_int(
-						        *((long*)tab[i].value));
-				break;
-			case BOOLEAN:
-				tmp = json_object_new_boolean(
-						         *((int*)tab[i].value));
-				break;
-			default:
-				continue;
-		}
-
-		/* Add JSON object to root */
-		json_object_object_add(root, tab[i].name, tmp);
-	}
-}
-
-static int httpd_put_config(struct config_tab *tab, struct json_object *root,
-			     const char *url)
-{
-	struct json_object *current;
-	char **c_str;
-	const char *str, *next = NULL;
-	long *c_nb = NULL, nb;
-	int *c_bool = NULL, bool;
-	int i, len;
-	int ret = 0;
-
-	/* Process URL if not NULL */
-	if(url != NULL)
-	{
-		next = strchr(url, '/');
-		if(next != NULL)
-		{
-			len = next-url;
-			next++;
-		}
-		else
-			len = strlen(url);
-	}
-
-	/* Process config_tab */
-	for(i = 0; tab[i].name != NULL; i++)
-	{
-		/* Check if it is the entry searched */
-		if(url != NULL && (strlen(tab[i].name) != len ||
-		    strncmp(tab[i].name, url, len) != 0))
-				continue;
-
-		/* Get JSON object by name */
-		if(json_object_object_get_ex(root, tab[i].name, &current) == 0)
-			continue;
-
-		/* Update configuration values */
-		switch(tab[i].type)
-		{
-			case NODE:
-				ret += httpd_put_config(tab[i].value, current,
-						       next);
-				break;
-			case STRING:
-				c_str = (char**) tab[i].value;
-				str = json_object_get_string(current);
-				if(*c_str == NULL ||
-				    (str != NULL && strcmp(*c_str, str) != 0))
-				{
-					if(*c_str != NULL)
-						free(*c_str);
-					if(str != NULL && str[0] != 0)
-						*c_str = strdup(str);
-					else
-						*c_str = NULL;
-				}
-				ret++;
-				break;
-			case NUMBER:
-				c_nb = (long*) tab[i].value;
-				nb = (long) json_object_get_int(current);
-				*c_nb = nb;
-				ret++;
-				break;
-			case BOOLEAN:
-				c_bool = (int*) tab[i].value;
-				bool = (int) json_object_get_boolean(current);
-				*c_bool = bool != 0 ? 1 : 0;
-				ret++;
-				break;
-			default:
-				continue;
-		}
-	}
-
-	return ret;
-}
-
-static int httpd_config(struct request_attr *attr)
-{
-	struct request_data *req_data;
-	struct json_object *json_root;
-	char *json;
-	int ret;
-
-	/* Make JSON response */
-	if(attr->method == HTTP_GET)
-	{
-		/* Create a new JSON object */
-		json_root = json_object_new_object();
-
-		/* Fill it with configuration values from config_tab */
-		httpd_get_config(config_tab, json_root);
-
-		/* Get string from JSON object */
-		json = strdup(json_object_to_json_string(json_root));
-
-		/* Free JSON object */
-		json_object_put(json_root);
-
-		/* Respond with JSON strong */
-		return httpd_json_response(attr->connection, 200, json,
-					   strlen(json));
-	}
-	else
-	{
-		/* Parse JSON */
-		ret = httpd_parse_json(attr->req_data, attr->upload_data,
-				       attr->upload_data_size);
-		if(ret == 1)
-			return MHD_YES;
-		else if(ret < 0)
-			httpd_response(attr->connection, 500, "Internal error!");
-
-		/* Get JSON object */
-		req_data = *attr->req_data;
-		json_root = ((struct json_data*)req_data->data)->object;
-
-		/* Process JSON data and change configuration */
-		if(json_root != NULL)
-		{
-			ret = httpd_put_config(config_tab, json_root,
-					       attr->res);
-			if(ret > 0)
-				return httpd_json_msg(attr->connection, 200,
-						      "");
-		}
-	}
-
-	return httpd_json_msg(attr->connection, 400,
-			      "Bad request on configuration!");
-}
-
-/******************************************************************************
- *                               Radio Part                                   *
- ******************************************************************************/
-
-static int httpd_radio_play(struct request_attr *attr)
-{
-	/* Play radio */
-	radio_play(attr->handle->radio, attr->res);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_radio_stop(struct request_attr *attr)
-{
-	/* Stop current radio */
-	radio_stop(attr->handle->radio);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_radio_status(struct request_attr *attr)
-{
-	char *stat;
-
-	/* Get radio status */
-	stat = radio_get_json_status(attr->handle->radio, 0);
-	if(stat == NULL)
-		return httpd_json_msg(attr->connection, 500, "No status");
-
-	return httpd_json_response(attr->connection, 200, stat, strlen(stat));
-}
-
-static int httpd_radio_cat_info(struct request_attr *attr)
-{
-	char *info;
-
-	/* Get info about category */
-	info = radio_get_json_category_info(attr->handle->radio, attr->res);
-	if(info == NULL)
-		return httpd_json_msg(attr->connection, 404, "Radio not found");
-
-	return httpd_json_response(attr->connection, 200, info, strlen(info));
-}
-
-static int httpd_radio_info(struct request_attr *attr)
-{
-	char *info;
-
-	/* Get info about radio */
-	info = radio_get_json_radio_info(attr->handle->radio, attr->res);
-	if(info == NULL)
-		return httpd_json_msg(attr->connection, 404, "Radio not found");
-
-	return httpd_json_response(attr->connection, 200, info, strlen(info));
-}
-
-static int httpd_radio_list(struct request_attr *attr)
-{
-	char *list = NULL;
-
-	/* Get Radio list */
-	list = radio_get_json_list(attr->handle->radio, attr->res);
-	if(list == NULL)
-		return httpd_json_msg(attr->connection, 500, "No radio list");
-
-	return httpd_json_response(attr->connection, 200, list, strlen(list));
-}
-
-/******************************************************************************
- *                             Airtunes Part                                  *
- ******************************************************************************/
-
-static int httpd_raop_status(struct request_attr *attr)
-{
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_raop_img(struct request_attr *attr)
-{
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_raop_restart(struct request_attr *attr)
-{
-	//airtunes_restart(attr->handle->airtunes);
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-/******************************************************************************
- *                               Files Part                                   *
- ******************************************************************************/
-
-static int httpd_files_playlist_add(struct request_attr *attr)
-{
-	int idx;
-
-	/* Add file to playlist */
-	idx = files_add(attr->handle->files, attr->res);
-	if(idx < 0)
-		return httpd_json_msg(attr->connection, 406,
-						       "File is not supported");
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_playlist_play(struct request_attr *attr)
-{
-	int idx;
-
-	/* Get index from URL */
-	idx = atoi(attr->res);
-	if(idx < 0)
-		return httpd_json_msg(attr->connection, 400, "Bad index");
-
-	/* Play selected file in playlist */
-	if(files_play(attr->handle->files, idx) != 0)
-		return httpd_json_msg(attr->connection, 500, "Playlist error");
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_playlist_remove(struct request_attr *attr)
-{
-	int idx;
-
-	/* Get index from URL */
-	idx = atoi(attr->res);
-	if(idx < 0)
-		return httpd_json_msg(attr->connection, 400, "Bad index");
-
-	/* Remove from playlist */
-	if(files_remove(attr->handle->files, idx) != 0)
-		return httpd_json_msg(attr->connection, 500, "Playlist error");
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_playlist_flush(struct request_attr *attr)
-{
-	/* Flush playlist */
-	files_flush(attr->handle->files);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_playlist(struct request_attr *attr)
-{
-	char *list = NULL;
-
-	/* Get playlist */
-	list = files_get_json_playlist(attr->handle->files);
-	if(list == NULL)
-		return httpd_json_msg(attr->connection, 500, "Playlist error");
-
-	return httpd_json_response(attr->connection, 200, list, strlen(list));
-}
-
-static int httpd_files_play(struct request_attr *attr)
-{
-	int idx = -1;
-
-	/* Add file to playlist */
-	if(*attr->res != 0)
-	{
-		idx = files_add(attr->handle->files, attr->res);
-		if(idx < 0)
-			return httpd_json_msg(attr->connection, 406,
-						       "File is not supported");
-	}
-
-	/* Play the file now */
-	if(files_play(attr->handle->files, idx) != 0)
-		return httpd_json_msg(attr->connection, 406,
-						        "Cannot play the file");
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_pause(struct request_attr *attr)
-{
-	/* Pause file playing */
-	files_pause(attr->handle->files);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_stop(struct request_attr *attr)
-{
-	/* Stop file playing */
-	files_stop(attr->handle->files);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_prev(struct request_attr *attr)
-{
-	/* Go to / play previous file in playlist */
-	files_prev(attr->handle->files);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_next(struct request_attr *attr)
-{
-	/* Go to / play next file in playlist */
-	files_next(attr->handle->files);
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_status(struct request_attr *attr)
-{
-	char *str = NULL;
-	int add_pic = 0;
-
-	if(strncmp(attr->res, "img", 3) == 0)
-		add_pic = 1;
-
-	/* Get status */
-	str = files_get_json_status(attr->handle->files, add_pic);
-	if(str == NULL)
-		return httpd_json_msg(attr->connection, 500, "Status error");
-
-	return httpd_json_response(attr->connection, 200, str, strlen(str));
-}
-
-static int httpd_files_seek(struct request_attr *attr)
-{
-	unsigned long pos;
-
-	/* Get position from URL */
-	pos = strtoul(attr->res, NULL, 10);
-
-	/* Seek in stream */
-	if(files_seek(attr->handle->files, pos) != 0)
-		return httpd_json_msg(attr->connection, 400, "Bad position");
-
-	return httpd_json_msg(attr->connection, 200, "");
-}
-
-static int httpd_files_list(struct request_attr *attr)
-{
-	char *list = NULL;
-
-	/* Get file list */
-	list = files_get_json_list(attr->handle->files, attr->res);
-	if(list == NULL)
-		return httpd_json_msg(attr->connection, 404, "Bad directory");
-
-	return httpd_json_response(attr->connection, 200, list, strlen(list));
-}
-
-/******************************************************************************
  *                          Main HTTP request parser                          *
  ******************************************************************************/
 
-struct url_table url_table[] = {
-	{"/config/reload", 1, HTTP_PUT, &httpd_config_reload},
-	{"/config/save", 1, HTTP_PUT, &httpd_config_save},
-	{"/config/default", 1, HTTP_PUT, &httpd_config_default},
-	{"/config/", 0, HTTP_PUT, &httpd_config},
-	{"/config", 1, HTTP_GET | HTTP_PUT, &httpd_config},
-	{"/radio/category/info/", 0, HTTP_GET, &httpd_radio_cat_info},
-	{"/radio/info/", 0, HTTP_GET, &httpd_radio_info},
-	{"/radio/list", 0, HTTP_GET, &httpd_radio_list},
-	{"/radio/play", 0, HTTP_PUT, &httpd_radio_play},
-	{"/radio/stop", 1, HTTP_PUT, &httpd_radio_stop},
-	{"/radio/status", 0, HTTP_GET, &httpd_radio_status},
-	{"/raop/status", 1, HTTP_GET, &httpd_raop_status},
-	{"/raop/img", 1, HTTP_GET, &httpd_raop_img},
-	{"/raop/restart", 1, HTTP_PUT, &httpd_raop_restart},
-	{"/files/playlist/add/", 0, HTTP_PUT, &httpd_files_playlist_add},
-	{"/files/playlist/play/", 0, HTTP_PUT, &httpd_files_playlist_play},
-	{"/files/playlist/remove/", 0, HTTP_PUT, &httpd_files_playlist_remove},
-	{"/files/playlist/flush", 1, HTTP_PUT, &httpd_files_playlist_flush},
-	{"/files/playlist", 1, HTTP_GET, &httpd_files_playlist},
-	{"/files/play", 0, HTTP_PUT, &httpd_files_play},
-	{"/files/pause", 1, HTTP_PUT, &httpd_files_pause},
-	{"/files/stop", 1, HTTP_PUT, &httpd_files_stop},
-	{"/files/prev", 1, HTTP_PUT, &httpd_files_prev},
-	{"/files/next", 1, HTTP_PUT, &httpd_files_next},
-	{"/files/seek/", 0, HTTP_PUT, &httpd_files_seek},
-	{"/files/status", 0, HTTP_GET, &httpd_files_status},
-	{"/files/list", 0, HTTP_GET, &httpd_files_list},
-	{0, 0, 0}
+enum {
+	HTTPD_URL_NOT_FOUND,
+	HTTPD_CONTINUE,
+	HTTPD_YES = MHD_YES,
+	HTTPD_NO = MHD_NO
 };
 
-static int httpd_request(void * user_data, struct MHD_Connection *c, 
-			 const char * url, const char * method, 
-			 const char * version, const char * upload_data,
-			 size_t * upload_data_size, void ** ptr)
+static int httpd_parse_url(struct MHD_Connection *c, const char *url,
+			   int method, const char * upload_data,
+			   size_t * upload_data_size, void ** ptr,
+			   const char *root_url, const struct url_table *urls,
+			   void *user_data)
+{
+	struct httpd_req req = HTTPD_REQ_INIT;
+	unsigned char *resp = NULL;
+	size_t resp_len = 0;
+	int code = 0;
+	int len;
+	int ret;
+	int i;
+
+	/* Check URL root */
+	len = strlen(root_url);
+	if(url == NULL || strncmp(url+1, root_url, len) != 0 ||
+	   (url[len+1] != 0 && url[len+1] != '/'))
+		return HTTPD_URL_NOT_FOUND;
+
+	/* Parse all URLs */
+	for(i = 0; urls[i].url != NULL; i++)
+	{
+		if(httpd_strcmp(urls[i].url, url+len+1, !urls[i].extended) == 0)
+		{
+			/* Verify method */
+			if((urls[i].method & method) == 0)
+				return httpd_response(c, 406,
+						      "Method not acceptable!");
+
+			/* Extract and check ressource name */
+			if(urls[i].extended)
+			{
+				req.resource = url + len + strlen(urls[i].url);
+				if(*req.resource++ == '/' && *req.resource == 0)
+					return httpd_response(c, 400,
+								 "Bad request");
+				if(*req.resource == '/')
+					req.resource++;
+			}
+			else
+				req.resource = NULL;
+
+			/* Get uploaded data */
+			if(method != HTTPD_GET)
+			{
+				/* POST or PUT */
+				if(urls[i].upload == HTTPD_JSON)
+				{
+					/* Parse JSON */
+					ret = httpd_parse_json(
+						    (struct request_data **)ptr,
+						    upload_data,
+						    upload_data_size);
+					if(ret == 1)
+						return HTTPD_CONTINUE;
+					else if(ret < 0)
+						return httpd_response(c, 500,
+							     "Internal error!");
+
+					/* Get JSON object */
+					req.json =
+					       ((struct json_data*)ptr)->object;
+				}
+				else
+				{
+					req.data = NULL;
+					req.len = 0;
+				}
+			}
+
+			/* Process URL */
+			req.url = url;
+			req.method = method;
+			code = urls[i].process(user_data, &req, &resp,
+					       &resp_len);
+
+			return httpd_data_response(c, code, resp, resp_len);
+		}
+	}
+
+	return HTTPD_URL_NOT_FOUND;
+}
+
+static int httpd_request(void *user_data, struct MHD_Connection *c, 
+			 const char *url, const char *method, 
+			 const char *version, const char *upload_data,
+			 size_t *upload_data_size, void **ptr)
 {
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
 	struct MHD_Response *response;
-	struct request_attr attr;
 	int method_code = 0;
 	char *username;
 	int ret;
 	int i;
 
 	/* Authentication check */
-	if(*ptr == NULL && config.password != NULL)
+	if(*ptr == NULL && h->password != NULL)
 	{
 		/* Get username */
 		username = MHD_digest_auth_get_username(c);
 		if(username != NULL)
 		{
 			/* Check password */
-			ret = MHD_digest_auth_check(c, h->realm, username, 
-						    config.password, 300);
+			ret = MHD_digest_auth_check(c, h->name, username,
+						    h->password, 300);
 			free(username);
 		}
 		else
@@ -1103,7 +699,7 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 							MHD_RESPMEM_PERSISTENT);
 
 			/* Queue it with Authentication headers */
-			ret = MHD_queue_auth_fail_response(c, h->realm, 
+			ret = MHD_queue_auth_fail_response(c, h->name,
 				 h->opaque, response,
 				 (ret == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
 
@@ -1118,50 +714,44 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 	if(method_code == 0)
 		return httpd_response(c, 405, "Method not allowed!");
 
-	/* Parse URL and do associated action */
-	for(i = 0; url_table[i].url != NULL; i++)
+	/* Check /config URLs */
+	if(strncmp("/config", url, 7) == 0)
 	{
-		if(httpd_strcmp(url_table[i].url, url,
-				url_table[i].strict_cmp) == 0)
+		if(*(url+7) == 0)
 		{
-			/* Verify method */
-			if((url_table[i].method & method_code) == 0)
-				return httpd_response(c, 406,
-						      "Method not acceptable!");
+			/* Get/put all config */
+			/* TODO */
+			return httpd_response(c, 200, "");
+		}
+		else if(*(url+7) == '/')
+		{
+			/* Get/put a specific config */
+			/* TODO */
+			return httpd_response(c, 200, "");
+		}
+	}
 
-			/* Extarct and check ressource name */
-			if(url_table[i].strict_cmp == 0)
-			{
-				attr.res = url + strlen(url_table[i].url) - 1;
-				if(*attr.res++ == '/' && *attr.res == 0)
-					return httpd_response(c, 400,
-							      "Bad request");
-				if(*attr.res == '/')
-					attr.res++;
-			}
-			else
-				attr.res = NULL;
-
-			/* Prepare attributes for processing URL */
-			attr.handle = h;
-			attr.connection = c;
-			attr.url = url;
-			attr.method = method_code;
-			attr.upload_data = upload_data;
-			attr.upload_data_size = upload_data_size;
-			attr.req_data = (struct request_data **) ptr;
-
-			/* Process URL */
-			return url_table[i].process(&attr);
+	/* Parse module URLs */
+	for(i = 0; i < h->modules_count; i++)
+	{
+		if(h->modules[i].urls != NULL)
+		{
+			ret = httpd_parse_url(c, url, method_code, upload_data,
+					      upload_data_size, ptr,
+					      h->modules[i].name,
+					      h->modules[i].urls,
+					      h->modules[i].handle);
+			if(ret != HTTPD_URL_NOT_FOUND)
+				return ret;
 		}
 	}
 
 	/* Accept only GET method if not a special URL */
-	if(method_code != HTTP_GET)
+	if(method_code != HTTPD_GET)
 		return httpd_response(c, 406, "Method not acceptable!");
 
 	/* Response with the requested file */
-	return httpd_file_response(c, url);
+	return httpd_file_response(c, h->path, url);
 }
 
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
@@ -1183,3 +773,4 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 
 	free(req);
 }
+

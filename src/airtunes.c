@@ -66,6 +66,13 @@
 
 static RSA *rsa = NULL;
 
+enum {
+	AIRTUNES_STARTING,
+	AIRTUNES_RUNNING,
+	AIRTUNES_STOPPING,
+	AIRTUNES_STOPPED
+};
+
 struct airtunes_server_data {
 	/* Output module */
 	struct output_handle *output;
@@ -119,9 +126,12 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  size_t size, int end_of_stream,
 				  void *user_data);
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data);
+static int airtunes_set_config(struct airtunes_handle *h,
+			       const struct config *c);
+static int airtunes_start(struct airtunes_handle *h);
 
-int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a,
-		  struct output_handle *o)
+static int airtunes_open(struct airtunes_handle **handle,
+			 struct module_attr *attr)
 {
 	char buf[6] = {0x00, 0x51, 0x52, 0x53, 0x54, 0x55};
 	struct airtunes_handle *h;
@@ -133,12 +143,12 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a,
 	h = *handle;
 
 	/* Init structure */
-	h->avahi = a;
-	h->output = o;
+	h->avahi = attr->avahi;
+	h->output = attr->output;
 	h->local_avahi = 0;
 	h->status = AIRTUNES_STOPPED;
 	h->reload = 0;
-	h->name = strdup("AirCat");
+	h->name = NULL;
 	h->port = 5000;
 	h->password = NULL;
 
@@ -164,47 +174,17 @@ int airtunes_open(struct airtunes_handle **handle, struct avahi_handle *a,
 	h->rtsp_data.password = h->password;
 	h->rtsp_data.output = h->output;
 
+	/* Set configuration */
+	airtunes_set_config(h, attr->config);
+
+	/* Start forced: FIXME */
+	if(airtunes_start(h) != 0)
+		return -1;
+
 	return 0;
 }
 
-void airtunes_set_name(struct airtunes_handle *h, const char *name)
-{
-	if(h == NULL || name == NULL)
-		return;
-
-	if(h->name != NULL)
-		free(h->name);
-
-	h->name = strdup(name);
-	h->rtsp_data.name = h->name;
-}
-
-void airtunes_set_port(struct airtunes_handle *h, unsigned int port)
-{
-	if(h == NULL || h->port == port)
-		return;
-
-	h->port = port;
-}
-
-void airtunes_set_password(struct airtunes_handle *h, const char *password)
-{
-	if(h == NULL || (h->password != NULL &&
-	   strcmp(h->password, password) == 0))
-		return;
-
-	if(h->password != NULL)
-		free(h->password);
-
-	if(password != NULL)
-		h->password = strdup(password);
-	else
-		h->password = NULL;
-
-	h->rtsp_data.password = h->password;
-}
-
-void *airtunes_thread(void *user_data)
+static void *airtunes_thread(void *user_data)
 {
 	struct airtunes_handle *h = (struct airtunes_handle*) user_data;
 	char name[256];
@@ -260,7 +240,7 @@ void *airtunes_thread(void *user_data)
 	return NULL;
 }
 
-int airtunes_start(struct airtunes_handle *h)
+static int airtunes_start(struct airtunes_handle *h)
 {
 	if(h->status == AIRTUNES_RUNNING)
 		return 0;
@@ -276,7 +256,7 @@ int airtunes_start(struct airtunes_handle *h)
 	return 0;
 }
 
-int airtunes_stop(struct airtunes_handle *h)
+static int airtunes_stop(struct airtunes_handle *h)
 {
 	if(h->status == AIRTUNES_STOPPING || h->status == AIRTUNES_STOPPED)
 		return 0;
@@ -287,12 +267,57 @@ int airtunes_stop(struct airtunes_handle *h)
 	return 0;
 }
 
-int airtunes_status(struct airtunes_handle *h)
+static int airtunes_set_config(struct airtunes_handle *h,
+			       const struct config *c)
 {
-	return h->status;
+	const char *name;
+	const char *password;
+
+	if(h == NULL)
+		return -1;
+
+	/* Parse config */
+	if(c != NULL)
+	{
+		/* Get name and password */
+		if(h->name != NULL)
+			free(h->name);
+		if(h->password != NULL)
+			free(h->password);
+		h->name = NULL;
+		h->password = NULL;
+
+		name = config_get_string(c, "name");
+		if(name != NULL)
+			h->name = strdup(name);
+		password = config_get_string(c, "password");
+		if(password != NULL)
+			h->password = strdup(password);
+	}
+
+	/* Set default values */
+	if(h->name == NULL)
+		h->name = strdup("AirCat");
+
+	return 0;
 }
 
-int airtunes_close(struct airtunes_handle *h)
+static struct config *airtunes_get_config(struct airtunes_handle *h)
+{
+	struct config *c;
+
+	c = config_new_config();
+	if(c == NULL)
+		return NULL;
+
+	/* Set name and password */
+	config_set_string(c, "name", h->name);
+	config_set_string(c, "password", h->password);
+
+	return c;
+}
+
+static int airtunes_close(struct airtunes_handle *h)
 {
 	if(h == NULL)
 		return 0;
@@ -501,6 +526,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
 		case RTSP_FLUSH:
+			raop_flush(cdata->raop, 0);
 			RESPONSE_BEGIN(c, sdata->hw_addr);
 			break;
 		case RTSP_TEARDOWN:
@@ -647,3 +673,41 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 	return 0;
 }
 
+static int airtunes_httpd_status(struct airtunes_handle *h,
+				 struct httpd_req *req, unsigned char **buffer,
+				 size_t *size)
+{
+	return 200;
+}
+
+static int airtunes_httpd_img(struct airtunes_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	return 200;
+}
+
+static int airtunes_httpd_restart(struct airtunes_handle *h,
+				  struct httpd_req *req, unsigned char **buffer,
+				  size_t *size)
+{
+	return 200;
+}
+
+struct url_table airtunes_url[] = {
+	{"/status",  HTTPD_STRICT_URL, HTTPD_GET, 0,
+						(void*) &airtunes_httpd_status},
+	{"/img",     HTTPD_STRICT_URL, HTTPD_GET, 0,
+						   (void*) &airtunes_httpd_img},
+	{"/restart", HTTPD_STRICT_URL, HTTPD_PUT, 0,
+					       (void*) &airtunes_httpd_restart},
+	{0, 0, 0}
+};
+
+struct module airtunes_module = {
+	.name = "raop",
+	.open = (void*) &airtunes_open,
+	.close = (void*) &airtunes_close,
+	.set_config = (void*) &airtunes_set_config,
+	.get_config = (void*) &airtunes_get_config,
+	.urls = (void*) &airtunes_url,
+};

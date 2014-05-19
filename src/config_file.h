@@ -19,30 +19,31 @@
 #ifndef _CONFIG_FILE_H
 #define _CONFIG_FILE_H
 
-struct config {
-	/* General configuration */
-	char *name;
-	char *password;
-	long port;
-	char *web_path;
-	/* Radio configuration */
-	int radio_enabled;
-	char *radio_list_file;
-	/* RAOP configuration */
-	int raop_enabled;
-	char *raop_name;
-	char *raop_password;
-	/* Files module */
-	int files_enabled;
-	char *files_path;
-} config;
+#include <json.h>
 
-extern struct config config;
+struct config;
+struct config_handle;
 
-int config_load(const char *file);
-int config_save(const char *file);
-void config_default(void);
-void config_free(void);
+int config_open(struct config_handle **h, const char *file);
+int config_load(struct config_handle *h);
+int config_save(struct config_handle *h);
+void config_close(struct config_handle *h);
+
+struct config *config_get_config(struct config_handle *h, const char *name);
+int config_set_config(struct config_handle *h, const char *name,
+		      struct config *c);
+
+struct config *config_new_config();
+void config_free_config(struct config *c);
+
+const char *config_get_string(const struct config *c, const char *name);
+int config_set_string(const struct config *c, const char *name,
+		      const char *value);
+
+int config_get_bool(const struct config *c, const char *name);
+int config_set_bool(const struct config *c, const char *name, int value);
+
+long config_get_int(const struct config *c, const char *name);
+int config_set_int(const struct config *c, const char *name, long value);
 
 #endif
-

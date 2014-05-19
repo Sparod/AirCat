@@ -28,7 +28,6 @@
 #include <json.h>
 #include <json_tokener.h>
 
-#include "config_file.h"
 #include "utils.h"
 #include "files.h"
 #include "file.h"
@@ -60,11 +59,15 @@ struct files_handle {
 	pthread_t thread;
 	pthread_mutex_t mutex;
 	int stop;
+	/* Configuration */
+	char *path;
 };
 
 static void *files_thread(void *user_data);
+static int files_stop(struct files_handle *h);
+static int files_set_config(struct files_handle *h, const struct config *c);
 
-int files_open(struct files_handle **handle, struct output_handle *o)
+static int files_open(struct files_handle **handle, struct module_attr *attr)
 {
 	struct files_handle *h;
 
@@ -75,7 +78,7 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 	h = *handle;
 
 	/* Init structure */
-	h->output = o;
+	h->output = attr->output;
 	h->file = NULL;
 	h->prev_file = NULL;
 	h->stream = NULL;
@@ -83,6 +86,7 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 	h->is_playing = 0;
 	h->playlist_cur = -1;
 	h->stop = 0;
+	h->path = NULL;
 
 	/* Allocate playlist */
 	h->playlist = malloc(PLAYLIST_ALLOC_SIZE *
@@ -90,6 +94,9 @@ int files_open(struct files_handle **handle, struct output_handle *o)
 	if(h->playlist != NULL)
 		h->playlist_alloc = PLAYLIST_ALLOC_SIZE;
 	h->playlist_len = 0;
+
+	/* Set configuration */
+	files_set_config(h, attr->config);
 
 	/* Init thread */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -229,7 +236,7 @@ static inline void files_free_playlist(struct files_playlist *p)
 		file_format_free(p->format);
 }
 
-int files_add(struct files_handle *h, const char *filename)
+static int files_add(struct files_handle *h, const char *filename)
 {
 	struct files_playlist *p;
 	char *real_path;
@@ -239,11 +246,11 @@ int files_add(struct files_handle *h, const char *filename)
 		return -1;
 
 	/* Make real path */
-	len = strlen(config.files_path) + strlen(filename) + 2;
+	len = strlen(h->path) + strlen(filename) + 2;
 	real_path = calloc(sizeof(char), len);
 	if(real_path == NULL)
 		return -1;
-	sprintf(real_path, "%s/%s", config.files_path, filename);
+	sprintf(real_path, "%s/%s", h->path, filename);
 
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
@@ -276,7 +283,7 @@ int files_add(struct files_handle *h, const char *filename)
 	return h->playlist_len - 1;
 }
 
-int files_remove(struct files_handle *h, int index)
+static int files_remove(struct files_handle *h, int index)
 {
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
@@ -313,7 +320,7 @@ int files_remove(struct files_handle *h, int index)
 	return 0;
 }
 
-void files_flush(struct files_handle *h)
+static void files_flush(struct files_handle *h)
 {
 	/* Stop playing before flush */
 	files_stop(h);
@@ -333,12 +340,8 @@ void files_flush(struct files_handle *h)
 	pthread_mutex_unlock(&h->mutex);
 }
 
-int files_play(struct files_handle *h, int index)
+static int files_play(struct files_handle *h, int index)
 {
-	/* Files module must be enabled */
-	if(config.files_enabled != 1)
-		return 0;
-
 	/* Get last played index */
 	if(index == -1 && (index = h->playlist_cur) < 0)
 		index = 0;
@@ -373,7 +376,7 @@ int files_play(struct files_handle *h, int index)
 	return 0;
 }
 
-int files_pause(struct files_handle *h)
+static int files_pause(struct files_handle *h)
 {
 	if(h == NULL || h->output == NULL)
 		return 0;
@@ -401,7 +404,7 @@ int files_pause(struct files_handle *h)
 	return 0;
 }
 
-int files_stop(struct files_handle *h)
+static int files_stop(struct files_handle *h)
 {
 	if(h == NULL)
 		return 0;
@@ -435,7 +438,7 @@ int files_stop(struct files_handle *h)
 	return 0;
 }
 
-int files_prev(struct files_handle *h)
+static int files_prev(struct files_handle *h)
 {
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
@@ -462,7 +465,7 @@ int files_prev(struct files_handle *h)
 	return 0;
 }
 
-int files_next(struct files_handle *h)
+static int files_next(struct files_handle *h)
 {
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
@@ -489,7 +492,7 @@ int files_next(struct files_handle *h)
 	return 0;
 }
 
-int files_seek(struct files_handle *h, unsigned long pos)
+static int files_seek(struct files_handle *h, unsigned long pos)
 {
 	int ret;
 
@@ -557,7 +560,7 @@ static json_object *files_get_file_json_object(const char *filename,
 	return tmp;
 }
 
-char *files_get_json_status(struct files_handle *h, int add_pic)
+static char *files_get_json_status(struct files_handle *h, int add_pic)
 {
 	struct json_object *tmp;
 	char *str = NULL;
@@ -597,7 +600,7 @@ char *files_get_json_status(struct files_handle *h, int add_pic)
 	return str;
 }
 
-char *files_get_json_playlist(struct files_handle *h)
+static char *files_get_json_playlist(struct files_handle *h)
 {
 	struct json_object *root, *tmp;
 	char *str;
@@ -637,7 +640,7 @@ char *files_get_json_playlist(struct files_handle *h)
 	return str;
 }
 
-char *files_get_json_list(struct files_handle *h, const char *path)
+static char *files_get_json_list(struct files_handle *h, const char *path)
 {
 	char *ext[] = { ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav", NULL };
 	struct json_object *root = NULL, *dir_list, *file_list, *tmp;
@@ -652,15 +655,15 @@ char *files_get_json_list(struct files_handle *h, const char *path)
 	/* Make real path */
 	if(path == NULL)
 	{
-		real_path = strdup(config.files_path);
+		real_path = strdup(h->path);
 	}
 	else
 	{
-		len = strlen(config.files_path) + strlen(path) + 2;
+		len = strlen(h->path) + strlen(path) + 2;
 		real_path = calloc(sizeof(char), len);
 		if(real_path == NULL)
 			return NULL;
-		sprintf(real_path, "%s/%s", config.files_path, path);
+		sprintf(real_path, "%s/%s", h->path, path);
 	}
 
 	/* Open directory */
@@ -760,7 +763,48 @@ end:
 	return str;
 }
 
-int files_close(struct files_handle *h)
+static int files_set_config(struct files_handle *h, const struct config *c)
+{
+	const char *path;
+
+	if(h == NULL)
+		return -1;
+
+	/* Parse configuration */
+	if(c != NULL)
+	{
+		/* Get files path */
+		if(h->path != NULL)
+			free(h->path);
+		h->path = NULL;
+		path = config_get_string(c, "path");
+		if(path != NULL)
+			h->path = strdup(path);
+	}
+
+	/* Set default values */
+	if(h->path == NULL)
+		h->path = strdup("/var/aircat/files");
+
+	return 0;
+}
+
+static struct config *files_get_config(struct files_handle *h)
+{
+	struct config *c;
+
+	/* Create a new config */
+	c = config_new_config();
+	if(c == NULL)
+		return NULL;
+
+	/* Set current files path */
+	config_set_string(c, "path", h->path);
+
+	return c;
+}
+
+static int files_close(struct files_handle *h)
 {
 	if(h == NULL)
 		return 0;
@@ -780,8 +824,263 @@ int files_close(struct files_handle *h)
 		free(h->playlist);
 	}
 
+	/* Free files path */
+	if(h->path != NULL)
+		free(h->path);
+
 	free(h);
 
 	return 0;
 }
 
+#define HTTPD_RESPONSE(s) *buffer = (unsigned char*)s; \
+			  *size = strlen(s);
+
+static int files_httpd_playlist_add(struct files_handle *h,
+				    struct httpd_req *req,
+				    unsigned char **buffer, size_t *size)
+{
+	int idx;
+
+	/* Add file to playlist */
+	idx = files_add(h, req->resource);
+	if(idx < 0)
+	{
+		HTTPD_RESPONSE(strdup("File is not supported"));
+		return 406;
+	}
+
+	return 200;
+}
+
+static int files_httpd_playlist_play(struct files_handle *h,
+				     struct httpd_req *req,
+				     unsigned char **buffer, size_t *size)
+{
+	int idx;
+
+	/* Get index from URL */
+	idx = atoi(req->resource);
+	if(idx < 0)
+	{
+		HTTPD_RESPONSE(strdup("Bad index"));
+		return 400;
+	}
+
+	/* Play selected file in playlist */
+	if(files_play(h, idx) != 0)
+	{
+		HTTPD_RESPONSE(strdup("Playlist error"));
+		return 500;
+	}
+
+	return 200;
+}
+
+static int files_httpd_playlist_remove(struct files_handle *h,
+				       struct httpd_req *req,
+				       unsigned char **buffer, size_t *size)
+{
+	int idx;
+
+	/* Get index from URL */
+	idx = atoi(req->resource);
+	if(idx < 0)
+	{
+		HTTPD_RESPONSE(strdup("Bad index"));
+		return 400;
+	}
+
+	/* Remove from playlist */
+	if(files_remove(h, idx) != 0)
+	{
+		HTTPD_RESPONSE(strdup("Playlist error"));
+		return 500;
+	}
+
+	return 200;
+}
+
+static int files_httpd_playlist_flush(struct files_handle *h,
+				      struct httpd_req *req,
+				      unsigned char **buffer, size_t *size)
+{
+	/* Flush playlist */
+	files_flush(h);
+
+	return 200;
+}
+
+static int files_httpd_playlist(struct files_handle *h, struct httpd_req *req,
+			 	unsigned char **buffer, size_t *size)
+{
+	char *list = NULL;
+
+	/* Get playlist */
+	list = files_get_json_playlist(h);
+	if(list == NULL)
+	{
+		HTTPD_RESPONSE(strdup("Playlist error"));
+		return 500;
+	}
+
+	HTTPD_RESPONSE(list);
+	return 200;
+}
+
+static int files_httpd_play(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	int idx = -1;
+
+	/* Add file to playlist */
+	if(*req->resource != 0)
+	{
+		idx = files_add(h, req->resource);
+		if(idx < 0)
+		{
+			HTTPD_RESPONSE(strdup("File is not supported"));
+			return 406;
+		}
+	}
+
+	/* Play the file now */
+	if(files_play(h, idx) != 0)
+	{
+		HTTPD_RESPONSE(strdup("Cannot play the file"));
+		return 406;
+	}
+
+	return 200;
+}
+
+static int files_httpd_pause(struct files_handle *h, struct httpd_req *req,
+			     unsigned char **buffer, size_t *size)
+{
+	/* Pause file playing */
+	files_pause(h);
+
+	return 200;
+}
+
+static int files_httpd_stop(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	/* Stop file playing */
+	files_stop(h);
+
+	return 200;
+}
+
+static int files_httpd_prev(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	/* Go to / play previous file in playlist */
+	files_prev(h);
+
+	return 200;
+}
+
+static int files_httpd_next(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	/* Go to / play next file in playlist */
+	files_next(h);
+
+	return 200;
+}
+
+static int files_httpd_status(struct files_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	char *str = NULL;
+	int add_pic = 0;
+
+	if(strncmp(req->resource, "img", 3) == 0)
+		add_pic = 1;
+
+	/* Get status */
+	str = files_get_json_status(h, add_pic);
+	if(str == NULL)
+	{
+		HTTPD_RESPONSE(strdup("Status error"));
+		return 500;
+	}
+
+	HTTPD_RESPONSE(str);
+	return 200;
+}
+
+static int files_httpd_seek(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	unsigned long pos;
+
+	/* Get position from URL */
+	pos = strtoul(req->resource, NULL, 10);
+
+	/* Seek in stream */
+	if(files_seek(h, pos) != 0)
+	{
+		HTTPD_RESPONSE(strdup("Bad position"));
+		return 400;
+	}
+
+	return 200;
+}
+
+static int files_httpd_list(struct files_handle *h, struct httpd_req *req,
+			    unsigned char **buffer, size_t *size)
+{
+	char *list = NULL;
+
+	/* Get file list */
+	list = files_get_json_list(h, req->resource);
+	if(list == NULL)
+	{
+		HTTPD_RESPONSE(strdup("Bad directory"));
+		return 404;
+	}
+
+	HTTPD_RESPONSE(list);
+	return 200;
+}
+
+struct url_table files_url[] = {
+	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+					     (void*) &files_httpd_playlist_add},
+	{"/playlist/play/",   HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+					    (void*) &files_httpd_playlist_play},
+	{"/playlist/remove/", HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+					  (void*) &files_httpd_playlist_remove},
+	{"/playlist/flush",   0,             HTTPD_PUT, HTTPD_JSON,
+					   (void*) &files_httpd_playlist_flush},
+	{"/playlist",         0,             HTTPD_GET, 0,
+						 (void*) &files_httpd_playlist},
+	{"/play",             HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+						     (void*) &files_httpd_play},
+	{"/pause",            0,             HTTPD_PUT, HTTPD_JSON,
+						    (void*) &files_httpd_pause},
+	{"/stop",             0,             HTTPD_PUT, HTTPD_JSON,
+						     (void*) &files_httpd_stop},
+	{"/prev",             0,             HTTPD_PUT, HTTPD_JSON,
+						     (void*) &files_httpd_prev},
+	{"/next",             0,             HTTPD_PUT, HTTPD_JSON,
+						     (void*) &files_httpd_next},
+	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+						     (void*) &files_httpd_seek},
+	{"/status",           HTTPD_EXT_URL, HTTPD_GET, 0,
+						   (void*) &files_httpd_status},
+	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0,
+						     (void*) &files_httpd_list},
+	{0, 0, 0}
+};
+
+struct module files_module = {
+	.name = "files",
+	.open = (void*) &files_open,
+	.close = (void*) &files_close,
+	.set_config = (void*) &files_set_config,
+	.get_config = (void*) &files_get_config,
+	.urls = (void*) &files_url,
+};

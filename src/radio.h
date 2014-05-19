@@ -19,18 +19,9 @@
 #ifndef _RADIO_H
 #define _RADIO_H
 
-#include "output.h"
+#include "module.h"
 
-struct radio_handle;
-
-int radio_open(struct radio_handle **handle, struct output_handle *o);
-int radio_play(struct radio_handle *h, const char *id);
-int radio_stop(struct radio_handle *h);
-char *radio_get_json_status(struct radio_handle *h, int add_pic);
-char *radio_get_json_category_info(struct radio_handle *h, const char *id);
-char *radio_get_json_radio_info(struct radio_handle *h, const char *id);
-char *radio_get_json_list(struct radio_handle *h, const char *id);
-int radio_close(struct radio_handle *h);
+struct module radio_module;
 
 #endif
 
