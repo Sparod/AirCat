@@ -86,6 +86,10 @@ struct config *config_get_config(struct config_handle *h, const char *name)
 	if(h == NULL || h->json == NULL)
 		return NULL;
 
+	/* Get global object */
+	if(name == NULL || *name == '\0')
+		return (struct config *) json_object_get(h->json);
+
 	/* Get JSON object */
 	if(json_object_object_get_ex(h->json, name, &tmp) == 0)
 		return NULL;

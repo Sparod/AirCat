@@ -24,6 +24,9 @@
 struct config;
 struct config_handle;
 
+#define config_json_to_config(j) (struct config *) json_object_get(j)
+#define config_to_json(c) json_object_get((json_object *)c)
+
 int config_open(struct config_handle **h, const char *file);
 int config_load(struct config_handle *h);
 int config_save(struct config_handle *h);
