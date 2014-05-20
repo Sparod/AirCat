@@ -70,7 +70,7 @@ struct url_table {
 
 struct httpd_handle;
 
-int httpd_open(struct httpd_handle **handle, struct config_handle *config);
+int httpd_open(struct httpd_handle **handle, struct config *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);

@@ -84,7 +84,6 @@ struct httpd_handle {
 	struct MHD_Daemon *httpd;
 	char *opaque;
 	/* Configuration */
-	struct config_handle *config;
 	char *name;
 	char *path;
 	char *password;
@@ -100,9 +99,9 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 			 size_t *upload_data_size, void ** ptr);
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
-static int httpd_set_config(struct httpd_handle *h);
+static int httpd_set_config(struct httpd_handle *h, struct config *cfg);
 
-int httpd_open(struct httpd_handle **handle, struct config_handle *config)
+int httpd_open(struct httpd_handle **handle, struct config *config)
 {
 	struct httpd_handle *h;
 
@@ -119,14 +118,13 @@ int httpd_open(struct httpd_handle **handle, struct config_handle *config)
 	h->path = NULL;
 	h->password = NULL;
 	h->port = 0;
-	h->config = config;
 	h->urls = NULL;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
 
 	/* Set configuration */
-	httpd_set_config(h);
+	httpd_set_config(h, config);
 
 	return 0;
 }
@@ -184,10 +182,12 @@ static int httpd_strcmp(const char *str1, const char *str2, int strict_cmp)
 	return 0;
 }
 
-static int httpd_set_config(struct httpd_handle *h)
+static int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 {
-	struct config *cfg;
 	const char *str;
+
+	if(h == NULL)
+		return -1;
 
 	/* Free previous values */
 	if(h->name != NULL)
@@ -202,7 +202,6 @@ static int httpd_set_config(struct httpd_handle *h)
 	h->port = 0;
 
 	/* Get configuration */
-	cfg = config_get_config(h->config, "general");
 	if(cfg != NULL)
 	{
 		/* Get values from configuration */
@@ -216,9 +215,6 @@ static int httpd_set_config(struct httpd_handle *h)
 		if(str != NULL)
 			h->password = strdup(str);
 		h->port = config_get_int(cfg, "port");
-
-		/* Free configuration */
-		config_free_config(cfg);
 	}
 
 	/* Set default values */

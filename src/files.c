@@ -770,13 +770,15 @@ static int files_set_config(struct files_handle *h, const struct config *c)
 	if(h == NULL)
 		return -1;
 
+	/* Free previous values */
+	if(h->path != NULL)
+		free(h->path);
+	h->path = NULL;
+
 	/* Parse configuration */
 	if(c != NULL)
 	{
 		/* Get files path */
-		if(h->path != NULL)
-			free(h->path);
-		h->path = NULL;
 		path = config_get_string(c, "path");
 		if(path != NULL)
 			h->path = strdup(path);

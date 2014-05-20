@@ -172,7 +172,7 @@ int main(int argc, char* argv[])
 	output_open(&output, OUTPUT_ALSA, 44100, 2);
 
 	/* Open HTTP Server */
-	httpd_open(&httpd, config);
+	httpd_open(&httpd, NULL);
 
 	/* Open all modules */
 	attr.avahi = avahi;

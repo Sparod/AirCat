@@ -276,17 +276,18 @@ static int airtunes_set_config(struct airtunes_handle *h,
 	if(h == NULL)
 		return -1;
 
+	/* Free previous values */
+	if(h->name != NULL)
+		free(h->name);
+	if(h->password != NULL)
+		free(h->password);
+	h->name = NULL;
+	h->password = NULL;
+
 	/* Parse config */
 	if(c != NULL)
 	{
 		/* Get name and password */
-		if(h->name != NULL)
-			free(h->name);
-		if(h->password != NULL)
-			free(h->password);
-		h->name = NULL;
-		h->password = NULL;
-
 		name = config_get_string(c, "name");
 		if(name != NULL)
 			h->name = strdup(name);

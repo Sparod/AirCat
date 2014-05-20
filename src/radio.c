@@ -224,13 +224,15 @@ static int radio_set_config(struct radio_handle *h, const struct config *c)
 	if(h == NULL)
 		return -1;
 
+	/* Free previous values */
+	if(h->list_file != NULL)
+		free(h->list_file);
+	h->list_file = NULL;
+
 	/* Parse config */
 	if(c != NULL)
 	{
 		/* Get radio list file */
-		if(h->list_file != NULL)
-			free(h->list_file);
-		h->list_file = NULL;
 		file = config_get_string(c, "list_file");
 		if(file != NULL)
 			h->list_file = strdup(file);
