@@ -99,7 +99,6 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 			 size_t *upload_data_size, void ** ptr);
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
-static int httpd_set_config(struct httpd_handle *h, struct config *cfg);
 
 int httpd_open(struct httpd_handle **handle, struct config *config)
 {
@@ -182,7 +181,7 @@ static int httpd_strcmp(const char *str1, const char *str2, int strict_cmp)
 	return 0;
 }
 
-static int httpd_set_config(struct httpd_handle *h, struct config *cfg)
+int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 {
 	const char *str;
 
@@ -226,6 +225,24 @@ static int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 		h->port = 8080;
 
 	return 0;
+}
+
+struct config *httpd_get_config(struct httpd_handle *h)
+{
+	struct config *c;
+
+	/* Create a new configuration */
+	c = config_new_config();
+	if(c == NULL)
+		return NULL;
+
+	/* Set current parameters */
+	config_set_string(c, "name", h->name);
+	config_set_string(c, "web_path", h->path);
+	config_set_string(c, "password", h->password);
+	config_set_int(c, "port", h->port);
+
+	return c;
 }
 
 int httpd_add_urls(struct httpd_handle *h, const char *name,
@@ -677,7 +694,9 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 			   const char *root_url, const struct url_table *urls,
 			   void *user_data)
 {
+	struct request_data **r_data = (struct request_data **)ptr;
 	struct httpd_req req = HTTPD_REQ_INIT;
+	struct json_data *j_data = NULL;
 	unsigned char *resp = NULL;
 	size_t resp_len = 0;
 	int code = 0;
@@ -721,10 +740,9 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 				if(urls[i].upload == HTTPD_JSON)
 				{
 					/* Parse JSON */
-					ret = httpd_parse_json(
-						    (struct request_data **)ptr,
-						    upload_data,
-						    upload_data_size);
+					ret = httpd_parse_json(r_data,
+							      upload_data,
+							      upload_data_size);
 					if(ret == 1)
 						return HTTPD_CONTINUE;
 					else if(ret < 0)
@@ -732,8 +750,14 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 							     "Internal error!");
 
 					/* Get JSON object */
-					req.json =
-					       ((struct json_data*)ptr)->object;
+					j_data = (struct json_data*)
+							      ((*r_data)->data);
+					req.json = j_data->object;
+
+					/* Check JSON object */
+					if(req.json == NULL)
+						return httpd_response(c, 400,
+								 "Bad request");
 				}
 				else
 				{

@@ -73,6 +73,8 @@ struct httpd_handle;
 int httpd_open(struct httpd_handle **handle, struct config *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
+int httpd_set_config(struct httpd_handle *h, struct config *c);
+struct config *httpd_get_config(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);
 
 int httpd_add_urls(struct httpd_handle *h, const char *name,
