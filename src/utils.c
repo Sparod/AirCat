@@ -131,7 +131,6 @@ int parse_url(const char *url, int *protocol, char **hostname,
 {
 	const char *_hostname;
 	const char *_port;
-	const char *_username;
 	const char *_password;
 	const char *_resource;
 
