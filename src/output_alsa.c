@@ -480,6 +480,9 @@ int output_alsa_close(struct output *h)
 	if(h->alsa != NULL)
 		snd_pcm_close(h->alsa);
 
+	/* Free ALSA config */
+	snd_config_update_free_global();
+
 	/* Free structure */
 	free(h);
 
