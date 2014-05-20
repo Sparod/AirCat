@@ -51,6 +51,8 @@ unsigned long raop_get_samplerate(struct raop_handle *h);
 
 unsigned char raop_get_channels(struct raop_handle *h);
 
+int raop_flush(struct raop_handle *h, unsigned int seq);
+
 int raop_close(struct raop_handle *h);
 
 #endif

@@ -319,6 +319,14 @@ unsigned char raop_get_channels(struct raop_handle *h)
 	return h->channels;
 }
 
+int raop_flush(struct raop_handle *h, unsigned int seq)
+{
+	if(h->transport == RAOP_UDP)
+		rtp_flush(h->rtp, seq);
+
+	return 0;
+}
+
 int raop_close(struct raop_handle *h)
 {
 	if(h == NULL)
