@@ -211,7 +211,7 @@ int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 		if(str != NULL)
 			h->path = strdup(str);
 		str = config_get_string(cfg, "password");
-		if(str != NULL)
+		if(str != NULL && *str != '\0')
 			h->password = strdup(str);
 		h->port = config_get_int(cfg, "port");
 	}
