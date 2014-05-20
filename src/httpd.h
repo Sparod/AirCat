@@ -21,14 +21,62 @@
 
 #include <json.h>
 
-#include "module.h"
+/* HTTP return code */
+#define HTTPD_OK 200
+#define HTTPD_BAD_REQUEST 400
+#define HTTPD_FORBIDDEN 403
+#define HTTPD_NOT_FOUND 404
+#define HTTPD_METHOD_NOT_ALLOWED 405
+#define HTTPD_METHOD_NOT_ACCEPTABLE 406
+#define HTTPD_NO_RESPONSE 444
+#define HTTPD_RETRY_WITH 449
+#define HTTPD_INTERNAL_SERVER_ERROR 500
+#define HTTPD_NOT_IMPLEMENTED 501
+#define HTTPD_SERVICE_UNAVAILABLE 503
+
+/* HTTP method accepted */
+#define HTTPD_GET 1
+#define HTTPD_PUT 2
+#define HTTPD_POST 4
+#define HTTPD_DELETE 8
+
+/* HTTP extended URL support */
+#define HTTPD_STRICT_URL 0
+#define HTTPD_EXT_URL 1
+
+/* JSON/RAW uploaded data */
+#define HTTPD_RAW 0
+#define HTTPD_JSON 1
+
+#define HTTPD_REQ_INIT {NULL, NULL, 0, NULL, NULL, 0}
+struct httpd_req {
+	/* URL specific */
+	const char *url;
+	const char *resource;
+	int method;
+	/* Uploaded data */
+	json_object *json;
+	unsigned char *data;
+	size_t len;
+};
+
+struct url_table {
+	const char *url;
+	int extended;
+	int method;
+	int upload;
+	int (*process)(void *, struct httpd_req *, unsigned char **, size_t *);
+};
 
 struct httpd_handle;
 
-int httpd_open(struct httpd_handle **handle, struct module *modules,
-	       int modules_count, struct config_handle *config);
+int httpd_open(struct httpd_handle **handle, struct config_handle *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);
+
+int httpd_add_urls(struct httpd_handle *h, const char *name,
+		   struct url_table *urls, void *user_data);
+int httpd_remove_urls(struct httpd_handle *h, const char *name);
 
 #endif

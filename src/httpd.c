@@ -21,6 +21,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <pthread.h>
 
 #include <microhttpd.h>
 #include <json.h>
@@ -71,19 +72,26 @@ struct request_attr {
 	struct request_data **req_data;
 };
 
+struct httpd_urls {
+	char *name;
+	void *user_data;
+	struct url_table *urls;
+	struct httpd_urls *next;
+};
+
 struct httpd_handle {
 	/* MicroHTTPD handle */
 	struct MHD_Daemon *httpd;
 	char *opaque;
-	/* Modules */
-	struct module *modules;
-	int modules_count;
 	/* Configuration */
 	struct config_handle *config;
 	char *name;
 	char *path;
 	char *password;
 	unsigned int port;
+	/* URLs list */
+	struct httpd_urls *urls;
+	pthread_mutex_t mutex;
 };
 
 static int httpd_request(void * user_data, struct MHD_Connection *c,
@@ -94,8 +102,7 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
 static int httpd_set_config(struct httpd_handle *h);
 
-int httpd_open(struct httpd_handle **handle, struct module *modules,
-	       int modules_count, struct config_handle *config)
+int httpd_open(struct httpd_handle **handle, struct config_handle *config)
 {
 	struct httpd_handle *h;
 
@@ -107,14 +114,16 @@ int httpd_open(struct httpd_handle **handle, struct module *modules,
 
 	/* Init structure */
 	h->opaque = strdup(OPAQUE);
-	h->modules = modules;
-	h->modules_count = modules_count;
 	h->httpd = NULL;
 	h->name = NULL;
 	h->path = NULL;
 	h->password = NULL;
 	h->port = 0;
 	h->config = config;
+	h->urls = NULL;
+
+	/* Init mutex */
+	pthread_mutex_init(&h->mutex, NULL);
 
 	/* Set configuration */
 	httpd_set_config(h);
@@ -223,14 +232,100 @@ static int httpd_set_config(struct httpd_handle *h)
 	return 0;
 }
 
+int httpd_add_urls(struct httpd_handle *h, const char *name,
+		   struct url_table *urls, void *user_data)
+{
+	struct httpd_urls *u;
+
+	if(name == NULL)
+		return -1;
+
+	/* Create a new URLs group */
+	u = malloc(sizeof(struct httpd_urls));
+	if(u == NULL)
+		return -1;
+
+	/* Fill new grouo */
+	u->name = strdup(name);
+	u->urls = urls;
+	u->user_data = user_data;
+
+	/* Remove old URLs group */
+	httpd_remove_urls(h, name);
+
+	/* Lock URLs list access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Add new group */
+	u->next = h->urls;
+	h->urls = u;
+
+	/* Unlock URLs list access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+static void httpd_free_urls(struct httpd_urls *u)
+{
+	if(u == NULL)
+		return;
+
+	if(u->name != NULL)
+		free(u->name);
+
+	free(u);
+}
+
+int httpd_remove_urls(struct httpd_handle *h, const char *name)
+{
+	struct httpd_urls **up, *u;
+
+	if(name == NULL)
+		return -1;
+
+	/* Lock URLs list access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Remove client from list */
+	up = &h->urls;
+	while((*up) != NULL)
+	{
+		u = *up;
+		if(strcmp(u->name, name) == 0)
+		{
+			*up = u->next;
+			httpd_free_urls(u);
+			break;
+		}
+		else
+			up = &u->next;
+	}
+
+	/* Unlock URLs list access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
 int httpd_close(struct httpd_handle *h)
 {
+	struct httpd_urls *u;
+
 	if(h == NULL)
 		return 0;
 
 	/* Stop HTTP server */
 	if(h->httpd != NULL)
 		httpd_stop(h);
+
+	/* Free URLs grouo */
+	while(h->urls != NULL)
+	{
+		u = h->urls;
+		h->urls = u->next;
+		httpd_free_urls(u);
+	}
 
 	/* Free configuration */
 	if(h->name != NULL)
@@ -597,7 +692,7 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 	/* Check URL root */
 	len = strlen(root_url);
 	if(url == NULL || strncmp(url+1, root_url, len) != 0 ||
-	   (url[len+1] != 0 && url[len+1] != '/'))
+	   (*root_url != '\0' && url[len+1] != 0 && url[len+1] != '/'))
 		return HTTPD_URL_NOT_FOUND;
 
 	/* Parse all URLs */
@@ -671,10 +766,10 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 {
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
 	struct MHD_Response *response;
+	struct httpd_urls *u;
 	int method_code = 0;
 	char *username;
 	int ret;
-	int i;
 
 	/* Authentication check */
 	if(*ptr == NULL && h->password != NULL)
@@ -714,37 +809,28 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	if(method_code == 0)
 		return httpd_response(c, 405, "Method not allowed!");
 
-	/* Check /config URLs */
-	if(strncmp("/config", url, 7) == 0)
+	/* Lock URLs list access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Parse URL */
+	u = h->urls;
+	while(u != NULL)
 	{
-		if(*(url+7) == 0)
+		ret = httpd_parse_url(c, url, method_code, upload_data,
+				      upload_data_size, ptr, u->name, u->urls,
+				      u->user_data);
+		if(ret != HTTPD_URL_NOT_FOUND)
 		{
-			/* Get/put all config */
-			/* TODO */
-			return httpd_response(c, 200, "");
+			/* Unlock URLs list access */
+			pthread_mutex_unlock(&h->mutex);
+
+			return ret;
 		}
-		else if(*(url+7) == '/')
-		{
-			/* Get/put a specific config */
-			/* TODO */
-			return httpd_response(c, 200, "");
-		}
+		u = u->next;
 	}
 
-	/* Parse module URLs */
-	for(i = 0; i < h->modules_count; i++)
-	{
-		if(h->modules[i].urls != NULL)
-		{
-			ret = httpd_parse_url(c, url, method_code, upload_data,
-					      upload_data_size, ptr,
-					      h->modules[i].name,
-					      h->modules[i].urls,
-					      h->modules[i].handle);
-			if(ret != HTTPD_URL_NOT_FOUND)
-				return ret;
-		}
-	}
+	/* Unlock URLs list access */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Accept only GET method if not a special URL */
 	if(method_code != HTTPD_GET)

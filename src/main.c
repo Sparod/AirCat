@@ -171,6 +171,9 @@ int main(int argc, char* argv[])
 	/* Open Output Module */
 	output_open(&output, OUTPUT_ALSA, 44100, 2);
 
+	/* Open HTTP Server */
+	httpd_open(&httpd, config);
+
 	/* Open all modules */
 	attr.avahi = avahi;
 	attr.output = output;
@@ -196,10 +199,12 @@ int main(int argc, char* argv[])
 		/* Free module configuration */
 		if(attr.config != NULL)
 			config_free_config((struct config *)attr.config);
-	}
 
-	/* Open HTTP Server */
-	httpd_open(&httpd, modules, modules_count, config);
+		/* Add URLs to HTTP server */
+		if(modules[i].urls != NULL)
+			httpd_add_urls(httpd, modules[i].name, modules[i].urls,
+				       modules[i].handle);
+	}
 
 	/* Start HTTP Server */
 	httpd_start(httpd);
