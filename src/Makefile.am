@@ -49,33 +49,19 @@ aircat_CFLAGS =  $(libssl_CFLAGS) \
 		 -Wall
 
 # C++ support and TagLib support
-aircat_CPPFLAGS = $(libtag_CFLAGS)
+aircat_CPPFLAGS = -I$(top_srcdir)/include \
+		  $(libtag_CFLAGS)
 aircat_SOURCES += file_format_taglib.cpp
 
-EXTRA_DIST = http.h \
-	     utils.h \
-	     config_file.h \
-	     httpd.h \
-	     radio.h \
-	     radio_list.h \
-	     airtunes.h \
-	     avahi.h \
-	     files.h \
-	     file.h \
-	     file_private.h \
-	     file_format.h \
-	     shoutcast.h \
-	     rtsp.h \
-	     rtp.h \
-	     sdp.h \
-	     raop_tcp.h \
-	     raop.h \
-	     decoder.h \
+EXTRA_DIST = file_private.h \
+	     output_alsa.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
 	     decoder_alac.h \
-	     resample.h \
-	     cache.h \
-	     output.h \
-	     output_alsa.h
+	     airtunes.h \
+	     raop.h \
+	     raop_tcp.h \
+	     radio.h \
+	     radio_list.h \
+	     files.h
 

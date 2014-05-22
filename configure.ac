@@ -54,6 +54,7 @@ PKG_CHECK_MODULES(libtag, taglib >= 1.7, [
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
+		 include/Makefile
 		 src/Makefile])
 AC_OUTPUT
 
