@@ -28,8 +28,8 @@
 #include <json.h>
 #include <json_tokener.h>
 
+#include "module.h"
 #include "utils.h"
-#include "files.h"
 #include "file.h"
 
 #define PLAYLIST_ALLOC_SIZE 32

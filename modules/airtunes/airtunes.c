@@ -25,6 +25,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#include "module.h"
 #include "avahi.h"
 #include "rtsp.h"
 #include "raop.h"
@@ -34,8 +35,6 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-
-#include "airtunes.h"
 
 #define BUFFER_SIZE 512
 

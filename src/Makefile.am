@@ -1,15 +1,10 @@
 bin_PROGRAMS = aircat
 
 aircat_SOURCES = main.c \
-		 utils.c \
 		 config_file.c \
 		 httpd.c \
-		 radio.c \
-		 radio_list.c \
-		 airtunes.c \
 		 avahi.c \
 		 http.c \
-		 files.c \
 		 file.c \
 		 file_mp3.c \
 		 file_mp4.c \
@@ -18,19 +13,19 @@ aircat_SOURCES = main.c \
 		 rtsp.c \
 		 rtp.c \
 		 sdp.c \
-		 raop_tcp.c \
-		 raop.c \
 		 decoder.c \
 	 	 decoder_aac.c \
 		 decoder_mp3.c \
 		 decoder_alac.c \
+		 output.c \
+		 output_alsa.c \
 		 resample.c \
 		 cache.c \
-		 output.c \
-		 output_alsa.c
+		 utils.c
 
 aircat_LDADD = $(libssl_LIBS) \
 	       $(libmad_LIBS) \
+	       $(libfaad_LIBS) \
 	       $(libsoxr_LIBS) \
 	       $(libasound2_LIBS) \
 	       $(libavahi_LIBS) \
@@ -39,7 +34,8 @@ aircat_LDADD = $(libssl_LIBS) \
 	       $(libtag_LIBS) \
 	       -lpthread
 
-aircat_CFLAGS =  $(libssl_CFLAGS) \
+aircat_CFLAGS = -D_MODULES_PATH="${modules_DIR}" \
+		 $(libssl_CFLAGS) \
 		 $(libmad_CFLAGS) \
 		 $(libsoxr_CFLAGS) \
 		 $(libasound2_CFLAGS) \
@@ -57,11 +53,5 @@ EXTRA_DIST = file_private.h \
 	     output_alsa.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
-	     decoder_alac.h \
-	     airtunes.h \
-	     raop.h \
-	     raop_tcp.h \
-	     radio.h \
-	     radio_list.h \
-	     files.h
+	     decoder_alac.h
 

@@ -28,9 +28,6 @@
 #include <json_tokener.h>
 
 #include "config_file.h"
-#include "radio.h"
-#include "airtunes.h"
-#include "files.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"

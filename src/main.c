@@ -28,9 +28,6 @@
 #include "httpd.h"
 
 #include "module.h"
-#include "airtunes.h"
-#include "radio.h"
-#include "files.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -145,12 +142,8 @@ void signal_handler(int signum)
 
 int main(int argc, char* argv[])
 {
-	struct module modules_list[] = {
-		airtunes_module,
-		radio_module,
-		files_module
-	};
-	int nb_modules = sizeof(modules_list) / sizeof(struct module);
+	struct module *modules_list = NULL;
+	int nb_modules = 0;
 	struct module_attr attr;
 	struct timeval timeout;
 	struct config *cfg;

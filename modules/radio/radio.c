@@ -22,9 +22,9 @@
 
 #include <json.h>
 
-#include "radio_list.h"
+#include "module.h"
 #include "shoutcast.h"
-#include "radio.h"
+#include "radio_list.h"
 
 struct radio_handle {
 	/* Output module */
