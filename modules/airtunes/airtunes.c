@@ -693,7 +693,7 @@ static int airtunes_httpd_restart(struct airtunes_handle *h,
 	return 200;
 }
 
-struct url_table airtunes_url[] = {
+static struct url_table airtunes_url[] = {
 	{"/status",  HTTPD_STRICT_URL, HTTPD_GET, 0,
 						(void*) &airtunes_httpd_status},
 	{"/img",     HTTPD_STRICT_URL, HTTPD_GET, 0,
@@ -703,7 +703,7 @@ struct url_table airtunes_url[] = {
 	{0, 0, 0}
 };
 
-struct module airtunes_module = {
+struct module module_entry = {
 	.name = "raop",
 	.open = (void*) &airtunes_open,
 	.close = (void*) &airtunes_close,

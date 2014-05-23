@@ -373,7 +373,7 @@ static int radio_httpd_list(struct radio_handle *h, struct httpd_req *req,
 	return 200;
 }
 
-struct url_table radio_url[] = {
+static struct url_table radio_url[] = {
 	{"/category/info/", HTTPD_EXT_URL, HTTPD_GET, 0,
 						 (void*) &radio_httpd_cat_info},
 	{"/info/",          HTTPD_EXT_URL, HTTPD_GET, 0,
@@ -389,7 +389,7 @@ struct url_table radio_url[] = {
 	{0, 0, 0}
 };
 
-struct module radio_module = {
+struct module module_entry = {
 	.name = "radio",
 	.open = (void*) &radio_open,
 	.close = (void*) &radio_close,

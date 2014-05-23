@@ -1048,7 +1048,7 @@ static int files_httpd_list(struct files_handle *h, struct httpd_req *req,
 	return 200;
 }
 
-struct url_table files_url[] = {
+static struct url_table files_url[] = {
 	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, 0,
 					     (void*) &files_httpd_playlist_add},
 	{"/playlist/play/",   HTTPD_EXT_URL, HTTPD_PUT, 0,
@@ -1078,7 +1078,7 @@ struct url_table files_url[] = {
 	{0, 0, 0}
 };
 
-struct module files_module = {
+struct module module_entry = {
 	.name = "files",
 	.open = (void*) &files_open,
 	.close = (void*) &files_close,

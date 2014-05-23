@@ -1,6 +1,7 @@
 bin_PROGRAMS = aircat
 
 aircat_SOURCES = main.c \
+		 modules.c \
 		 config_file.c \
 		 httpd.c \
 		 avahi.c \
@@ -34,7 +35,9 @@ aircat_LDADD = $(libssl_LIBS) \
 	       $(libtag_LIBS) \
 	       -lpthread
 
-aircat_CFLAGS = -D_MODULES_PATH="${modules_DIR}" \
+aircat_LDFLAGS = -export-dynamic
+
+aircat_CFLAGS = -DMODULES_PATH='"${modules_DIR}"' \
 		 $(libssl_CFLAGS) \
 		 $(libmad_CFLAGS) \
 		 $(libsoxr_CFLAGS) \
@@ -50,6 +53,7 @@ aircat_CPPFLAGS = -I$(top_srcdir)/include \
 aircat_SOURCES += file_format_taglib.cpp
 
 EXTRA_DIST = file_private.h \
+	     modules.c \
 	     output_alsa.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
