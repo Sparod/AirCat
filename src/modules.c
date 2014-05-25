@@ -83,6 +83,9 @@ struct module_list *modules_load(const char *path)
 		list = l;
 	}
 
+	/* Close directory */
+	closedir(dir);
+
 	return list;
 }
 

@@ -63,8 +63,6 @@
 "2gG0N5hvJpzwwhbhXqFKA4zaaSrw622wDniAK5MlIE0tIAKKP4yxNGjoD2QYjhBGuhvkWKaXTyY=\n" \
 "-----END RSA PRIVATE KEY-----"
 
-static RSA *rsa = NULL;
-
 enum {
 	AIRTUNES_STARTING,
 	AIRTUNES_RUNNING,
@@ -78,6 +76,7 @@ struct airtunes_server_data {
 	unsigned char hw_addr[6];
 	char *name;
 	char *password;
+	RSA *rsa;
 };
 
 struct airtunes_client_data {
@@ -111,6 +110,8 @@ struct airtunes_handle{
 	char *password;
 	int status;
 	int reload;
+	/* RSA private key */
+	RSA *rsa;
 	/* RTSP server */
 	struct rtsp_handle *rtsp;
 	struct airtunes_server_data rtsp_data;
@@ -160,18 +161,16 @@ static int airtunes_open(struct airtunes_handle **handle,
 	}
 
 	/* Load RSA private key */
-	if(rsa == NULL)
-	{
-		BIO *tBio = BIO_new_mem_buf(AIRPORT_PRIVATE_KEY, -1);
-		rsa = PEM_read_bio_RSAPrivateKey(tBio, NULL, NULL, NULL);
-		BIO_free(tBio);
-	}
+	BIO *tBio = BIO_new_mem_buf(AIRPORT_PRIVATE_KEY, -1);
+	h->rsa = PEM_read_bio_RSAPrivateKey(tBio, NULL, NULL, NULL);
+	BIO_free(tBio);
 
 	/* Get HW MAC */
 	memcpy(h->rtsp_data.hw_addr, buf, 6);
 	h->rtsp_data.name = h->name;
 	h->rtsp_data.password = h->password;
 	h->rtsp_data.output = h->output;
+	h->rtsp_data.rsa = h->rsa;
 
 	/* Set configuration */
 	airtunes_set_config(h, attr->config);
@@ -338,6 +337,10 @@ static int airtunes_close(struct airtunes_handle *h)
 	if(h->password != NULL)
 		free(h->password);
 
+	/* Free RSA */
+	if(h->rsa != NULL)
+		RSA_free(h->rsa);
+
 	/* Free structure */
 	free(h);
 
@@ -345,7 +348,7 @@ static int airtunes_close(struct airtunes_handle *h)
 }
 
 static int airtunes_do_apple_response(struct rtsp_client *c, 
-				      unsigned char *hw_addr)
+				      unsigned char *hw_addr, RSA *rsa)
 {
 	char *challenge;
 	unsigned char response_tmp[38];
@@ -409,7 +412,7 @@ static int airtunes_do_apple_response(struct rtsp_client *c,
 }
 
 #define RESPONSE_BEGIN(c, s) rtsp_create_response(c, 200, "OK"); \
-		airtunes_do_apple_response(c, s); \
+		airtunes_do_apple_response(c, s, sdata->rsa); \
 		rtsp_add_response(c, "Server", "AirCat/1.0"); \
 		rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq", 1));
 
@@ -442,7 +445,8 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 							      sdata->name) != 0)
 		{
 			rtsp_create_digest_auth_response(c, sdata->name, "", 0);
-			airtunes_do_apple_response(c, sdata->hw_addr);
+			airtunes_do_apple_response(c, sdata->hw_addr,
+						   sdata->rsa);
 			rtsp_add_response(c, "Server", "AirCat/1.0");
 			rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq",
 									    1));
@@ -551,6 +555,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  size_t size, int end_of_stream,
 				  void *user_data)
 {
+	struct airtunes_server_data *sdata = (struct airtunes_server_data*)
+								      user_data;
 	struct airtunes_client_data *cdata = (struct airtunes_client_data*)
 							  rtsp_get_user_data(c);
 	struct sdp_media *m = NULL;
@@ -601,7 +607,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 						/* Decode Base64 */
 						p = strdup(m->attr[i]+10);
 						rtsp_decode_base64(p);
-						len = RSA_size(rsa);
+						len = RSA_size(sdata->rsa);
 						cdata->aes_key = malloc(len *
 								  sizeof(char));
 						
@@ -609,7 +615,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 						if(RSA_private_decrypt(len,
 						(unsigned char*) p,
 						(unsigned char*) cdata->aes_key,
-						rsa,
+						sdata->rsa,
 						RSA_PKCS1_OAEP_PADDING) < 0)
 						{
 							free(p);
