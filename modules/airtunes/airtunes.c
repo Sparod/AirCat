@@ -37,6 +37,7 @@
 #endif
 
 #define BUFFER_SIZE 512
+#define MAX_VOLUME 65536
 
 #define AIRPORT_PRIVATE_KEY \
 "-----BEGIN RSA PRIVATE KEY-----\n" \
@@ -89,6 +90,8 @@ struct airtunes_client_data {
 	/* Format */
 	int codec;
 	char *format;
+	unsigned long samplerate;
+	unsigned char channels;
 	/* RAOP transport protocol */
 	int transport;
 	/* RAOP server port */
@@ -96,6 +99,10 @@ struct airtunes_client_data {
 	/* RTCP ports */
 	unsigned int control_port;
 	unsigned int timing_port;
+	/* Stream infortmations */
+	unsigned long position;
+	unsigned long duration;
+	unsigned long volume;
 };
 
 struct airtunes_handle{
@@ -503,9 +510,15 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			raop_open(&cdata->raop, &attr);
 			cdata->port = attr.port;
 
+			/* Get stream format */
+			cdata->samplerate = raop_get_samplerate(cdata->raop);
+			cdata->channels = raop_get_channels(cdata->raop);
+
 			/* Create audio stream output */
-			cdata->stream = output_add_stream(sdata->output, 44100,
-							  2, 0, 0, &raop_read,
+			cdata->stream = output_add_stream(sdata->output,
+							  cdata->samplerate,
+							  cdata->channels,0, 0,
+							  &raop_read,
 							  cdata->raop);
 
 			/* Send answer */
@@ -562,9 +575,11 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 	struct sdp_media *m = NULL;
 	struct sdp *s;
 	char *p;
+	unsigned long start, cur, end;
 	int i;
 	int len;
-	
+	float vol;
+
 	if(cdata == NULL)
 		return 0;
 
@@ -648,7 +663,49 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 			}
 			break;
 		case RTSP_SET_PARAMETER:
-			/* Get parameter */
+			/* Get Ccontent-type */
+			p = rtsp_get_header(c, "content-type", 0);
+			if(p == NULL)
+				break;
+
+			/* Check content-type */
+			if(strcmp(p, "text/parameters") == 0)
+			{
+				/* Progression or volume */
+				if(size > 8 &&
+				   strncmp(buffer, "volume: ", 8) == 0)
+				{
+					/* Get volume */
+					vol = strtof(buffer + 8, NULL);
+
+					/* Convert float volume to int */
+					if(vol == -144.0)
+						cdata->volume = 0;
+					else
+						cdata->volume = (vol + 30.0) *
+								MAX_VOLUME /
+								30.0;
+				}
+				else if(size > 10 &&
+					strncmp(buffer, "progress: ", 10) == 0)
+				{
+					/* Get RTP time values */
+					p = buffer + 10;
+					start = strtoul(p, &p, 10);
+					cur = strtoul(p+1, &p, 10);
+					end = strtoul(p+1, NULL, 10);
+
+					/* Convert values in seconds */
+					cdata->duration = (end - start) /
+							  cdata->samplerate;
+					cdata->position = (cur - start) /
+							  cdata->samplerate;
+				}
+			}
+			else if(strcmp(p, "application/x-dmap-tagged") == 0)
+			{
+				/* DMAP Metadata */
+			}
 
 			break;
 		default:
