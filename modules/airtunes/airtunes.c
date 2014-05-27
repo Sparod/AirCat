@@ -71,6 +71,20 @@ enum {
 	AIRTUNES_STOPPED
 };
 
+struct airtunes_stream {
+	/* Stream status */
+	unsigned long position;
+	unsigned long duration;
+	/* Stream volume */
+	unsigned long volume;
+	/* Stream meta */
+	char *title;
+	char *artist;
+	char *album;
+	/* Next stream */
+	struct airtunes_stream *next;
+};
+
 struct airtunes_client_data {
 	/* Audio output handlers */
 	struct raop_handle *raop;
@@ -91,9 +105,7 @@ struct airtunes_client_data {
 	unsigned int control_port;
 	unsigned int timing_port;
 	/* Stream infortmations */
-	unsigned long position;
-	unsigned long duration;
-	unsigned long volume;
+	struct airtunes_stream *infos;
 };
 
 struct airtunes_handle{
@@ -116,6 +128,8 @@ struct airtunes_handle{
 	/* Thread */
 	pthread_t thread;
 	pthread_mutex_t mutex;
+	/* Stream infos */
+	struct airtunes_stream *streams;
 };
 
 /* RTSP Callback */
@@ -150,6 +164,7 @@ static int airtunes_open(struct airtunes_handle **handle,
 	h->name = NULL;
 	h->port = 5000;
 	h->password = NULL;
+	h->streams = NULL;
 	memcpy(h->hw_addr, buf, 6);
 
 	/* Allocate a local avahi client if no avahi has been passed */
@@ -330,8 +345,78 @@ static struct config *airtunes_get_config(struct airtunes_handle *h)
 	return c;
 }
 
+static struct airtunes_stream *airtunes_add_stream(struct airtunes_handle *h)
+{
+	struct airtunes_stream *s;
+
+	/* Allocate stream */
+	s = malloc(sizeof(struct airtunes_stream));
+	if(s != NULL)
+	{
+		/* Init stream */
+		memset(s, 0, sizeof(struct airtunes_stream));
+
+		/* Lock mutex */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Add stream to list */
+		s->next = h->streams;
+		h->streams = s;
+
+		/* Unlock mutex */
+		pthread_mutex_unlock(&h->mutex);
+	}
+
+	return s;
+}
+
+static void airtunes_free_stream(struct airtunes_stream *s)
+{
+	if(s == NULL)
+		return;
+	if(s->title != NULL)
+		free(s->title);
+	if(s->artist != NULL)
+		free(s->artist);
+	if(s->album != NULL)
+		free(s->album);
+
+	free(s);
+}
+
+static void airtunes_remove_stream(struct airtunes_handle *h,
+				   struct airtunes_stream *s)
+{
+	struct airtunes_stream **sp;
+
+	if(h == NULL || s == NULL)
+		return;
+
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Remove stream from list */
+	sp = &h->streams;
+	while((*sp) != NULL)
+	{
+		if(*sp == s)
+		{
+			*sp = s->next;
+			airtunes_free_stream(s);
+			break;
+		}
+		else
+			sp = &((*sp)->next);
+	}
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
+}
+
 static int airtunes_close(struct airtunes_handle *h)
 {
+	struct airtunes_stream *s;
+
 	if(h == NULL)
 		return 0;
 
@@ -344,6 +429,14 @@ static int airtunes_close(struct airtunes_handle *h)
 	/* Close Avahi client if local */
 	if(h->local_avahi)
 		avahi_close(h->avahi);
+
+	/* Free possible remaining streams */
+	while(h->streams != NULL)
+	{
+		s = h->streams;
+		h->streams = s->next;
+		airtunes_free_stream(s);
+	}
 
 	/* Free strings */
 	if(h->name != NULL)
@@ -447,6 +540,9 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 		cdata = malloc(sizeof(struct airtunes_client_data));
 		memset(cdata, 0, sizeof(struct airtunes_client_data));
 		rtsp_set_user_data(c, cdata);
+
+		/* Add info stream */
+		cdata->infos = airtunes_add_stream(h);
 	}
 
 	/* Lock mutex */
@@ -693,13 +789,20 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 					/* Get volume */
 					vol = strtof(buffer + 8, NULL);
 
+					/* Lock mutex */
+					pthread_mutex_lock(&h->mutex);
+
 					/* Convert float volume to int */
 					if(vol == -144.0)
-						cdata->volume = 0;
+						cdata->infos->volume = 0;
 					else
-						cdata->volume = (vol + 30.0) *
-								MAX_VOLUME /
-								30.0;
+						cdata->infos->volume =
+								  (vol + 30.0) *
+								  MAX_VOLUME /
+								  30.0;
+
+					/* Unlock mutex */
+					pthread_mutex_unlock(&h->mutex);
 				}
 				else if(size > 10 &&
 					strncmp(buffer, "progress: ", 10) == 0)
@@ -710,11 +813,17 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 					cur = strtoul(p+1, &p, 10);
 					end = strtoul(p+1, NULL, 10);
 
+					/* Lock mutex */
+					pthread_mutex_lock(&h->mutex);
+
 					/* Convert values in seconds */
-					cdata->duration = (end - start) /
-							  cdata->samplerate;
-					cdata->position = (cur - start) /
-							  cdata->samplerate;
+					cdata->infos->duration = (end - start) /
+							      cdata->samplerate;
+					cdata->infos->position = (cur - start) /
+							      cdata->samplerate;
+
+					/* Unlock mutex */
+					pthread_mutex_unlock(&h->mutex);
 				}
 			}
 			else if(strcmp(p, "application/x-dmap-tagged") == 0)
@@ -742,6 +851,9 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 		output_remove_stream(h->output, cdata->stream);
 		raop_close(cdata->raop);
 
+		/* Remove info stream */
+		airtunes_remove_stream(h, cdata->infos);
+
 		/* Free client data */
 		free(cdata);
 		rtsp_set_user_data(c, NULL);
@@ -750,10 +862,58 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 	return 0;
 }
 
+#define ADD_STRING(j, k, s) json_object_object_add(j, k, \
+			       s != NULL ? json_object_new_string(s) : NULL);
+#define ADD_INT(j, k, i) json_object_object_add(j, k, json_object_new_int(i));
+
 static int airtunes_httpd_status(struct airtunes_handle *h,
 				 struct httpd_req *req, unsigned char **buffer,
 				 size_t *size)
 {
+	struct airtunes_stream *s;
+	json_object *root, *tmp;
+	char *str;
+
+	/* Create JSON array */
+	root = json_object_new_array();
+	if(root == NULL)
+		return 500;
+
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Add infos to JSON status */
+	for(s = h->streams; s != NULL; s = s->next)
+	{
+		/* Create JSON object */
+		tmp = json_object_new_object();
+		if(tmp == NULL)
+			continue;
+
+		/* Add values to it */
+		ADD_STRING(tmp, "title", s->title);
+		ADD_STRING(tmp, "artist", s->artist);
+		ADD_STRING(tmp, "album", s->album);
+		ADD_INT(tmp, "pos", s->position);
+		ADD_INT(tmp, "length", s->duration);
+		ADD_INT(tmp, "volume", s->volume);
+
+		/* Add object to array */
+		if(json_object_array_add(root, tmp) != 0)
+			json_object_put(tmp);
+	}
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* Get string from JSON object */
+	str = strdup(json_object_to_json_string(root));
+
+	/* Free JSON object */
+	json_object_put(root);
+
+	*buffer = str;
+	*size = str != NULL ? strlen(str) : 0;
 	return 200;
 }
 
