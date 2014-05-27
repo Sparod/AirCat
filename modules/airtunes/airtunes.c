@@ -115,6 +115,7 @@ struct airtunes_handle{
 	struct rtsp_handle *rtsp;
 	/* Thread */
 	pthread_t thread;
+	pthread_mutex_t mutex;
 };
 
 /* RTSP Callback */
@@ -164,6 +165,9 @@ static int airtunes_open(struct airtunes_handle **handle,
 	h->rsa = PEM_read_bio_RSAPrivateKey(tBio, NULL, NULL, NULL);
 	BIO_free(tBio);
 
+	/* Init thread mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
 	/* Set configuration */
 	airtunes_set_config(h, attr->config);
 
@@ -177,7 +181,7 @@ static int airtunes_open(struct airtunes_handle **handle,
 static void *airtunes_thread(void *user_data)
 {
 	struct airtunes_handle *h = (struct airtunes_handle*) user_data;
-	char name[256];
+	char *name;
 	int port;
 	int i;
 
@@ -190,14 +194,20 @@ static void *airtunes_thread(void *user_data)
 		return NULL;
 	}
 
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Register the service with Avahi */
-	for(i = 0; i < 6; i++)
-		snprintf(name+(2*i), 256, "%02x", h->hw_addr[i]);
-	snprintf(name+12, 244, "@%s", h->name);
+	asprintf(&name, "%02x%02x%02x%02x%02x%02x@%s", h->hw_addr[0],
+		 h->hw_addr[1], h->hw_addr[2], h->hw_addr[3], h->hw_addr[4],
+		 h->hw_addr[5], h->name);
 	avahi_add_service(h->avahi, name, "_raop._tcp", h->port, "tp=TCP,UDP",
 			  "sm=false", "sv=false", "ek=1", "et=0,1", "cn=1",
 			  "ch=2", "ss=16", "sr=44100", "pw=false", "vn=3",
 			  "md=0,1,2", "txtvers=1", NULL);
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Change status of airtunes */
 	if(h->status != AIRTUNES_STOPPING)
@@ -217,6 +227,9 @@ static void *airtunes_thread(void *user_data)
 	avahi_remove_service(h->avahi, name, port);
 	if(h->local_avahi)
 		avahi_loop(h->avahi, 10);
+
+	/* Free name */
+	free(name);
 
 	/* Close RTSP server */
 	rtsp_close(h->rtsp);
@@ -263,6 +276,9 @@ static int airtunes_set_config(struct airtunes_handle *h,
 	if(h == NULL)
 		return -1;
 
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Free previous values */
 	if(h->name != NULL)
 		free(h->name);
@@ -287,6 +303,9 @@ static int airtunes_set_config(struct airtunes_handle *h,
 	if(h->name == NULL)
 		h->name = strdup("AirCat");
 
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
+
 	return 0;
 }
 
@@ -298,9 +317,15 @@ static struct config *airtunes_get_config(struct airtunes_handle *h)
 	if(c == NULL)
 		return NULL;
 
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Set name and password */
 	config_set_string(c, "name", h->name);
 	config_set_string(c, "password", h->password);
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
 
 	return c;
 }
@@ -424,6 +449,9 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 		rtsp_set_user_data(c, cdata);
 	}
 
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Verify password */
 	if(h->password != NULL)
 	{
@@ -438,9 +466,16 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			rtsp_add_response(c, "Server", "AirCat/1.0");
 			rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq",
 									    1));
+
+			/* Unlock mutex */
+			pthread_mutex_unlock(&h->mutex);
+
 			return 0;
 		}
 	}
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
 
 	switch(request)
 	{
