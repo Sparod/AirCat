@@ -46,7 +46,12 @@
 
 #define min(x,y) x <= y ? x : y
 
-enum {RTSPSTATE_SEND_REPLY, RTSPSTATE_SEND_PACKET, RTSPSTATE_WAIT_REQUEST, RTSPSTATE_WAIT_PACKET};
+enum {
+	RTSPSTATE_SEND_REPLY,
+	RTSPSTATE_SEND_PACKET,
+	RTSPSTATE_WAIT_REQUEST,
+	RTSPSTATE_WAIT_PACKET
+};
 
 struct rtsp_header {
 	char *name;
@@ -64,6 +69,7 @@ struct rtsp_client {
 	unsigned char ip[4];
 	unsigned int server_port;
 	unsigned int port;
+	char *name;
 	/* Header buffer */
 	char req_buffer[BUFFER_SIZE];
 	size_t req_len;
@@ -102,8 +108,10 @@ struct rtsp_handle {
 	int sock;
 	int users;
 	int max_user;
-	int (*request_callback)(struct rtsp_client *, int, const char *, void *);
-	int (*read_callback)(struct rtsp_client *, unsigned char *, size_t, int, void *);
+	int (*request_callback)(struct rtsp_client *, int, const char *,
+				void *);
+	int (*read_callback)(struct rtsp_client *, unsigned char *, size_t, int,
+			     void *);
 	int (*close_callback)(struct rtsp_client *, void *);
 	void *user_data;
 	struct pollfd *poll_table;
@@ -118,16 +126,16 @@ static void rtsp_accept(struct rtsp_handle *h)
 {
 	struct rtsp_client *c = NULL;
 	struct sockaddr_in addr;
+	char hostname[1024];
+	char service[20];
 	socklen_t len;
 	int sock = -1;
 
 	/* Accept client */
 	len = sizeof(addr);
 	sock = accept(h->sock, (struct sockaddr *)&addr, &len);
-	if (sock < 0)
-	{
+	if(sock < 0)
 		return;
-	}
 
 	/* Set as non blocking socket */
 	fcntl(sock, F_SETFL, O_NONBLOCK);
@@ -158,6 +166,11 @@ static void rtsp_accept(struct rtsp_handle *h)
 	/* Get Client IP Address */
 	memcpy(c->ip, &addr.sin_addr, 4);
 	c->port = ntohs(addr.sin_port);
+	/* Get Client name and service */
+	hostname[0] = '\0';
+	getnameinfo((struct sockaddr*)&addr, sizeof(addr), hostname,
+		    sizeof(hostname), service, sizeof(service), 0);
+	c->name = hostname[0] != '\0' ? strdup(hostname) : NULL;
 	/* Get Server IP Address */
 	len = sizeof(addr);
 	getsockname(sock, (struct sockaddr*)&addr, &len);
@@ -291,11 +304,11 @@ static int rtsp_parse_request(struct rtsp_client *c)
 
 static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 {
-	char *ptr;
+	const char *ptr;
 	int len;
 
 	/* Return error */
-	if (c->poll_entry->revents & (POLLERR | POLLHUP))
+	if(c->poll_entry->revents & (POLLERR | POLLHUP))
 		return -1;
 
 	switch(c->state)
@@ -303,7 +316,7 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 		case RTSPSTATE_WAIT_REQUEST:
 		{
 			/* Return if no event */
-			if (!(c->poll_entry->revents & POLLIN))
+			if(!(c->poll_entry->revents & POLLIN))
 				return 0;
 
 			/* Read data until end of request or end of reception */
@@ -324,7 +337,10 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 
 				/* search for end of request. */
 				ptr = c->buffer_ptr;
-				if ((ptr >= c->req_buffer + 2 && !memcmp(ptr-2, "\n\n", 2)) || (ptr >= c->req_buffer + 4 && !memcmp(ptr-4, "\r\n\r\n", 4)))
+				if((ptr >= c->req_buffer + 2 &&
+				   !memcmp(ptr-2,"\n\n", 2)) ||
+				  (ptr >= c->req_buffer + 4 &&
+				   !memcmp(ptr-4, "\r\n\r\n", 4)))
 				{
 					/* Terminate string by '\0' */
 					*c->buffer_ptr = 0;
@@ -334,43 +350,63 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 						return -1;
 
 					/* Look for CSeq header */
-					if(rtsp_get_header(c, "CSeq", 1) == NULL)
+					if(rtsp_get_header(c, "CSeq", 1)
+					    == NULL)
 						return -1;
 
 					/* Call callback function */
-					if(h->request_callback(c, c->request, c->url, h->user_data) < 0)
+					if(h->request_callback(c, c->request, 
+							       c->url,
+							       h->user_data)
+					    < 0)
 						return -1;
 
 					/* Prepare response */
-					ptr = rtsp_get_header(c, "Content-Length", 1);
+					ptr = rtsp_get_header(c,
+							      "Content-Length",
+							      1);
 					if(ptr == NULL || atol(ptr) == 0)
 					{
 						if(c->resp_buffer == NULL)
 						{
-							/* No response from callback: send a bad request */
-							c->resp_buffer = strdup("RTSP/1.0 400 Bad Request\r\n\r\n");
-							c->resp_len = strlen(c->resp_buffer);
-							if(c->packet_buffer != NULL)
+							/* No response from 
+							 * callback: send a bad
+							 * request
+							 */
+							c->resp_buffer = strdup(
+							 "RTSP/1.0 400 "
+							 "Bad Request\r\n\r\n");
+							c->resp_len = strlen(
+								c->resp_buffer);
+							if(c->packet_buffer
+							    != NULL)
 							{
-								free(c->packet_buffer);
-								c->packet_buffer = NULL;
-								c->packet_len = 0;
+								free(
+							      c->packet_buffer);
+								c->packet_buffer
+									 = NULL;
+								c->packet_len =
+									      0;
 							}
 						}
 						c->buffer_ptr = c->resp_buffer;
-						c->buffer_end = c->resp_buffer + c->resp_len;
+						c->buffer_end = c->resp_buffer +
+								c->resp_len;
 						c->state = RTSPSTATE_SEND_REPLY;
 					}
 					else /* Read packet */
 					{
 						c->in_content_len = atol(ptr);
-						c->buffer_ptr = (char*) c->in_buffer;
-						c->buffer_end = (char*) c->in_buffer + c->in_len;
-						c->state = RTSPSTATE_WAIT_PACKET;
+						c->buffer_ptr = (char*)
+								   c->in_buffer;
+						c->buffer_end = (char*)
+						       c->in_buffer + c->in_len;
+						c->state =
+							  RTSPSTATE_WAIT_PACKET;
 					}
 					break;
 				}
-				else if (ptr >= c->buffer_end)
+				else if(ptr >= c->buffer_end)
 				{
 					/* Too long request: close connection */
 					return -1;
@@ -381,11 +417,12 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 		case RTSPSTATE_WAIT_PACKET:
 		{
 			/* Return if no event */
-			if (!(c->poll_entry->revents & POLLIN))
+			if(!(c->poll_entry->revents & POLLIN))
 				return 0;
 
 			/* Read until end of buffer_size or content length */
-			len = min(c->buffer_end-c->buffer_ptr, c->in_content_len);
+			len = min(c->buffer_end-c->buffer_ptr,
+				  c->in_content_len);
 			len = recv(c->sock, c->buffer_ptr, len, 0);
 			if(len <= 0)
 			{
@@ -397,12 +434,16 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 			c->buffer_ptr += len;
 
 			/* End of stream or buffer is full */
-			if (c->in_content_len == 0 || c->buffer_ptr == c->buffer_end)
+			if(c->in_content_len == 0 ||
+			   c->buffer_ptr == c->buffer_end)
 			{
 				/* Call read callback function */
 				if(h->read_callback != NULL)
 				{
-					if(h->read_callback(c, c->in_buffer, (unsigned char*)c->buffer_ptr-c->in_buffer, c->in_content_len == 0 ? 1:0, h->user_data) < 0)
+					if(h->read_callback(c, c->in_buffer,
+				     (unsigned char*)c->buffer_ptr-c->in_buffer,
+				     c->in_content_len == 0 ? 1:0, h->user_data)
+					    < 0)
 						return -1;
 				}
 
@@ -411,9 +452,14 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 				{
 					if(c->resp_buffer == NULL)
 					{
-						/* No response from callback: send a bad request */
-						c->resp_buffer = strdup("RTSP/1.0 400 Bad Request\r\n\r\n");
-						c->resp_len = strlen(c->resp_buffer);
+						/* No response from callback: 
+						 *   send a bad request
+						 */
+						c->resp_buffer = strdup(
+							 "RTSP/1.0 400 "
+							 "Bad Request\r\n\r\n");
+						c->resp_len = strlen(
+								c->resp_buffer);
 						if(c->packet_buffer != NULL)
 						{
 							free(c->packet_buffer);
@@ -422,7 +468,8 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 						}
 					}
 					c->buffer_ptr = c->resp_buffer;
-					c->buffer_end = c->resp_buffer + c->resp_len;
+					c->buffer_end = c->resp_buffer +
+							c->resp_len;
 					c->state = RTSPSTATE_SEND_REPLY;
 				}
 				else
@@ -435,12 +482,13 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 		case RTSPSTATE_SEND_REPLY:
 		{
 			/* Return if no event */
-			if (!(c->poll_entry->revents & POLLOUT))
+			if(!(c->poll_entry->revents & POLLOUT))
 				return 0;
 
 			/* Send data */
-			len = send(c->sock, c->buffer_ptr, c->buffer_end - c->buffer_ptr, 0);
-			if (len < 0)
+			len = send(c->sock, c->buffer_ptr,
+				   c->buffer_end - c->buffer_ptr, 0);
+			if(len < 0)
 			{
 				if(errno == EAGAIN || errno == EINTR)
 					return 0;
@@ -459,7 +507,7 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 
 			/* Update buffer position */
 			c->buffer_ptr += len;
-			if (c->buffer_ptr >= c->buffer_end)
+			if(c->buffer_ptr >= c->buffer_end)
 			{
 				/* Free response buffer */
 				free(c->resp_buffer);
@@ -470,14 +518,16 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 				{
 					/* Send packet */
 					c->buffer_ptr = (char*)c->packet_buffer;
-					c->buffer_end = (char*)(c->packet_buffer + c->packet_len);
+					c->buffer_end = (char*)(c->packet_buffer
+							 + c->packet_len);
 					c->state = RTSPSTATE_SEND_PACKET;
 				}
 				else
 				{
 					/* Wait for next request */
 					c->buffer_ptr = c->req_buffer;
-					c->buffer_end = c->req_buffer + c->req_len;
+					c->buffer_end = c->req_buffer +
+							c->req_len;
 					c->state = RTSPSTATE_WAIT_REQUEST;
 				}
 			}
@@ -486,12 +536,13 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 		case RTSPSTATE_SEND_PACKET:
 		{
 			/* Return if no event */
-			if (!(c->poll_entry->revents & POLLOUT))
+			if(!(c->poll_entry->revents & POLLOUT))
 				return 0;
 
 			/* Send data */
-			len = send(c->sock, c->buffer_ptr, c->buffer_end - c->buffer_ptr, 0);
-			if (len < 0)
+			len = send(c->sock, c->buffer_ptr,
+				   c->buffer_end - c->buffer_ptr, 0);
+			if(len < 0)
 			{
 				if(errno == EAGAIN || errno == EINTR)
 					return 0;
@@ -504,7 +555,7 @@ static int rtsp_handle_client(struct rtsp_handle *h, struct rtsp_client *c)
 
 			/* Update buffer position */
 			c->buffer_ptr += len;
-			if (c->buffer_ptr >= c->buffer_end)
+			if(c->buffer_ptr >= c->buffer_end)
 			{
 				/* Free packet buffer */
 				free(c->packet_buffer);
@@ -540,7 +591,7 @@ static void rtsp_close_client(struct rtsp_handle *h, struct rtsp_client *c)
 	while((*cp) != NULL)
 	{
 		c1 = *cp;
-		if (c1 == c)
+		if(c1 == c)
 			*cp = c->next;
 		else
 			cp = &c1->next;
@@ -559,9 +610,11 @@ static void rtsp_close_client(struct rtsp_handle *h, struct rtsp_client *c)
 		free(c->resp_buffer);
 	if(c->packet_buffer != NULL)
 		free(c->packet_buffer);
+	if(c->name != NULL)
+		free(c->name);
 
 	/* Close client socket */
-	if (c->sock >= 0)
+	if(c->sock >= 0)
 		close(c->sock);
 
 	/* Free client structure */
@@ -571,7 +624,9 @@ static void rtsp_close_client(struct rtsp_handle *h, struct rtsp_client *c)
 	h->users--;
 }
 
-int rtsp_open(struct rtsp_handle **handle, unsigned int port, unsigned int max_user, void *callback, void *read_callback, void *close_callback, void *user_data)
+int rtsp_open(struct rtsp_handle **handle, unsigned int port,
+	      unsigned int max_user, void *callback, void *read_callback,
+	      void *close_callback, void *user_data)
 {
 	struct rtsp_handle *h;
 	struct sockaddr_in addr;
@@ -688,7 +743,8 @@ int rtsp_loop(struct rtsp_handle *h, unsigned int timeout)
 	return 0;
 }
 
-char *rtsp_get_header(struct rtsp_client *c, const char *name, int case_sensitive)
+const char *rtsp_get_header(struct rtsp_client *c, const char *name,
+			    int case_sensitive)
 {
 	struct rtsp_header *header;
 	int (*_strcmp)(const char*, const char*);
@@ -726,6 +782,13 @@ unsigned int rtsp_get_port(struct rtsp_client *c)
 	return c->port;
 }
 
+const char *rtsp_get_name(struct rtsp_client *c)
+{
+	if(c == NULL)
+		return NULL;
+	return c->name;
+}
+
 unsigned char *rtsp_get_server_ip(struct rtsp_client *c)
 {
 	if(c == NULL)
@@ -759,7 +822,8 @@ void rtsp_set_user_data(struct rtsp_client *c, void *user_data)
 	c->user_data = user_data;
 }
 
-int rtsp_create_response(struct rtsp_client *c, unsigned int code, const char *value)
+int rtsp_create_response(struct rtsp_client *c, unsigned int code,
+			 const char *value)
 {
 	if(c == NULL)
 		return -1;
@@ -776,7 +840,8 @@ int rtsp_create_response(struct rtsp_client *c, unsigned int code, const char *v
 	return 0;
 }
 
-int rtsp_add_response(struct rtsp_client *c, const char *name, const char *value)
+int rtsp_add_response(struct rtsp_client *c, const char *name,
+		      const char *value)
 {
 	int len;
 	char *p;
@@ -829,25 +894,27 @@ int rtsp_set_packet(struct rtsp_client *c, unsigned char *buffer, size_t len)
 }
 
 /* Authentication part */
-char *rtsp_basic_auth_get_username_password(struct rtsp_client *c, char **password)
+char *rtsp_basic_auth_get_username_password(struct rtsp_client *c,
+					    char **password)
 {
-	char *p;
+	const char *auth;
 	char *decoded;
 	char *username;
+	char *p;
 
 	if(c == NULL)
 		return NULL;
 
 	/* Get value from header */
-	p = rtsp_get_header(c, "Authorization", 0);
-	if(p == NULL)
+	auth = rtsp_get_header(c, "Authorization", 0);
+	if(auth == NULL)
 		return NULL;
 
-	if(strncmp(p, "Basic ", 6) != 0)
+	if(strncmp(auth, "Basic ", 6) != 0)
 		return NULL;
 
 	/* Decode string */
-	decoded = strdup(p+6);
+	decoded = strdup(auth + 6);
 	rtsp_decode_base64(decoded);
 
 	/* Find ':' */
@@ -918,7 +985,7 @@ static char *rtsp_digest_get_sub_value(const char *str, const char *name)
 
 char *rtsp_digest_auth_get_username(struct rtsp_client *c)
 {
-	char *p;
+	const char *p;
 
 	if(c == NULL)
 		return NULL;
@@ -947,10 +1014,11 @@ static void rtsp_bin2hex(const unsigned char *bin, size_t len, char *hex)
 	hex[len * 2] = '\0';
 }
 
-int rtsp_digest_auth_check(struct rtsp_client *c, const char *username, const char *password, const char *realm)
+int rtsp_digest_auth_check(struct rtsp_client *c, const char *username,
+			   const char *password, const char *realm)
 {
 #ifdef HAVE_OPENSSL
-	char *p;
+	const char *p;
 	char *str;
 	size_t len;
 	int result = -1;
@@ -1042,7 +1110,8 @@ end:
 #endif
 }
 
-int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm, const char *opaque, int signal_stale)
+int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm,
+				     const char *opaque, int signal_stale)
 {
 #ifdef HAVE_OPENSSL
 	unsigned char md5[MD5_DIGEST_LENGTH];
@@ -1072,7 +1141,10 @@ int rtsp_create_digest_auth_response(struct rtsp_client *c, const char *realm, c
 	/* Create response */
 	rtsp_create_response(c, 401, "Unauthorized");
 
-	snprintf(buffer, 255, "Digest realm=\"%s\",nonce=\"%s\",opaque=\"%s\"%s", realm, c->nonce, opaque, signal_stale ? ",stale=\"true\"" : "");
+	snprintf(buffer, 255, 
+		 "Digest realm=\"%s\",nonce=\"%s\",opaque=\"%s\"%s",
+		 realm, c->nonce, opaque,
+		 signal_stale ? ",stale=\"true\"" : "");
 	rtsp_add_response(c, "WWW-Authenticate", buffer);
 
 	return 0;
