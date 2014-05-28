@@ -72,6 +72,8 @@ enum {
 };
 
 struct airtunes_stream {
+	/* Stream name */
+	char *name;
 	/* Stream status */
 	unsigned long position;
 	unsigned long duration;
@@ -374,6 +376,9 @@ static void airtunes_free_stream(struct airtunes_stream *s)
 {
 	if(s == NULL)
 		return;
+
+	if(s->name != NULL)
+		free(s->name);
 	if(s->title != NULL)
 		free(s->title);
 	if(s->artist != NULL)
@@ -457,10 +462,11 @@ static int airtunes_close(struct airtunes_handle *h)
 static int airtunes_do_apple_response(struct rtsp_client *c, 
 				      unsigned char *hw_addr, RSA *rsa)
 {
-	char *challenge;
 	unsigned char response_tmp[38];
+	const char *challenge;
 	char *rsa_response;
 	char *response;
+	char *decoded;
 	int pos = 0;
 	int len;
 
@@ -469,11 +475,12 @@ static int airtunes_do_apple_response(struct rtsp_client *c,
 	if(challenge != NULL)
 	{
 		/* Decode base64 string */
-		rtsp_decode_base64(challenge);
-		len = strlen(challenge);
+		decoded = strdup(challenge);
+		rtsp_decode_base64(decoded);
+		len = strlen(decoded);
 
 		/* Make the response */
-		memcpy(response_tmp, challenge, 16);
+		memcpy(response_tmp, decoded, 16);
 		pos += 16;
 		memcpy(response_tmp+pos, rtsp_get_server_ip(c), 4);
 		pos += 4;
@@ -510,6 +517,7 @@ static int airtunes_do_apple_response(struct rtsp_client *c,
 
 		/* Free variables */
 		free(response);
+		free(decoded);
 		free(rsa_response);
 
 		return 0;
@@ -532,7 +540,8 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 	struct raop_attr attr;
 	char buffer[BUFFER_SIZE];
 	char *username;
-	char *str, *p;
+	const char *str;
+	char *p;
 
 	/* Allocate structure to handle session */
 	if(cdata == NULL)
@@ -543,6 +552,9 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 
 		/* Add info stream */
 		cdata->infos = airtunes_add_stream(h);
+		str = rtsp_get_name(c);
+		if(str != NULL)
+			cdata->infos->name = strdup(str);
 	}
 
 	/* Lock mutex */
@@ -685,11 +697,12 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 							  rtsp_get_user_data(c);
 	struct sdp_media *m = NULL;
 	struct sdp *s;
-	char *p;
 	unsigned long start, cur, end;
-	int i;
-	int len;
+	const char *str;
+	char *p;
 	float vol;
+	int len;
+	int i;
 
 	if(cdata == NULL)
 		return 0;
@@ -775,12 +788,12 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 			break;
 		case RTSP_SET_PARAMETER:
 			/* Get Ccontent-type */
-			p = rtsp_get_header(c, "content-type", 0);
-			if(p == NULL)
+			str = rtsp_get_header(c, "content-type", 0);
+			if(str == NULL)
 				break;
 
 			/* Check content-type */
-			if(strcmp(p, "text/parameters") == 0)
+			if(strcmp(str, "text/parameters") == 0)
 			{
 				/* Progression or volume */
 				if(size > 8 &&
@@ -826,7 +839,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 					pthread_mutex_unlock(&h->mutex);
 				}
 			}
-			else if(strcmp(p, "application/x-dmap-tagged") == 0)
+			else if(strcmp(str, "application/x-dmap-tagged") == 0)
 			{
 				/* DMAP metadata */
 			}
@@ -891,6 +904,7 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 			continue;
 
 		/* Add values to it */
+		ADD_STRING(tmp, "name", s->name);
 		ADD_STRING(tmp, "title", s->title);
 		ADD_STRING(tmp, "artist", s->artist);
 		ADD_STRING(tmp, "album", s->album);
