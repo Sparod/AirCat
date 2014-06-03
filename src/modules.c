@@ -70,15 +70,21 @@ struct module_list *modules_load(const char *path)
 			continue;
 		}
 
-		/* Add this module to list */
+		/* Prepare module entry */
 		l = malloc(sizeof(struct module_list));
 		if(l == NULL)
 		{
 			dlclose(lib);
 			continue;
 		}
+		l->id = strdup(mod->name);
+		l->name = NULL;
+		l->description = NULL;
+		l->enabled = 1;
 		l->lib = lib;
 		l->mod = mod;
+
+		/* Add to list */
 		l->next = list;
 		list = l;
 	}
@@ -88,6 +94,8 @@ struct module_list *modules_load(const char *path)
 
 	return list;
 }
+
+#define FREE_STRING(s) if(s != NULL) free(s);
 
 void modules_free(struct module_list *list)
 {
@@ -100,6 +108,13 @@ void modules_free(struct module_list *list)
 
 		/* Close module */
 		dlclose(l->lib);
+
+		/* Free strings */
+		FREE_STRING(l->id);
+		FREE_STRING(l->name);
+		FREE_STRING(l->description);
+
+		/* Free entry */
 		free(l);
 	}
 }

@@ -22,8 +22,15 @@
 #include "module.h"
 
 struct module_list {
+	/* Module properties */
+	char *id;
+	char *name;
+	char *description;
+	int enabled;
+	/* Module pointers */
 	void *lib;
 	struct module *mod;
+	/* Next module in list */
 	struct module_list *next;
 };
 
