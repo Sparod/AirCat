@@ -66,6 +66,7 @@ int file_open(struct file_handle **handle, const char *name)
 	h->dec = NULL;
 	h->demux = NULL;
 	h->demux_data = NULL;
+	h->format = NULL;
 	h->pos = 0;
 	h->pcm_remaining = 0;
 
