@@ -50,8 +50,7 @@ static struct output_handle *output = NULL;
 static struct avahi_handle *avahi = NULL;
 static struct httpd_handle *httpd = NULL;
 static struct config_handle *config = NULL;
-/* Modules */
-static struct module_list *modules = NULL;
+static struct modules_handle *modules = NULL;
 
 /* URLs */
 struct url_table config_urls[];
@@ -60,6 +59,7 @@ struct url_table config_urls[];
 static char *config_file = NULL;	/* Alternative configuration file */
 static int verbose = 0;			/* Verbosity */
 static int stop_signal = 0;		/* Stop signal */
+static int refresh = 0;			/* Refresh signal for modules */
 
 static void print_usage(const char *name)
 {
@@ -97,7 +97,8 @@ static void parse_opt(int argc, char * const argv[])
 		};
 
 		/* Get next option */
-		c = getopt_long (argc, argv, short_options, long_options, &option_index);
+		c = getopt_long(argc, argv, short_options, long_options,
+				&option_index);
 		if(c == EOF)
 			break;
 
@@ -145,8 +146,6 @@ void signal_handler(int signum)
 
 int main(int argc, char* argv[])
 {
-	struct module_list *list;
-	struct module_attr attr;
 	struct timeval timeout;
 	struct json *cfg;
 	fd_set fds;
@@ -165,9 +164,6 @@ int main(int argc, char* argv[])
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
 
-	/* Load module list */
-	modules = modules_load(MODULES_PATH);
-
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
@@ -183,36 +179,17 @@ int main(int argc, char* argv[])
 	/* Free HTTP configuration */
 	json_free(cfg);
 
+	/* Get Modules configuration from file */
+	cfg = config_get_json(config, "modules");
+
+	/* Open Modules */
+	modules_open(&modules, cfg, MODULES_PATH);
+
+	/* Free Modules configuration */
+	json_free(cfg);
+
 	/* Open all modules */
-	attr.avahi = avahi;
-	attr.output = output;
-	for(list = modules; list != NULL; list = list->next)
-	{
-		/* Open module */
-		if(list->mod->open == NULL)
-			continue;
-
-		/* Get module configuration */
-		attr.config = config_get_json(config, list->mod->name);
-
-		/* Open module */
-		if(list->mod->open(&list->mod->handle, &attr) != 0)
-		{
-			fprintf(stderr, "Failed to open %s module!\n",
-				list->mod->name);
-			if(list->mod->close != NULL)
-				list->mod->close(&list->mod->handle);
-			list->mod->handle = NULL;
-		}
-
-		/* Free module configuration */
-		json_free((struct json *) attr.config);
-
-		/* Add URLs to HTTP server */
-		if(list->mod->urls != NULL)
-			httpd_add_urls(httpd, list->mod->name, list->mod->urls,
-				       list->mod->handle);
-	}
+	modules_refresh(modules, httpd, avahi, output);
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
@@ -236,29 +213,23 @@ int main(int argc, char* argv[])
 
 		/* Iterate Avahi client */
 		avahi_loop(avahi, 10);
+
+		/* Refresh modules */
+		if(refresh)
+		{
+			modules_refresh(modules, httpd, avahi, output);
+			refresh = 0;
+		}
 	}
 
 	/* Stop HTTP Server */
 	httpd_stop(httpd);
 
+	/* Close all modules */
+	modules_close(modules);
+
 	/* Close HTTP Server */
 	httpd_close(httpd);
-
-	/* Close all modules */
-	for(list = modules; list != NULL; list = list->next)
-	{
-		/* Save module configuration */
-		if(list->mod->get_config != NULL)
-		{
-			cfg = list->mod->get_config(list->mod->handle);
-			config_set_json(config, list->mod->name, cfg);
-			json_free(cfg);
-		}
-
-		/* Close module */
-		if(list->mod->close != NULL)
-			list->mod->close(list->mod->handle);
-	}
 
 	/* Close Output Module */
 	output_close(output);
@@ -274,9 +245,6 @@ int main(int argc, char* argv[])
 		free(config_file);
 	config_close(config);
 
-	/* Free modules */
-	modules_free(modules);
-
 	return EXIT_SUCCESS;
 }
 
@@ -287,17 +255,14 @@ int main(int argc, char* argv[])
 static int config_httpd_default(void *h, struct httpd_req *req,
 				unsigned char **buffer, size_t *size)
 {
-	struct module_list *list;
-
 	/* Set HTTP server to default */
 	httpd_set_config(httpd, NULL);
 
 	/* Set all modules to default */
-	for(list = modules; list != NULL; list = list->next)
-	{
-		if(list->mod->set_config != NULL)
-			list->mod->set_config(list->mod->handle, NULL);
-	}
+	modules_set_config(modules, NULL, NULL);
+
+	/* Refresh modules */
+	refresh = 1;
 
 	return 200;
 }
@@ -305,7 +270,6 @@ static int config_httpd_default(void *h, struct httpd_req *req,
 static int config_httpd_reload(void *h, struct httpd_req *req,
 			       unsigned char **buffer, size_t *size)
 {
-	struct module_list *list;
 	struct json *cfg;
 
 	/* Load config from file */
@@ -320,19 +284,17 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 	/* Free configuration */
 	json_free(cfg);
 
+	/* Get Modules configuration from file */
+	cfg = config_get_json(config, "modules");
+
 	/* Set configuration of all modules */
-	for(list = modules; list != NULL; list = list->next)
-	{
-		/* Get module configuration from file */
-		cfg = config_get_json(config, list->mod->name);
+	modules_set_config(modules, cfg, NULL);
 
-		/* Set configuration */
-		if(list->mod->set_config != NULL)
-			list->mod->set_config(list->mod->handle, cfg);
+	/* Free configuration */
+	json_free(cfg);
 
-		/* Free module configuration */
-		json_free(cfg);
-	}
+	/* Refresh modules */
+	refresh = 1;
 
 	return 200;
 }
@@ -340,7 +302,6 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 static int config_httpd_save(void *h, struct httpd_req *req,
 			     unsigned char **buffer, size_t *size)
 {
-	struct module_list *list;
 	struct json *cfg = NULL;
 
 	/* Get HTTP configuration from module */
@@ -353,19 +314,13 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 	json_free(cfg);
 
 	/* Get all modules configuration */
-	for(list = modules; list != NULL; list = list->next)
-	{
-		/* Get configuration from module */
-		if(list->mod->get_config != NULL)
-			cfg = list->mod->get_config(list->mod->handle);
+	cfg = modules_get_config(modules, NULL);
 
-		/* Set configuration in file */
-		config_set_json(config, list->mod->name, cfg);
+	/* Set configuration of all modules */
+	config_set_json(config, "modules", cfg);
 
-		/* Free configuration */
-		json_free(cfg);
-		cfg = NULL;
-	}
+	/* Free configuration */
+	json_free(cfg);
 
 	/* Save config to file */
 	config_save(config);
@@ -376,7 +331,6 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 static int config_httpd(void *h, struct httpd_req *req,
 			     unsigned char **buffer, size_t *size)
 {
-	struct module_list *list;
 	struct json *json, *tmp;
 	struct lh_entry *entry;
 	const char *str;
@@ -396,19 +350,14 @@ static int config_httpd(void *h, struct httpd_req *req,
 			json_add(json, "httpd", tmp);
 		}
 
-		/* Get all modules configuration */
-		for(list = modules; list != NULL; list = list->next)
+		/* Get modules configuration */
+		tmp = modules_get_config(modules, req->resource);
+		if(tmp != NULL)
 		{
-			/* Get configuration from module */
-			if(list->mod->get_config != NULL)
-				tmp = list->mod->get_config(list->mod->handle);
-			if(tmp == NULL)
-				continue;
-
 			/* Add object to main JSON object */
 			if(req->resource == NULL || *req->resource == '\0' ||
-			   strcmp(req->resource, list->mod->name) == 0)
-			json_add(json, list->mod->name, tmp);
+			   strcmp(req->resource, "modules") == 0)
+			json_add(json, "modules", tmp);
 		}
 
 		/* Get string */
@@ -424,12 +373,27 @@ static int config_httpd(void *h, struct httpd_req *req,
 		/* Parse each JSON entry */
 		json_foreach(req->json, str, tmp, entry)
 		{
+			/* Set specific module configuration */
+			if(req->resource != NULL &&
+			   strncmp(req->resource, "modules/", 8))
+			{
+				if(strcmp(str, "modules") == 0)
+				{
+					/* Set configuration */
+					modules_set_config(modules, tmp,
+							   req->resource + 8);
+					break;
+				}
+				else
+					continue;
+			}
+
 			/* Check resource name */
 			if(req->resource != NULL && *req->resource != '\0' &&
 			   strcmp(req->resource, str) != 0)
 				continue;
 
-			/* Get HTTP configuration from module */
+			/* Set HTTP configuration */
 			if(strcmp(str, "httpd") == 0)
 			{
 				/* Set configuration */
@@ -437,31 +401,29 @@ static int config_httpd(void *h, struct httpd_req *req,
 				continue;
 			}
 
-			/* Check in modules */
-			for(list = modules; list != NULL; list = list->next)
+			/* Set modules configuration */
+			if(strcmp(str, "modules") == 0)
 			{
-				if(strcmp(str, list->mod->name) == 0)
-				{
-					/* Set configuration */
-					if(list->mod->set_config != NULL)
-						list->mod->set_config(
-							      list->mod->handle,
-							      tmp);
-					continue;
-				}
+				/* Set configuration */
+				modules_set_config(modules, tmp, NULL);
+				continue;
 			}
 		}
+
+		/* Refresh modules */
+		refresh = 1;
+
 	}
 
 	return 200;
 }
 
 struct url_table config_urls[] = {
-	{"default", 0,             HTTPD_PUT,             0,
+	{"/default", 0,             HTTPD_PUT,             0,
 						 (void*) &config_httpd_default},
-	{"reload",  0,             HTTPD_PUT,             0,
+	{"/reload",  0,             HTTPD_PUT,             0,
 						  (void*) &config_httpd_reload},
-	{"save",    0,             HTTPD_PUT,             0,
+	{"/save",    0,             HTTPD_PUT,             0,
 						    (void*) &config_httpd_save},
 	{"",        HTTPD_EXT_URL, HTTPD_GET | HTTPD_PUT, HTTPD_JSON,
 							 (void*) &config_httpd},

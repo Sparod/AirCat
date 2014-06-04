@@ -21,21 +21,25 @@
 
 #include "module.h"
 
-struct module_list {
-	/* Module properties */
-	char *id;
-	char *name;
-	char *description;
-	int enabled;
-	/* Module pointers */
-	void *lib;
-	struct module *mod;
-	/* Next module in list */
-	struct module_list *next;
-};
+struct modules_handle;
 
-struct module_list *modules_load(const char *path);
-void modules_free(struct module_list *list);
+/* Basic functions */
+int modules_open(struct modules_handle **handle, struct json *config,
+		 const char *path);
+void modules_close(struct modules_handle *h);
+
+/* Modules config */
+int modules_set_config(struct modules_handle *h, struct json *cfg,
+		       const char *name);
+struct json *modules_get_config(struct modules_handle *h, const char *name);
+
+/* List modules */
+char **modules_list_modules(struct modules_handle *h, int *count);
+void modules_free_list(char **list, int count);
+
+/* Open or close modules with enabled flag */
+void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd, 
+		     struct avahi_handle *avahi, struct output_handle *output);
 
 #endif
 
