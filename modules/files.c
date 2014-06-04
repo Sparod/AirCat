@@ -25,9 +25,6 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include <json.h>
-#include <json_tokener.h>
-
 #include "module.h"
 #include "utils.h"
 #include "file.h"
@@ -65,7 +62,7 @@ struct files_handle {
 
 static void *files_thread(void *user_data);
 static int files_stop(struct files_handle *h);
-static int files_set_config(struct files_handle *h, const struct config *c);
+static int files_set_config(struct files_handle *h, const struct json *c);
 
 static int files_open(struct files_handle **handle, struct module_attr *attr)
 {
@@ -507,43 +504,35 @@ static int files_seek(struct files_handle *h, unsigned long pos)
 	return ret;
 }
 
-#define ADD_STRING(root, key, value) if(value != NULL) \
-	     json_object_object_add(root, key, json_object_new_string(value)); \
-	else \
-	     json_object_object_add(root, key, NULL);
-
-#define ADD_INT(root, key, value) \
-		  json_object_object_add(root, key, json_object_new_int(value));
-
-static json_object *files_get_file_json_object(const char *filename,
+static struct json *files_get_file_json_object(const char *filename,
 					       struct file_format *meta,
 					       int add_pic)
 {
-	json_object *tmp = NULL;
+	struct json *tmp = NULL;
 	char *pic = NULL;
 
 	if(filename == NULL)
 		return NULL;
 
 	/* Create temporary object */
-	tmp = json_object_new_object();
+	tmp = json_new();
 	if(tmp == NULL)
 		return NULL;
 
 	/* Add filename */
-	json_object_object_add(tmp, "file", json_object_new_string(filename));
+	json_set_string(tmp, "file", filename);
 
 	/* Get tag data */
 	if(meta != NULL)
 	{
 		/* Add all tags */
-		ADD_STRING(tmp, "title", meta->title);
-		ADD_STRING(tmp, "artist", meta->artist);
-		ADD_STRING(tmp, "album", meta->album);
-		ADD_STRING(tmp, "comment", meta->comment);
-		ADD_STRING(tmp, "genre", meta->genre);
-		ADD_INT(tmp, "track", meta->track);
-		ADD_INT(tmp, "year", meta->year);
+		json_set_string(tmp, "title", meta->title);
+		json_set_string(tmp, "artist", meta->artist);
+		json_set_string(tmp, "album", meta->album);
+		json_set_string(tmp, "comment", meta->comment);
+		json_set_string(tmp, "genre", meta->genre);
+		json_set_int(tmp, "track", meta->track);
+		json_set_int(tmp, "year", meta->year);
 
 		/* Get picture */
 		if(add_pic && meta->picture.data != NULL)
@@ -551,8 +540,8 @@ static json_object *files_get_file_json_object(const char *filename,
 					    meta->picture.size);
 
 		/* Add picture to object */
-		ADD_STRING(tmp, "picture", pic);
-		ADD_STRING(tmp, "mime", meta->picture.mime);
+		json_set_string(tmp, "picture", pic);
+		json_set_string(tmp, "mime", meta->picture.mime);
 		if(pic != NULL)
 			free(pic);
 	}
@@ -562,7 +551,7 @@ static json_object *files_get_file_json_object(const char *filename,
 
 static char *files_get_json_status(struct files_handle *h, int add_pic)
 {
-	struct json_object *tmp;
+	struct json *tmp;
 	char *str = NULL;
 	int idx;
 
@@ -584,30 +573,30 @@ static char *files_get_json_status(struct files_handle *h, int add_pic)
 	if(tmp != NULL)
 	{
 		/* Add curent postion and audio file length */
-		ADD_INT(tmp, "pos", file_get_pos(h->file));
-		ADD_INT(tmp, "length", file_get_length(h->file));
+		json_set_int(tmp, "pos", file_get_pos(h->file));
+		json_set_int(tmp, "length", file_get_length(h->file));
 	}
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
 	/* Get JSON string */
-	str = strdup(json_object_to_json_string(tmp));
+	str = strdup(json_export(tmp));
 
 	/* Free JSON object */
-	json_object_put(tmp);
+	json_free(tmp);
 
 	return str;
 }
 
 static char *files_get_json_playlist(struct files_handle *h)
 {
-	struct json_object *root, *tmp;
+	struct json *root, *tmp;
 	char *str;
 	int i;
 
 	/* Create JSON object */
-	root = json_object_new_array();
+	root = json_new_array();
 	if(root == NULL)
 		return NULL;
 
@@ -624,18 +613,18 @@ static char *files_get_json_playlist(struct files_handle *h)
 			continue;
 
 		/* Add to list */
-		if(json_object_array_add(root, tmp) != 0)
-			json_object_put(tmp);
+		if(json_array_add(root, tmp) != 0)
+			json_free(tmp);
 	}
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
 	/* Get JSON string */
-	str = strdup(json_object_to_json_string(root));
+	str = strdup(json_export(root));
 
 	/* Free JSON object */
-	json_object_put(root);
+	json_free(root);
 
 	return str;
 }
@@ -643,7 +632,7 @@ static char *files_get_json_playlist(struct files_handle *h)
 static char *files_get_json_list(struct files_handle *h, const char *path)
 {
 	char *ext[] = { ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav", NULL };
-	struct json_object *root = NULL, *dir_list, *file_list, *tmp;
+	struct json *root = NULL, *dir_list, *file_list, *tmp;
 	struct dirent *entry;
 	struct stat s;
 	DIR *dir;
@@ -672,14 +661,14 @@ static char *files_get_json_list(struct files_handle *h, const char *path)
 		goto end;
 
 	/* Create JSON object */
-	root = json_object_new_object();
-	dir_list = json_object_new_array();
+	root = json_new();
+	dir_list = json_new_array();
 	if(root == NULL || dir_list == NULL)
 		goto end;
-	file_list = json_object_new_array();
+	file_list = json_new_array();
 	if(file_list == NULL)
 	{
-		json_object_put(dir_list);
+		json_free(dir_list);
 		goto end;
 	}
 
@@ -721,9 +710,9 @@ static char *files_get_json_list(struct files_handle *h, const char *path)
 					if(tmp == NULL)
 						continue;
 
-					if(json_object_array_add(file_list, tmp)
+					if(json_array_add(file_list, tmp)
 					   != 0)
-						json_object_put(tmp);
+						json_free(tmp);
 					break;
 				}
 			}
@@ -731,12 +720,12 @@ static char *files_get_json_list(struct files_handle *h, const char *path)
 		else if(s.st_mode & S_IFDIR)
 		{
 			/* Create temporary object */
-			tmp = json_object_new_string(entry->d_name);
+			tmp = json_new_string(entry->d_name);
 			if(tmp == NULL)
 				continue;
 
-			if(json_object_array_add(dir_list, tmp) != 0)
-				json_object_put(tmp);
+			if(json_array_add(dir_list, tmp) != 0)
+				json_free(tmp);
 		}
 
 		/* Free complete filenmae */
@@ -744,15 +733,15 @@ static char *files_get_json_list(struct files_handle *h, const char *path)
 	}
 
 	/* Add both arrays to JSON object */
-	json_object_object_add(root, "directory", dir_list);
-	json_object_object_add(root, "file", file_list);
+	json_add(root, "directory", dir_list);
+	json_add(root, "file", file_list);
 
 	/* Get JSON string */
-	str = strdup(json_object_to_json_string(root));
+	str = strdup(json_export(root));
 
 end:
 	if(root != NULL)
-		json_object_put(root);
+		json_free(root);
 
 	if(real_path != NULL)
 		free(real_path);
@@ -763,7 +752,7 @@ end:
 	return str;
 }
 
-static int files_set_config(struct files_handle *h, const struct config *c)
+static int files_set_config(struct files_handle *h, const struct json *c)
 {
 	const char *path;
 
@@ -779,7 +768,7 @@ static int files_set_config(struct files_handle *h, const struct config *c)
 	if(c != NULL)
 	{
 		/* Get files path */
-		path = config_get_string(c, "path");
+		path = json_get_string(c, "path");
 		if(path != NULL)
 			h->path = strdup(path);
 	}
@@ -791,17 +780,17 @@ static int files_set_config(struct files_handle *h, const struct config *c)
 	return 0;
 }
 
-static struct config *files_get_config(struct files_handle *h)
+static struct json *files_get_config(struct files_handle *h)
 {
-	struct config *c;
+	struct json *c;
 
 	/* Create a new config */
-	c = config_new_config();
+	c = json_new();
 	if(c == NULL)
 		return NULL;
 
 	/* Set current files path */
-	config_set_string(c, "path", h->path);
+	json_set_string(c, "path", h->path);
 
 	return c;
 }

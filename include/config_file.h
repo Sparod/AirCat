@@ -19,34 +19,17 @@
 #ifndef _CONFIG_FILE_H
 #define _CONFIG_FILE_H
 
-#include <json.h>
+#include "json.h"
 
-struct config;
 struct config_handle;
-
-#define config_json_to_config(j) (struct config *) json_object_get(j)
-#define config_to_json(c) json_object_get((json_object *)c)
 
 int config_open(struct config_handle **h, const char *file);
 int config_load(struct config_handle *h);
 int config_save(struct config_handle *h);
 void config_close(struct config_handle *h);
 
-struct config *config_get_config(struct config_handle *h, const char *name);
-int config_set_config(struct config_handle *h, const char *name,
-		      struct config *c);
+struct json *config_get_json(struct config_handle *h, const char *name);
+int config_set_json(struct config_handle *h, const char *name, struct json *j);
 
-struct config *config_new_config();
-void config_free_config(struct config *c);
-
-const char *config_get_string(const struct config *c, const char *name);
-int config_set_string(const struct config *c, const char *name,
-		      const char *value);
-
-int config_get_bool(const struct config *c, const char *name);
-int config_set_bool(const struct config *c, const char *name, int value);
-
-long config_get_int(const struct config *c, const char *name);
-int config_set_int(const struct config *c, const char *name, long value);
 
 #endif

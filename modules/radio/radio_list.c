@@ -21,10 +21,8 @@
 #include <string.h>
 #include <pthread.h>
 
-#include <json.h>
-#include <json_tokener.h>
-
 #include "radio_list.h"
+#include "json.h"
 
 struct radio_chain_list {
 	struct radio_item *radio;
@@ -323,17 +321,16 @@ struct category_item *radio_list_get_category(struct radio_list_handle *h,
  ******************************************************************************/
 
 /* Category list parsing */
-static struct category_item_priv *radio_list_parse_category(
-						       struct json_object *root,
-						       int *count)
+static struct category_item_priv *radio_list_parse_category(struct json *root,
+							    int *count)
 {
-	struct json_object *json_list, *cur;
 	struct category_item_priv *tmp = NULL;
+	struct json *json_list, *cur;
 	const char *name, *id;
 	int i, j = 0;
 
 	/* Get category array from JSON */
-	json_list = json_object_object_get(root, "category");
+	json_list = json_get(root, "category");
 	if(json_list == NULL)
 	{
 		*count = 0;
@@ -341,7 +338,7 @@ static struct category_item_priv *radio_list_parse_category(
 	}
 
 	/* Get number of categories */
-	*count = json_object_array_length(json_list);
+	*count = json_array_length(json_list);
 
 	/* Parse array */
 	if(*count > 0)
@@ -355,16 +352,13 @@ static struct category_item_priv *radio_list_parse_category(
 		for(i = 0, j = 0; i < *count; i++)
 		{
 			/* Get JSON object */
-			cur = json_object_array_get_idx(json_list, i);
+			cur = json_array_get(json_list, i);
 			if(cur == NULL)
 				continue;
 
 			/* Get name and url */
-			id = json_object_get_string(
-					     json_object_object_get(cur, "id"));
-			name = json_object_get_string(
-					   json_object_object_get(cur, "name"));
-			
+			id = json_get_string(cur, "id");
+			name = json_get_string(cur, "name");
 
 			/* Name and url cannot be empty */
 			if(name == NULL || *name == 0 ||
@@ -393,7 +387,7 @@ static struct category_item_priv *radio_list_parse_category(
 int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 {
 	struct category_item_priv *cat_tmp = NULL, *cat_cur = NULL;
-	struct json_object *root, *json_list, *cur, *cat_list;
+	struct json *root, *json_list, *cur, *cat_list;
 	struct radio_chain_list *cat_radio_list;
 	struct radio_item *tmp = NULL;
 	int count = 0, cat_count = 0, cat_list_count = 0;
@@ -401,7 +395,7 @@ int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 	int i, j, k;
 
 	/* Parse JSON string */
-	root = json_tokener_parse(json_str);
+	root = (struct json *) json_tokener_parse(json_str);
 	if(root == NULL)
 		return -1;
 
@@ -409,12 +403,12 @@ int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 	cat_tmp = radio_list_parse_category(root, &cat_count);
 
 	/* Get radio array from JSON */
-	json_list = json_object_object_get(root, "list");
+	json_list = json_get(root, "list");
 	if(json_list == NULL)
 		goto error;
 
 	/* Create a temporary list */
-	count = json_object_array_length(json_list);
+	count = json_array_length(json_list);
 	if(count > 0)
 	{
 		/* Allocate new list */
@@ -426,17 +420,14 @@ int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 		for(i = 0, j = 0; i < count; i++)
 		{
 			/* Get JSON object */
-			cur = json_object_array_get_idx(json_list, i);
+			cur = json_array_get(json_list, i);
 			if(cur == NULL)
 				continue;
 
 			/* Get name and url */
-			id = json_object_get_string(
-					     json_object_object_get(cur, "id"));
-			name = json_object_get_string(
-					   json_object_object_get(cur, "name"));
-			url = json_object_get_string(
-					    json_object_object_get(cur, "url"));
+			id = json_get_string(cur, "id");
+			name = json_get_string(cur, "name");
+			url = json_get_string(cur, "url");
 
 			/* Name and url cannot be empty */
 			if(name == NULL || *name == 0 ||
@@ -450,15 +441,15 @@ int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 			tmp[j].url = strdup(url);
 
 			/* Get category array */
-			cat_list = json_object_object_get(cur, "category");
+			cat_list = json_get(cur, "category");
 			if(cat_list != NULL)
-				cat_list_count = json_object_array_length(cat_list);
+				cat_list_count = json_array_length(cat_list);
 			else
 				cat_list_count = 0;
 			for(k = 0; k < cat_list_count; k++)
 			{
-				cat_str = json_object_get_string(
-					json_object_array_get_idx(cat_list, k));
+				cat_str = json_to_string(
+						   json_array_get(cat_list, k));
 				if(cat_str == NULL)
 					continue;
 
@@ -512,13 +503,13 @@ int radio_list_load_mem(struct radio_list_handle *h, const char *json_str)
 		pthread_mutex_unlock(&h->mutex);
 
 		/* Free JSON object */
-		json_object_put(root);
+		json_free(root);
 
 		return 0;
 	}
 
 error:
-	json_object_put(root);
+	json_free(root);
 	return -1;
 }
 
@@ -570,22 +561,19 @@ int radio_list_load(struct radio_list_handle *h, const char *filename)
  *                   JSON export of radio and category list                   *
  ******************************************************************************/
 
-static struct json_object *radio_list_make_json_category(
+static struct json *radio_list_make_json_category(
 					    struct category_item_priv *category)
 {
-	struct json_object *info, *tmp;
+	struct json *info;
 
 	/* Create JSON object */
-	info = json_object_new_object();
+	info = json_new();
 	if(info == NULL)
 		return NULL;
 
 	/* Add values to it */
-	tmp = json_object_new_string(category->id);
-	json_object_object_add(info, "id", tmp);
-
-	tmp = json_object_new_string(category->name);
-	json_object_object_add(info, "name", tmp);
+	json_set_string(info, "id", category->id);
+	json_set_string(info, "name", category->name);
 
 	return info;
 }
@@ -594,7 +582,7 @@ static struct json_object *radio_list_make_json_category(
 char *radio_list_get_category_json(struct radio_list_handle *h, const char *id)
 {
 	struct category_item_priv *category;
-	struct json_object *info;
+	struct json *info;
 	char *str = NULL;
 
 	/* Lock radio list access */
@@ -612,10 +600,10 @@ char *radio_list_get_category_json(struct radio_list_handle *h, const char *id)
 		goto end;
 
 	/* Get string from JSON object */
-	str = strdup(json_object_to_json_string(info));
+	str = strdup(json_export(info));
 
 	/* Free JSON object */
-	json_object_put(info);
+	json_free(info);
 
 end:
 	/* Unlock radio list access */
@@ -624,24 +612,19 @@ end:
 	return str;
 }
 
-static struct json_object *radio_list_make_json_radio(struct radio_item *radio)
+static struct json *radio_list_make_json_radio(struct radio_item *radio)
 {
-	struct json_object *info, *tmp;
+	struct json *info;
 
 	/* Create JSON object */
-	info = json_object_new_object();
+	info = json_new();
 	if(info == NULL)
 		return NULL;
 
 	/* Add values to it */
-	tmp = json_object_new_string(radio->id);
-	json_object_object_add(info, "id", tmp);
-
-	tmp = json_object_new_string(radio->name);
-	json_object_object_add(info, "name", tmp);
-
-	tmp = json_object_new_string(radio->url);
-	json_object_object_add(info, "url", tmp);
+	json_set_string(info, "id", radio->id);
+	json_set_string(info, "name", radio->name);
+	json_set_string(info, "url", radio->url);
 
 	return info;
 }
@@ -649,7 +632,7 @@ static struct json_object *radio_list_make_json_radio(struct radio_item *radio)
 /* Get radio info */
 char *radio_list_get_radio_json(struct radio_list_handle *h, const char *id)
 {
-	struct json_object *info;
+	struct json *info;
 	char *str = NULL;
 	int idx;
 
@@ -667,10 +650,10 @@ char *radio_list_get_radio_json(struct radio_list_handle *h, const char *id)
 		goto end;
 
 	/* Get string from JSON object */
-	str = strdup(json_object_to_json_string(info));
+	str = strdup(json_export(info));
 
 	/* Free JSON object */
-	json_object_put(info);
+	json_free(info);
 
 end:
 	/* Unlock radio list access */
@@ -684,7 +667,7 @@ static char *radio_list_list_by_category(
 				       unsigned int category_list_count,
 				       struct radio_chain_list *radio_list)
 {
-	struct json_object *root, *list, *tmp;
+	struct json *root, *list, *tmp;
 	char *str = NULL;
 	int i;
 
@@ -692,12 +675,12 @@ static char *radio_list_list_by_category(
 		category_list_count = 0;
 
 	/* Create a new JSON object */
-	root = json_object_new_object();
+	root = json_new();
 	if(root == NULL)
 		return NULL;
 
 	/* Create category array */
-	list = json_object_new_array();
+	list = json_new_array();
 	if(list != NULL)
 	{
 		for(i = 0; i < category_list_count; i++)
@@ -708,16 +691,16 @@ static char *radio_list_list_by_category(
 				continue;
 
 			/* Add object to array */
-			if(json_object_array_add(list, tmp) != 0)
-				json_object_put(tmp);
+			if(json_array_add(list, tmp) != 0)
+				json_free(tmp);
 		}
 
 		/* Add array to JSON object */
-		json_object_object_add(root, "category", list);
+		json_add(root, "category", list);
 	}
 
 	/* Create radio array */
-	list = json_object_new_array();
+	list = json_new_array();
 	if(list != NULL)
 	{
 		for( ; radio_list != NULL; radio_list = radio_list->next)
@@ -728,31 +711,31 @@ static char *radio_list_list_by_category(
 				continue;
 
 			/* Add object to array */
-			if(json_object_array_add(list, tmp) != 0)
-				json_object_put(tmp);
+			if(json_array_add(list, tmp) != 0)
+				json_free(tmp);
 		}
 
 		/* Add array to JSON object */
-		json_object_object_add(root, "radio", list);
+		json_add(root, "radio", list);
 	}
 
 	/* Get string from JSON object */
-	str = strdup(json_object_to_json_string(root));
+	str = strdup(json_export(root));
 
 	/* Free JSON object */
-	json_object_put(root);
+	json_free(root);
 
 	return str;
 }
 
 static char *radio_list_list_all(struct radio_list_handle *h)
 {
-	struct json_object *list, *tmp;
+	struct json *list, *tmp;
 	char *str = NULL;
 	int i;
 
 	/* Create radio array */
-	list = json_object_new_array();
+	list = json_new_array();
 	if(list == NULL)
 		return NULL;
 
@@ -763,15 +746,15 @@ static char *radio_list_list_all(struct radio_list_handle *h)
 		tmp = radio_list_make_json_radio(&h->radio_list[i]);
 
 		/* Add object to array */
-		if(json_object_array_add(list, tmp) != 0)
-			json_object_put(tmp);
+		if(json_array_add(list, tmp) != 0)
+			json_free(tmp);
 	}
 
 	/* Get string from JSON object */
-	str = strdup(json_object_to_json_string(list));
+	str = strdup(json_export(list));
 
 	/* Free JSON object */
-	json_object_put(list);
+	json_free(list);
 
 	return str;
 }

@@ -20,8 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <json.h>
-
 #include "module.h"
 #include "shoutcast.h"
 #include "radio_list.h"
@@ -40,7 +38,7 @@ struct radio_handle {
 };
 
 static int radio_stop(struct radio_handle *h);
-static int radio_set_config(struct radio_handle *h, const struct config *c);
+static int radio_set_config(struct radio_handle *h, const struct json *c);
 
 static int radio_open(struct radio_handle **handle, struct module_attr *attr)
 {
@@ -123,14 +121,9 @@ static int radio_stop(struct radio_handle *h)
 	return 0;
 }
 
-#define ADD_STRING(root, key, value) if(value != NULL) \
-	     json_object_object_add(root, key, json_object_new_string(value)); \
-	else \
-	     json_object_object_add(root, key, NULL);
-
 static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 {
-	struct json_object *root;
+	struct json *root;
 	char *artist = NULL;
 	char *title = NULL;
 	char *str = NULL;
@@ -142,13 +135,13 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	}
 
 	/* Create JSON object */
-	root = json_object_new_object();
+	root = json_new();
 	if(root == NULL)
 		return NULL;
 
 	/* Add radio infos */
-	ADD_STRING(root, "id", h->radio->id);
-	ADD_STRING(root, "name", h->radio->name);
+	json_set_string(root, "id", h->radio->id);
+	json_set_string(root, "name", h->radio->name);
 
 	/* Add current title */
 	if(h->shout != NULL)
@@ -184,8 +177,8 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 		}
 
 		/* Add title and artist */
-		ADD_STRING(root, "title", title);
-		ADD_STRING(root, "artist", artist);
+		json_set_string(root, "title", title);
+		json_set_string(root, "artist", artist);
 
 		/* Free string */
 		if(str != NULL)
@@ -193,10 +186,10 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	}
 
 	/* Get JSON string */
-	str = strdup(json_object_to_json_string(root));
+	str = strdup(json_export(root));
 
 	/* Free JSON object */
-	json_object_put(root);
+	json_free(root);
 
 	return str;
 }
@@ -217,7 +210,7 @@ static char *radio_get_json_list(struct radio_handle *h, const char *id)
 	return radio_list_get_list_json(h->list, id);
 }
 
-static int radio_set_config(struct radio_handle *h, const struct config *c)
+static int radio_set_config(struct radio_handle *h, const struct json *c)
 {
 	const char *file;
 
@@ -233,7 +226,7 @@ static int radio_set_config(struct radio_handle *h, const struct config *c)
 	if(c != NULL)
 	{
 		/* Get radio list file */
-		file = config_get_string(c, "list_file");
+		file = json_get_string(c, "list_file");
 		if(file != NULL)
 			h->list_file = strdup(file);
 	}
@@ -245,16 +238,16 @@ static int radio_set_config(struct radio_handle *h, const struct config *c)
 	return 0;
 }
 
-static struct config *radio_get_config(struct radio_handle *h)
+static struct json *radio_get_config(struct radio_handle *h)
 {
-	struct config *c;
+	struct json *c;
 
-	c = config_new_config();
+	c = json_new();
 	if(c == NULL)
 		return NULL;
 
 	/* Set current radio list file */
-	config_set_string(c, "list_file", h->list_file);
+	json_set_string(c, "list_file", h->list_file);
 
 	return c;
 }

@@ -141,8 +141,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  size_t size, int end_of_stream,
 				  void *user_data);
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data);
-static int airtunes_set_config(struct airtunes_handle *h,
-			       const struct config *c);
+static int airtunes_set_config(struct airtunes_handle *h, const struct json *c);
 static int airtunes_start(struct airtunes_handle *h);
 
 static int airtunes_open(struct airtunes_handle **handle,
@@ -284,8 +283,7 @@ static int airtunes_stop(struct airtunes_handle *h)
 	return 0;
 }
 
-static int airtunes_set_config(struct airtunes_handle *h,
-			       const struct config *c)
+static int airtunes_set_config(struct airtunes_handle *h, const struct json *c)
 {
 	const char *name;
 	const char *password;
@@ -308,10 +306,10 @@ static int airtunes_set_config(struct airtunes_handle *h,
 	if(c != NULL)
 	{
 		/* Get name and password */
-		name = config_get_string(c, "name");
+		name = json_get_string(c, "name");
 		if(name != NULL)
 			h->name = strdup(name);
-		password = config_get_string(c, "password");
+		password = json_get_string(c, "password");
 		if(password != NULL)
 			h->password = strdup(password);
 	}
@@ -326,11 +324,11 @@ static int airtunes_set_config(struct airtunes_handle *h,
 	return 0;
 }
 
-static struct config *airtunes_get_config(struct airtunes_handle *h)
+static struct json *airtunes_get_config(struct airtunes_handle *h)
 {
-	struct config *c;
+	struct json *c;
 
-	c = config_new_config();
+	c = json_new();
 	if(c == NULL)
 		return NULL;
 
@@ -338,8 +336,8 @@ static struct config *airtunes_get_config(struct airtunes_handle *h)
 	pthread_mutex_lock(&h->mutex);
 
 	/* Set name and password */
-	config_set_string(c, "name", h->name);
-	config_set_string(c, "password", h->password);
+	json_set_string(c, "name", h->name);
+	json_set_string(c, "password", h->password);
 
 	/* Unlock mutex */
 	pthread_mutex_unlock(&h->mutex);

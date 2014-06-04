@@ -19,7 +19,7 @@
 #ifndef _HTTP_SERVER_H
 #define _HTTP_SERVER_H
 
-#include <json.h>
+#include "json.h"
 
 /* HTTP return code */
 #define HTTPD_OK 200
@@ -55,7 +55,7 @@ struct httpd_req {
 	const char *resource;
 	int method;
 	/* Uploaded data */
-	json_object *json;
+	struct json *json;
 	unsigned char *data;
 	size_t len;
 };
@@ -70,11 +70,11 @@ struct url_table {
 
 struct httpd_handle;
 
-int httpd_open(struct httpd_handle **handle, struct config *config);
+int httpd_open(struct httpd_handle **handle, struct json *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
-int httpd_set_config(struct httpd_handle *h, struct config *c);
-struct config *httpd_get_config(struct httpd_handle *h);
+int httpd_set_config(struct httpd_handle *h, struct json *c);
+struct json *httpd_get_config(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);
 
 int httpd_add_urls(struct httpd_handle *h, const char *name,

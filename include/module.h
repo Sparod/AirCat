@@ -19,17 +19,15 @@
 #ifndef _MODULE_H
 #define _MODULE_H
 
-#include <json.h>
-
-#include "config_file.h"
 #include "output.h"
 #include "avahi.h"
 #include "httpd.h"
+#include "json.h"
 
 struct module_attr {
 	struct output_handle *output;
 	struct avahi_handle *avahi;
-	const struct config *config;
+	const struct json *config;
 };
 
 struct module {
@@ -41,8 +39,8 @@ struct module {
 	int (*open)(void **, struct module_attr *);
 	int (*close)(void *);
 	/* Configuration functions */
-	int (*set_config)(void *, const struct config *);
-	struct config *(*get_config)(void *);
+	int (*set_config)(void *, const struct json *);
+	struct json *(*get_config)(void *);
 	/* URL table */
 	struct url_table *urls;
 };

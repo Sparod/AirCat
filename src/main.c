@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
 	struct module_list *list;
 	struct module_attr attr;
 	struct timeval timeout;
-	struct config *cfg;
+	struct json *cfg;
 	fd_set fds;
 
 	/* Parse options */
@@ -175,14 +175,13 @@ int main(int argc, char* argv[])
 	output_open(&output, OUTPUT_ALSA, 44100, 2);
 
 	/* Get HTTP configuration from file */
-	cfg = config_get_config(config, "httpd");
+	cfg = config_get_json(config, "httpd");
 
 	/* Open HTTP Server */
 	httpd_open(&httpd, cfg);
 
 	/* Free HTTP configuration */
-	if(cfg != NULL)
-		config_free_config(cfg);
+	json_free(cfg);
 
 	/* Open all modules */
 	attr.avahi = avahi;
@@ -194,7 +193,7 @@ int main(int argc, char* argv[])
 			continue;
 
 		/* Get module configuration */
-		attr.config = config_get_config(config, list->mod->name);
+		attr.config = config_get_json(config, list->mod->name);
 
 		/* Open module */
 		if(list->mod->open(&list->mod->handle, &attr) != 0)
@@ -207,8 +206,7 @@ int main(int argc, char* argv[])
 		}
 
 		/* Free module configuration */
-		if(attr.config != NULL)
-			config_free_config((struct config *)attr.config);
+		json_free((struct json *) attr.config);
 
 		/* Add URLs to HTTP server */
 		if(list->mod->urls != NULL)
@@ -253,8 +251,8 @@ int main(int argc, char* argv[])
 		if(list->mod->get_config != NULL)
 		{
 			cfg = list->mod->get_config(list->mod->handle);
-			config_set_config(config, list->mod->name, cfg);
-			config_free_config(cfg);
+			config_set_json(config, list->mod->name, cfg);
+			json_free(cfg);
 		}
 
 		/* Close module */
@@ -308,34 +306,32 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 			       unsigned char **buffer, size_t *size)
 {
 	struct module_list *list;
-	struct config *cfg;
+	struct json *cfg;
 
 	/* Load config from file */
 	config_load(config);
 
 	/* Get HTTP configuration from file */
-	cfg = config_get_config(config, "httpd");
+	cfg = config_get_json(config, "httpd");
 
 	/* Set HTTP server configuration */
 	httpd_set_config(httpd, cfg);
 
 	/* Free configuration */
-	if(cfg != NULL)
-		config_free_config(cfg);
+	json_free(cfg);
 
 	/* Set configuration of all modules */
 	for(list = modules; list != NULL; list = list->next)
 	{
 		/* Get module configuration from file */
-		cfg = config_get_config(config, list->mod->name);
+		cfg = config_get_json(config, list->mod->name);
 
 		/* Set configuration */
 		if(list->mod->set_config != NULL)
 			list->mod->set_config(list->mod->handle, cfg);
 
 		/* Free module configuration */
-		if(cfg != NULL)
-			config_free_config(cfg);
+		json_free(cfg);
 	}
 
 	return 200;
@@ -344,18 +340,17 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 static int config_httpd_save(void *h, struct httpd_req *req,
 			     unsigned char **buffer, size_t *size)
 {
-	struct config *cfg = NULL;
 	struct module_list *list;
+	struct json *cfg = NULL;
 
 	/* Get HTTP configuration from module */
 	cfg = httpd_get_config(httpd);
 
 	/* Set HTTP configuration in file */
-	config_set_config(config, "httpd", cfg);
+	config_set_json(config, "httpd", cfg);
 
 	/* Free configuration */
-	if(cfg != NULL)
-		config_free_config(cfg);
+	json_free(cfg);
 
 	/* Get all modules configuration */
 	for(list = modules; list != NULL; list = list->next)
@@ -365,11 +360,10 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 			cfg = list->mod->get_config(list->mod->handle);
 
 		/* Set configuration in file */
-		config_set_config(config, list->mod->name, cfg);
+		config_set_json(config, list->mod->name, cfg);
 
 		/* Free configuration */
-		if(cfg != NULL)
-			config_free_config(cfg);
+		json_free(cfg);
 		cfg = NULL;
 	}
 
@@ -382,31 +376,24 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 static int config_httpd(void *h, struct httpd_req *req,
 			     unsigned char **buffer, size_t *size)
 {
-	struct config *cfg = NULL;
 	struct module_list *list;
-	json_object *json, *tmp;
+	struct json *json, *tmp;
 	struct lh_entry *entry;
-	char *str;
+	const char *str;
 
 	if(req->method == HTTPD_GET)
 	{
 		/* Create a JSON object */
-		json = json_object_new_object();
+		json = json_new();
 
 		/* Get HTTP configuration from module */
-		cfg = httpd_get_config(httpd);
-		if(cfg != NULL)
+		tmp = httpd_get_config(httpd);
+		if(tmp != NULL)
 		{
-			/* Get JSON object */
-			tmp = config_to_json(cfg);
-
 			/* Add object to main JSON object */
 			if(req->resource == NULL || *req->resource == '\0' ||
 			   strcmp(req->resource, "httpd") == 0)
-			json_object_object_add(json, "httpd", tmp);
-
-			/* Free configuration */
-			config_free_config(cfg);
+			json_add(json, "httpd", tmp);
 		}
 
 		/* Get all modules configuration */
@@ -414,42 +401,29 @@ static int config_httpd(void *h, struct httpd_req *req,
 		{
 			/* Get configuration from module */
 			if(list->mod->get_config != NULL)
-				cfg = list->mod->get_config(list->mod->handle);
-			if(cfg == NULL)
+				tmp = list->mod->get_config(list->mod->handle);
+			if(tmp == NULL)
 				continue;
-
-			/* Get JSON object */
-			tmp = config_to_json(cfg);
 
 			/* Add object to main JSON object */
 			if(req->resource == NULL || *req->resource == '\0' ||
 			   strcmp(req->resource, list->mod->name) == 0)
-			json_object_object_add(json, list->mod->name, tmp);
-
-			/* Free configuration */
-			config_free_config(cfg);
-			cfg = NULL;
+			json_add(json, list->mod->name, tmp);
 		}
 
 		/* Get string */
-		str = strdup(json_object_to_json_string(json));
+		str = strdup(json_export(json));
 		*buffer = (unsigned char*) str;
 		*size = strlen(str);
 
 		/* Free configuration */
-		json_object_put(json);
+		json_free(json);
 	}
 	else
 	{
 		/* Parse each JSON entry */
-		entry = json_object_get_object(req->json)->head;
-		while(entry)
+		json_foreach(req->json, str, tmp, entry)
 		{
-			/* Get JSON object and key */
-			str = (char*) entry->k;
-			tmp = (struct json_object*) entry->v;
-			entry = entry->next;
-
 			/* Check resource name */
 			if(req->resource != NULL && *req->resource != '\0' &&
 			   strcmp(req->resource, str) != 0)
@@ -458,14 +432,8 @@ static int config_httpd(void *h, struct httpd_req *req,
 			/* Get HTTP configuration from module */
 			if(strcmp(str, "httpd") == 0)
 			{
-				/* Get coniguration */
-				cfg = config_json_to_config(tmp);
-
 				/* Set configuration */
-				httpd_set_config(httpd, cfg);
-
-				/* Free configuration */
-				config_free_config(cfg);
+				httpd_set_config(httpd, tmp);
 				continue;
 			}
 
@@ -474,17 +442,11 @@ static int config_httpd(void *h, struct httpd_req *req,
 			{
 				if(strcmp(str, list->mod->name) == 0)
 				{
-					/* Get coniguration */
-					cfg = config_json_to_config(tmp);
-
 					/* Set configuration */
 					if(list->mod->set_config != NULL)
 						list->mod->set_config(
 							      list->mod->handle,
-							      cfg);
-
-					/* Free configuration */
-					config_free_config(cfg);
+							      tmp);
 					continue;
 				}
 			}

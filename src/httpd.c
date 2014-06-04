@@ -97,7 +97,7 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
 
-int httpd_open(struct httpd_handle **handle, struct config *config)
+int httpd_open(struct httpd_handle **handle, struct json *config)
 {
 	struct httpd_handle *h;
 
@@ -178,7 +178,7 @@ static int httpd_strcmp(const char *str1, const char *str2, int strict_cmp)
 	return 0;
 }
 
-int httpd_set_config(struct httpd_handle *h, struct config *cfg)
+int httpd_set_config(struct httpd_handle *h, struct json *cfg)
 {
 	const char *str;
 
@@ -201,16 +201,16 @@ int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 	if(cfg != NULL)
 	{
 		/* Get values from configuration */
-		str = config_get_string(cfg, "name");
+		str = json_get_string(cfg, "name");
 		if(str != NULL)
 			h->name = strdup(str);
-		str = config_get_string(cfg, "web_path");
+		str = json_get_string(cfg, "web_path");
 		if(str != NULL)
 			h->path = strdup(str);
-		str = config_get_string(cfg, "password");
+		str = json_get_string(cfg, "password");
 		if(str != NULL && *str != '\0')
 			h->password = strdup(str);
-		h->port = config_get_int(cfg, "port");
+		h->port = json_get_int(cfg, "port");
 	}
 
 	/* Set default values */
@@ -224,22 +224,22 @@ int httpd_set_config(struct httpd_handle *h, struct config *cfg)
 	return 0;
 }
 
-struct config *httpd_get_config(struct httpd_handle *h)
+struct json *httpd_get_config(struct httpd_handle *h)
 {
-	struct config *c;
+	struct json *j;
 
 	/* Create a new configuration */
-	c = config_new_config();
-	if(c == NULL)
+	j = json_new();
+	if(j == NULL)
 		return NULL;
 
 	/* Set current parameters */
-	config_set_string(c, "name", h->name);
-	config_set_string(c, "web_path", h->path);
-	config_set_string(c, "password", h->password);
-	config_set_int(c, "port", h->port);
+	json_set_string(j, "name", h->name);
+	json_set_string(j, "web_path", h->path);
+	json_set_string(j, "password", h->password);
+	json_set_int(j, "port", h->port);
 
-	return c;
+	return j;
 }
 
 int httpd_add_urls(struct httpd_handle *h, const char *name,
@@ -602,7 +602,7 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 
 struct json_data {
 	struct json_tokener *tokener;
-	struct json_object *object;
+	struct json *object;
 };
 
 static void httpd_free_json(struct json_data *json)
@@ -612,7 +612,7 @@ static void httpd_free_json(struct json_data *json)
 		if(json->tokener != NULL)
 			json_tokener_free(json->tokener);
 		if(json->object != NULL)
-			json_object_put(json->object);
+			json_free(json->object);
 		free(json);
 	}
 }
@@ -656,8 +656,9 @@ static int httpd_parse_json(struct request_data **data, const char *buffer,
 	if(*len != 0)
 	{
 		/* Append buffer and parse it */
-		json->object = json_tokener_parse_ex(json->tokener, buffer,
-						     *len);
+		json->object = (struct json *) json_tokener_parse_ex(
+							  json->tokener, buffer,
+							  *len);
 		*len = 0;
 
 		/* Continue */

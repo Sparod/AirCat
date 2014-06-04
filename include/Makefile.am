@@ -13,5 +13,6 @@ EXTRA_DIST = config_file.h \
 	     rtp.h \
 	     sdp.h \
 	     utils.h \
-	     module.h
+	     module.h \
+	     json.h
 
