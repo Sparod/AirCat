@@ -31,7 +31,8 @@ struct json;
 
 /* JSON object */
 #define json_new() (struct json *) json_object_new_object()
-#define json_copy(j) (struct json *) json_object_get((struct json_object *) j)
+#define json_copy(j) (struct json *) (j != NULL ? \
+			       json_object_get((struct json_object *) j) : NULL)
 #define json_free(j) if(j != NULL) json_object_put((struct json_object *) j)
 
 /* JSON object to string */
@@ -42,8 +43,8 @@ struct json;
 /* JSON object */
 #define json_add(j, k, v) json_object_object_add((struct json_object *) j, k, \
 						 (struct json_object *) v)
-#define json_get(j, k) (struct json *) json_object_object_get( \
-						    (struct json_object *) j, k)
+#define json_get(j, k) (struct json *) (j != NULL ? \
+		     json_object_object_get((struct json_object *) j, k) : NULL)
 #define json_get_ex(j, k, v) (int) json_object_object_get_ex( \
 						  (struct json_object *) j, k, \
 						  (struct json_object **) v)
