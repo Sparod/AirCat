@@ -39,6 +39,7 @@ struct module_list {
 	int opened;
 	/* Module pointers */
 	void *lib;
+	void *handle;
 	struct module *mod;
 	/* Next module in list */
 	struct module_list *next;
@@ -119,6 +120,7 @@ int modules_open(struct modules_handle **handle, struct json *config,
 		l->opened = 0;
 		l->lib = lib;
 		l->mod = mod;
+		l->handle = NULL;
 
 		/* Add to list */
 		l->next = h->list;
@@ -163,9 +165,9 @@ int modules_set_config(struct modules_handle *h, struct json *cfg,
 
 		/* Update module configuration */
 		if(l->enabled != 0 && l->opened != 0 &&
-		   l->mod->set_config != NULL && l->mod->handle != NULL)
+		   l->mod->set_config != NULL && l->handle != NULL)
 		{
-			l->mod->set_config(l->mod->handle, c);
+			l->mod->set_config(l->handle, c);
 		}
 	}
 
@@ -188,10 +190,10 @@ struct json *modules_get_config(struct modules_handle *h, const char *name)
 		/* Get configuration */
 		cfg = NULL;
 		if(l->enabled != 0 && l->opened != 0 &&
-		   l->mod->get_config != NULL && l->mod->handle != NULL)
+		   l->mod->get_config != NULL && l->handle != NULL)
 		{
 			/* Get configuration */
-			cfg = l->mod->get_config(l->mod->handle);
+			cfg = l->mod->get_config(l->handle);
 		}
 		if(cfg == NULL)
 			cfg = json_new();
@@ -265,16 +267,16 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			httpd_remove_urls(httpd, l->id);
 
 			/* Get module config */
-			if(l->mod->get_config != NULL && l->mod->handle != NULL)
+			if(l->mod->get_config != NULL && l->handle != NULL)
 			{
-				cfg = l->mod->get_config(l->mod->handle);
+				cfg = l->mod->get_config(l->handle);
 				json_add(h->configs, l->id, cfg);
 			}
 
 			/*Close the module */
-			if(l->mod->close != NULL && l->mod->handle != NULL)
-				l->mod->close(l->mod->handle);
-			l->mod->handle = NULL;
+			if(l->mod->close != NULL && l->handle != NULL)
+				l->mod->close(l->handle);
+			l->handle = NULL;
 
 			l->opened = 0;
 		}
@@ -291,15 +293,15 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			/* Open module */
 			if(l->mod->open != NULL)
 			{
-				ret = l->mod->open(&l->mod->handle, &attr);
+				ret = l->mod->open(&l->handle, &attr);
 				if(ret != 0)
 				{
 					fprintf(stderr,
 						"Failed to open %s module!\n",
 						l->id);
 					if(l->mod->close != NULL)
-						l->mod->close(l->mod->handle);
-					l->mod->handle = NULL;
+						l->mod->close(l->handle);
+					l->handle = NULL;
 					continue;
 				}
 			}
@@ -307,7 +309,7 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			/* Add module URLs to HTTP server */
 			if(l->mod->urls != NULL)
 				httpd_add_urls(httpd, l->id, l->mod->urls,
-					       l->mod->handle);
+					       l->handle);
 
 			l->opened = 1;
 		}
@@ -328,8 +330,8 @@ void modules_close(struct modules_handle *h)
 		h->list = l->next;
 
 		/*Close the module */
-		if(l->mod->close != NULL && l->mod->handle != NULL)
-			l->mod->close(l->mod->handle);
+		if(l->mod->close != NULL && l->handle != NULL)
+			l->mod->close(l->handle);
 
 		/* Remove module */
 		dlclose(l->lib);

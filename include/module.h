@@ -33,8 +33,6 @@ struct module_attr {
 struct module {
 	/* Module name */
 	char *name;
-	/* Module handle */
-	void *handle;
 	/* Module functions */
 	int (*open)(void **, struct module_attr *);
 	int (*close)(void *);
