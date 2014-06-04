@@ -84,10 +84,10 @@ struct json;
 #define json_set_double(j, k, v) json_add(j, k, json_new_double(v))
 
 /* JSON string */
-#define json_new_string(v) (struct json *) v != NULL ? \
-					        json_object_new_string(v) : NULL
-#define json_new_string_len(v, l) (struct json *) json_object_new_string_len( \
-									   v, l)
+#define json_new_string(v) (struct json *) (v != NULL ? \
+					       json_object_new_string(v) : NULL)
+#define json_new_string_len(v, l) (struct json *) (v != NULL ? \
+					json_object_new_string_len(v, l) : NULL)
 #define json_to_string(j) json_object_get_string((struct json_object *) j)
 #define json_to_string_len(j) json_object_get_string_len( \
 						       (struct json_object *) j)
