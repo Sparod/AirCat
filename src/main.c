@@ -367,7 +367,7 @@ static int config_httpd(void *h, struct httpd_req *req,
 		{
 			/* Set specific module configuration */
 			if(req->resource != NULL &&
-			   strncmp(req->resource, "modules/", 8))
+			   strncmp(req->resource, "modules/", 8) == 0)
 			{
 				if(strcmp(str, "modules") == 0)
 				{
