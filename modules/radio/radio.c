@@ -383,7 +383,9 @@ static struct url_table radio_url[] = {
 };
 
 struct module module_entry = {
-	.name = "radio",
+	.id = "radio",
+	.name = "Radio",
+	.description = "Listen any radio over the world.",
 	.open = (void*) &radio_open,
 	.close = (void*) &radio_close,
 	.set_config = (void*) &radio_set_config,

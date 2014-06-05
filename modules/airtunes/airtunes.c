@@ -953,7 +953,10 @@ static struct url_table airtunes_url[] = {
 };
 
 struct module module_entry = {
-	.name = "raop",
+	.id = "raop",
+	.name = "Airtunes",
+	.description = "Airtunes / Airplay module for Audio streaming over "
+		       "network.",
 	.open = (void*) &airtunes_open,
 	.close = (void*) &airtunes_close,
 	.set_config = (void*) &airtunes_set_config,

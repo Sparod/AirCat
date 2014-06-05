@@ -116,9 +116,9 @@ int modules_open(struct modules_handle **handle, struct json *config,
 			dlclose(lib);
 			continue;
 		}
-		l->id = strdup(mod->name);
-		l->name = NULL;
-		l->description = NULL;
+		l->id = strdup(mod->id);
+		l->name = strdup(mod->name);
+		l->description = strdup(mod->description);
 		l->enabled = 1;
 		l->opened = 0;
 		l->lib = lib;

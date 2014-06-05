@@ -1068,7 +1068,10 @@ static struct url_table files_url[] = {
 };
 
 struct module module_entry = {
-	.name = "files",
+	.id = "files",
+	.name = "File browser",
+	.description = "Browse through local and remote folder and play any "
+		       "music file.",
 	.open = (void*) &files_open,
 	.close = (void*) &files_close,
 	.set_config = (void*) &files_set_config,

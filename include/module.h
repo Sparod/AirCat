@@ -32,7 +32,9 @@ struct module_attr {
 
 struct module {
 	/* Module name */
-	char *name;
+	const char *id;
+	const char *name;
+	const char *description;
 	/* Module functions */
 	int (*open)(void **, struct module_attr *);
 	int (*close)(void *);
