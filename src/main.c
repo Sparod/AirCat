@@ -59,7 +59,6 @@ struct url_table config_urls[];
 static char *config_file = NULL;	/* Alternative configuration file */
 static int verbose = 0;			/* Verbosity */
 static int stop_signal = 0;		/* Stop signal */
-static int refresh = 0;			/* Refresh signal for modules */
 
 static void print_usage(const char *name)
 {
@@ -193,6 +192,7 @@ int main(int argc, char* argv[])
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
+	httpd_add_urls(httpd, "modules", modules_urls, modules);
 
 	/* Start HTTP Server */
 	httpd_start(httpd);
@@ -202,8 +202,8 @@ int main(int argc, char* argv[])
 	{
 		FD_ZERO(&fds);
 		FD_SET(0, &fds); 
-		timeout.tv_sec = 1;
-		timeout.tv_usec = 0;
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 100000;
 
 		if(select(1, &fds, NULL, NULL, &timeout) < 0)
 			break;
@@ -212,14 +212,10 @@ int main(int argc, char* argv[])
 			break;
 
 		/* Iterate Avahi client */
-		avahi_loop(avahi, 10);
+		avahi_loop(avahi, 100);
 
 		/* Refresh modules */
-		if(refresh)
-		{
-			modules_refresh(modules, httpd, avahi, output);
-			refresh = 0;
-		}
+		modules_refresh(modules, httpd, avahi, output);
 	}
 
 	/* Stop HTTP Server */
@@ -261,9 +257,6 @@ static int config_httpd_default(void *h, struct httpd_req *req,
 	/* Set all modules to default */
 	modules_set_config(modules, NULL, NULL);
 
-	/* Refresh modules */
-	refresh = 1;
-
 	return 200;
 }
 
@@ -292,9 +285,6 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 
 	/* Free configuration */
 	json_free(cfg);
-
-	/* Refresh modules */
-	refresh = 1;
 
 	return 200;
 }
@@ -341,23 +331,25 @@ static int config_httpd(void *h, struct httpd_req *req,
 		json = json_new();
 
 		/* Get HTTP configuration from module */
-		tmp = httpd_get_config(httpd);
-		if(tmp != NULL)
+		if(req->resource == NULL || *req->resource == '\0' ||
+		   strcmp(req->resource, "httpd") == 0)
 		{
-			/* Add object to main JSON object */
-			if(req->resource == NULL || *req->resource == '\0' ||
-			   strcmp(req->resource, "httpd") == 0)
-			json_add(json, "httpd", tmp);
+			tmp = httpd_get_config(httpd);
+			if(tmp != NULL)
+				json_add(json, "httpd", tmp);
 		}
 
 		/* Get modules configuration */
-		tmp = modules_get_config(modules, req->resource);
-		if(tmp != NULL)
+		if(req->resource == NULL || *req->resource == '\0' ||
+		   strncmp(req->resource, "modules", 7) == 0)
 		{
-			/* Add object to main JSON object */
-			if(req->resource == NULL || *req->resource == '\0' ||
-			   strcmp(req->resource, "modules") == 0)
-			json_add(json, "modules", tmp);
+			tmp = modules_get_config(modules,
+						 req->resource != NULL &&
+						 req->resource[0] != '\0' &&
+						 req->resource[7] == '/' ?
+						 req->resource + 8 : NULL);
+			if(tmp != NULL)
+				json_add(json, "modules", tmp);
 		}
 
 		/* Get string */
@@ -409,10 +401,6 @@ static int config_httpd(void *h, struct httpd_req *req,
 				continue;
 			}
 		}
-
-		/* Refresh modules */
-		refresh = 1;
-
 	}
 
 	return 200;

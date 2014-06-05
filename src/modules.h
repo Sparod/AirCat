@@ -22,6 +22,7 @@
 #include "module.h"
 
 struct modules_handle;
+struct url_table modules_urls[];
 
 /* Basic functions */
 int modules_open(struct modules_handle **handle, struct json *config,

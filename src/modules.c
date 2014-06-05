@@ -25,6 +25,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include <string.h>
+#include <pthread.h>
 
 #include "modules.h"
 
@@ -49,6 +50,8 @@ struct modules_handle {
 	int module_count;
 	struct module_list *list;
 	struct json *configs;
+	/* Thread safe */
+	pthread_mutex_t mutex;
 };
 
 int modules_open(struct modules_handle **handle, struct json *config,
@@ -131,6 +134,9 @@ int modules_open(struct modules_handle **handle, struct json *config,
 	/* Close directory */
 	closedir(dir);
 
+	/* Init thread mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
 	/* Set configuration */
 	modules_set_config(h, config, NULL);
 
@@ -142,6 +148,9 @@ int modules_set_config(struct modules_handle *h, struct json *cfg,
 {
 	struct module_list *l;
 	struct json *c;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
 
 	/* Free last JSON module configs */
 	json_free(h->configs);
@@ -156,6 +165,10 @@ int modules_set_config(struct modules_handle *h, struct json *cfg,
 	/* Update modules configuration */
 	for(l = h->list; l != NULL; l = l->next)
 	{
+		/* Check if name requested */
+		if(name != NULL && *name != '\0' && strcmp(name, l->id) != 0)
+			continue;
+
 		/* Get JSON */
 		c = json_get(h->configs, l->id);
 
@@ -171,6 +184,9 @@ int modules_set_config(struct modules_handle *h, struct json *cfg,
 		}
 	}
 
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
+
 	return 0;
 }
 
@@ -183,6 +199,9 @@ struct json *modules_get_config(struct modules_handle *h, const char *name)
 	c = json_new();
 	if(c == NULL)
 		return NULL;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
 
 	/* Get modules configuration */
 	for(l = h->list; l != NULL; l = l->next)
@@ -206,7 +225,17 @@ struct json *modules_get_config(struct modules_handle *h, const char *name)
 	}
 
 	/* Modules config */
-	json_add(c, "configs", json_copy(h->configs));
+	if(name != NULL && *name != '\0')
+	{
+		cfg = json_new();
+		json_add(cfg, name, json_copy(json_get(h->configs, name)));
+	}
+	else
+		cfg = json_copy(h->configs);
+	json_add(c, "configs", cfg);
+
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return c;
 }
@@ -214,14 +243,17 @@ struct json *modules_get_config(struct modules_handle *h, const char *name)
 char **modules_list_modules(struct modules_handle *h, int *count)
 {
 	struct module_list *l;
-	char **ids;
+	char **ids = NULL;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
 
 	if(h->module_count == 0)
-		return NULL;
+		goto end;
 
 	ids = malloc(sizeof(char*) * h->module_count);
 	if(ids == NULL)
-		return NULL;
+		goto end;
 
 	/* Copy all ids */
 	for(*count = 0, l = h->list; l != NULL; l = l->next)
@@ -229,6 +261,9 @@ char **modules_list_modules(struct modules_handle *h, int *count)
 		ids[*count] = strdup(l->id);
 		*count += 1;
 	}
+end:
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return ids;
 }
@@ -258,6 +293,9 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 
 	if(h == NULL)
 		return;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
 
 	for(l = h->list; l != NULL; l = l->next)
 	{
@@ -314,6 +352,10 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			l->opened = 1;
 		}
 	}
+
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
+
 }
 
 void modules_close(struct modules_handle *h)
@@ -350,4 +392,158 @@ void modules_close(struct modules_handle *h)
 
 	free(h);
 }
+
+static int modules_httpd_enable(struct modules_handle *h, struct httpd_req *req,
+				unsigned char **buffer, size_t *size)
+{
+	struct module_list *l;
+
+	if(req->resource == NULL || *req->resource == '\0')
+		return 400;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Process each module in list */
+	for(l = h->list; l != NULL; l = l->next)
+	{
+		if(strcmp(req->resource, l->id) == 0)
+		{
+			/* Enable module */
+			l->enabled = 1;
+
+			/* Unlock modules access */
+			pthread_mutex_unlock(&h->mutex);
+
+			return 200;
+		}
+	}
+
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 404;
+}
+
+static int modules_httpd_disable(struct modules_handle *h,
+				 struct httpd_req *req, unsigned char **buffer,
+				 size_t *size)
+{
+	struct module_list *l;
+
+	if(req->resource == NULL || *req->resource == '\0')
+		return 400;
+
+	/* Lock modules access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Process each module in list */
+	for(l = h->list; l != NULL; l = l->next)
+	{
+		if(strcmp(req->resource, l->id) == 0)
+		{
+			/* Disable module */
+			l->enabled = 0;
+
+			/* Unlock modules access */
+			pthread_mutex_unlock(&h->mutex);
+
+			return 200;
+		}
+	}
+
+	/* Unlock modules access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 404;
+}
+
+static int modules_httpd_config(struct modules_handle *h, struct httpd_req *req,
+				unsigned char **buffer, size_t *size)
+{
+	struct json *json;
+	const char *str;
+
+	if(req->method == HTTPD_GET)
+	{
+		/* Create a JSON object */
+		json = modules_get_config(h, req->resource);
+		if(json == NULL)
+			return 404;
+
+		/* Get string */
+		str = strdup(json_export(json));
+		*buffer = (unsigned char*) str;
+		if(str != NULL)
+			*size = strlen(str);
+
+		/* Free configuration */
+		json_free(json);
+	}
+	else
+		modules_set_config(h, req->json, req->resource);
+
+	return 200;
+}
+
+static int modules_httpd_list(struct modules_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	struct json *json, *tmp;
+	struct module_list *l;
+	char *str;
+
+	/* Create a new JSON array */
+	json = json_new_array();
+	if(json != NULL)
+	{
+		/* Lock modules access */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Process each module in list */
+		for(l = h->list; l != NULL; l = l->next)
+		{
+			/* Create a temporary JSON object */
+			tmp = json_new();
+			if(tmp == NULL)
+				continue;
+
+			/* Add fields */
+			json_set_bool(tmp, "enabled", l->enabled);
+			json_set_string(tmp, "id", l->id);
+			json_set_string(tmp, "name", l->name);
+			json_set_string(tmp, "description", l->description);
+
+			/* Add object to array */
+			if(json_array_add(json, tmp) != 0)
+				json_free(tmp);
+		}
+
+		/* Unlock modules access */
+		pthread_mutex_unlock(&h->mutex);
+	}
+
+	/* Get JSON string */
+	str = strdup(json_export(json));
+	*buffer = (unsigned char*) str;
+	if(str != NULL)
+		*size = strlen(str);
+
+	/* Free JSON object */
+	json_free(json);
+
+	return 200;
+}
+
+struct url_table modules_urls[] = {
+	{"/enable/",  HTTPD_EXT_URL, HTTPD_PUT,             0,
+						 (void*) &modules_httpd_enable},
+	{"/disable/", HTTPD_EXT_URL, HTTPD_PUT,             0,
+						(void*) &modules_httpd_disable},
+	{"/config",   HTTPD_EXT_URL, HTTPD_PUT | HTTPD_GET, 0,
+						 (void*) &modules_httpd_config},
+	{"/list",    0,              HTTPD_GET,             0,
+						   (void*) &modules_httpd_list},
+	{0, 0, 0, 0}
+};
 
