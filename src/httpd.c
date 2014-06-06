@@ -471,7 +471,7 @@ static ssize_t httpd_file_read_cb(void *user_data, uint64_t pos, char *buffer,
 	fseek(fp, pos, SEEK_SET);
 
 	/* Read from file */
-	return fread (buffer, 1, size, fp);
+	return fread(buffer, 1, size, fp);
 }
 
 static void httpd_file_free_cb(void *user_data)
@@ -556,18 +556,25 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 		}
 	}
 
-	/* Open File */
-	fp = fopen(path, "rb");
-	if(fp == NULL)
+	/* Check file size */
+	if(s.st_size != 0)
 	{
-		free(path);
-		return httpd_response(c, 404, "File not found");
-	}
+		/* Open File */
+		fp = fopen(path, "rb");
+		if(fp == NULL)
+		{
+			free(path);
+			return httpd_response(c, 404, "File not found");
+		}
 
-	/* Create HTTP response with file content */
-	response = MHD_create_response_from_callback(s.st_size, 8192,
-						     &httpd_file_read_cb, fp,
-						     &httpd_file_free_cb);
+		/* Create HTTP response with file content */
+		response = MHD_create_response_from_callback(s.st_size, 8192,
+							   &httpd_file_read_cb,
+							   fp,
+							   &httpd_file_free_cb);
+	}
+	else
+		response = MHD_create_response_from_data(0, NULL, 0, 0);
 
 	/* Get mime type */
 	ext = strrchr(path, '.');
