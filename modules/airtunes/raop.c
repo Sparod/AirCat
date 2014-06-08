@@ -230,6 +230,7 @@ static int raop_get_next_packet(struct raop_handle *h)
 	{
 		/* Read RTP packet */
 		read_len = rtp_read(h->rtp, packet, in_size);
+		h->packet_len = 0;
 	}
 
 	/* If a packet has been received: decrypt it */
@@ -283,8 +284,8 @@ int raop_read(struct raop_handle *h, unsigned char *buffer, size_t size)
 		if(samples <= 0)
 			return total_samples;
 
-		/* Move input buffer to next frame */
-		if(info.used < h->packet_len)
+		/* Move input buffer to next frame (ignore RTP errors) */
+		if(h->transport == RAOP_TCP && info.used < h->packet_len)
 		{
 			memmove(h->packet, &h->packet[info.used],
 				h->packet_len - info.used);

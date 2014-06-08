@@ -747,7 +747,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 						len = RSA_size(h->rsa);
 						cdata->aes_key = malloc(len *
 								  sizeof(char));
-						
+
 						/* Decrypt AES key */
 						if(RSA_private_decrypt(len,
 						(unsigned char*) p,
@@ -772,8 +772,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 						/* Decode AES IV */
 						p = strdup(m->attr[i]+6);
 						rtsp_decode_base64(p);
-						strncpy((char*)cdata->aes_iv, p,
-							 16);
+						memcpy(cdata->aes_iv, p, 16);
 
 						free(p);
 						break;
