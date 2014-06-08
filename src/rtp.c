@@ -159,11 +159,6 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	}
 #endif
 
-	/* Force socket to bind */
-	opt = 1;
-	if(setsockopt(h->sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
-		return -1;
-
 	/* Bind */
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
