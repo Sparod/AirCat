@@ -42,6 +42,7 @@ struct module_list {
 	void *lib;
 	void *handle;
 	struct module *mod;
+	struct output_handle *out;
 	/* Next module in list */
 	struct module_list *next;
 };
@@ -124,6 +125,7 @@ int modules_open(struct modules_handle **handle, struct json *config,
 		l->lib = lib;
 		l->mod = mod;
 		l->handle = NULL;
+		l->out = NULL;
 
 		/* Add to list */
 		l->next = h->list;
@@ -284,7 +286,7 @@ void modules_free_list(char **list, int count)
 }
 
 void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd, 
-		     struct avahi_handle *avahi, struct output_handle *output)
+		     struct avahi_handle *avahi, struct outputs_handle *outputs)
 {
 	struct module_attr attr;
 	struct module_list *l;
@@ -316,17 +318,23 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 				l->mod->close(l->handle);
 			l->handle = NULL;
 
+			/* Free output handler */
+			if(l->out != NULL)
+				output_close(l->out);
+
 			l->opened = 0;
 		}
 		else if(l->enabled != 0 && l->opened == 0)
 		{
+			/* Create an output handler for module */
+			output_open(&l->out, outputs, l->name);
+
 			/* Prepare attributes */
 			attr.avahi = avahi;
-			attr.output = output;
+			attr.output = l->out;
 
 			/* Get module configuration from file */
 			attr.config = json_get(h->configs, l->id);
-			attr.config = NULL;
 
 			/* Open module */
 			if(l->mod->open != NULL)

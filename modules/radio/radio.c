@@ -27,7 +27,7 @@
 struct radio_handle {
 	/* Output module */
 	struct output_handle *output;
-	struct output_stream *stream;
+	struct output_stream_handle *stream;
 	/* Radio player */
 	struct shout_handle *shout;
 	struct radio_item *radio;

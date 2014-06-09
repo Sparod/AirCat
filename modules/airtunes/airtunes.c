@@ -90,7 +90,7 @@ struct airtunes_stream {
 struct airtunes_client_data {
 	/* Audio output handlers */
 	struct raop_handle *raop;
-	struct output_stream *stream;
+	struct output_stream_handle *stream;
 	/* AES key and IV */
 	unsigned char *aes_key;
 	unsigned char aes_iv[16];

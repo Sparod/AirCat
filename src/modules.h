@@ -19,6 +19,7 @@
 #ifndef _MODULES_H
 #define _MODULES_H
 
+#include "outputs.h"
 #include "module.h"
 
 struct modules_handle;
@@ -40,7 +41,8 @@ void modules_free_list(char **list, int count);
 
 /* Open or close modules with enabled flag */
 void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd, 
-		     struct avahi_handle *avahi, struct output_handle *output);
+		     struct avahi_handle *avahi,
+		     struct outputs_handle *outputs);
 
 #endif
 

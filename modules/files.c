@@ -41,10 +41,10 @@ struct files_handle {
 	struct output_handle *output;
 	/* Current file player */
 	struct file_handle *file;
-	struct output_stream *stream;
+	struct output_stream_handle *stream;
 	/* Previous file player */
 	struct file_handle *prev_file;
-	struct output_stream *prev_stream;
+	struct output_stream_handle *prev_stream;
 	/* Player status */
 	int is_playing;
 	/* Playlist */

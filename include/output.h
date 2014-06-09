@@ -21,51 +21,31 @@
 
 #define OUTPUT_VOLUME_MAX 65536
 
-struct output_stream;
+struct output_handle;
+struct output_stream_handle;
 
-struct output_handle {
-	struct output *out;
-	int (*open)(struct output **, unsigned int samplerate, int nb_channel);
-	int (*set_volume)(struct output *, unsigned int);
-	unsigned int (*get_volume)(struct output *);
-	struct output_stream *(*add_stream)(struct output *, const char *,
-						   unsigned long, unsigned char,
-						   unsigned long, int, void *,
-						   void *);
-	int (*play_stream)(struct output *, struct output_stream *);
-	int (*pause_stream)(struct output *, struct output_stream *);
-	int (*set_volume_stream)(struct output *, struct output_stream *,
-				 unsigned int);
-	unsigned int (*get_volume_stream)(struct output *,
-					  struct output_stream *);
-	int (*remove_stream)(struct output *, struct output_stream *);
-	int (*close)(struct output *);
-};
+/* Add/Remove output stream */
+struct output_stream_handle *output_add_stream(struct output_handle *h,
+					       const char *name,
+					       unsigned long samplerate,
+					       unsigned char channels,
+					       unsigned long cache,
+					       int use_cache_thread,
+					       void *input_callback,
+					       void *user_data);
+void output_remove_stream(struct output_handle *h,
+			  struct output_stream_handle *s);
 
-enum {
-	OUTPUT_ALSA
-};
+/* Play/Pause output stream */
+int output_play_stream(struct output_handle *h, struct output_stream_handle *s);
+int output_pause_stream(struct output_handle *h,
+			struct output_stream_handle *s);
 
-int output_open(struct output_handle **handle, int module,
-		unsigned int samplerate, int nb_channel);
-int output_set_volume(struct output_handle *h, unsigned int volume);
-unsigned int output_get_volume(struct output_handle *h);
-struct output_stream *output_add_stream(struct output_handle *h,
-					const char *stream_name,
-					unsigned long samplerate,
-					unsigned char nb_channel,
-					unsigned long cache,
-					int use_cache_thread,
-					void *input_callback, void *user_data);
-int output_play_stream(struct output_handle *h, struct output_stream *s);
-int output_pause_stream(struct output_handle *h, struct output_stream *s);
-int output_set_volume_stream(struct output_handle *h, struct output_stream *s,
+/* Volume output stream control */
+int output_set_volume_stream(struct output_handle *h,
+			     struct output_stream_handle *s,
 			     unsigned int volume);
 unsigned int output_get_volume_stream(struct output_handle *h,
-				      struct output_stream *s);
-int output_remove_stream(struct output_handle *h, struct output_stream *s);
-
-int output_close(struct output_handle*);
+				      struct output_stream_handle *s);
 
 #endif
-

@@ -23,7 +23,7 @@
 #include <signal.h>
 
 #include "config_file.h"
-#include "output.h"
+#include "outputs.h"
 #include "avahi.h"
 #include "httpd.h"
 
@@ -46,7 +46,7 @@
 #endif
 
 /* Common modules */
-static struct output_handle *output = NULL;
+static struct outputs_handle *outputs = NULL;
 static struct avahi_handle *avahi = NULL;
 static struct httpd_handle *httpd = NULL;
 static struct config_handle *config = NULL;
@@ -166,8 +166,14 @@ int main(int argc, char* argv[])
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
+	/* Get Output configuration from file */
+	cfg = config_get_json(config, "output");
+
 	/* Open Output Module */
-	output_open(&output, OUTPUT_ALSA, 44100, 2);
+	outputs_open(&outputs, cfg);
+
+	/* Free Output configuration */
+	json_free(cfg);
 
 	/* Get HTTP configuration from file */
 	cfg = config_get_json(config, "httpd");
@@ -188,7 +194,7 @@ int main(int argc, char* argv[])
 	json_free(cfg);
 
 	/* Open all modules */
-	modules_refresh(modules, httpd, avahi, output);
+	modules_refresh(modules, httpd, avahi, outputs);
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
@@ -215,7 +221,7 @@ int main(int argc, char* argv[])
 		avahi_loop(avahi, 100);
 
 		/* Refresh modules */
-		modules_refresh(modules, httpd, avahi, output);
+		modules_refresh(modules, httpd, avahi, outputs);
 	}
 
 	/* Stop HTTP Server */
@@ -228,7 +234,7 @@ int main(int argc, char* argv[])
 	httpd_close(httpd);
 
 	/* Close Output Module */
-	output_close(output);
+	outputs_close(outputs);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);

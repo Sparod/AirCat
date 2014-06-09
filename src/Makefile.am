@@ -18,7 +18,7 @@ aircat_SOURCES = main.c \
 	 	 decoder_aac.c \
 		 decoder_mp3.c \
 		 decoder_alac.c \
-		 output.c \
+		 outputs.c \
 		 output_alsa.c \
 		 resample.c \
 		 cache.c \
@@ -54,6 +54,7 @@ aircat_SOURCES += file_format_taglib.cpp
 
 EXTRA_DIST = file_private.h \
 	     modules.h \
+	     outputs.h \
 	     output_alsa.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \

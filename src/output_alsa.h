@@ -19,9 +19,9 @@
 #ifndef _OUTPUT_ALSA_H
 #define _OUTPUT_ALSA_H
 
-#include "output.h"
+#include "outputs.h"
 
-struct output_handle output_alsa;
+struct output_module output_alsa;
 
 #endif
 

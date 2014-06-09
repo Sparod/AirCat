@@ -42,8 +42,6 @@
 #endif
 
 struct output_stream {
-	/* Stream name */
-	char *name;
 	/* Resample object */
 	struct resample_handle *res;
 	/* Input callback */
@@ -143,7 +141,6 @@ unsigned int output_alsa_get_volume(struct output *h)
 }
 
 struct output_stream *output_alsa_add_stream(struct output *h,
-					     const char *stream_name,
 					     unsigned long samplerate,
 					     unsigned char nb_channel,
 					     unsigned long cache,
@@ -166,7 +163,6 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->is_playing = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
-	s->name = stream_name != NULL ? strdup(stream_name) : NULL;
 
 	/* Use resampler module if samplerate or/and channels are different */
 	if(samplerate != h->samplerate || nb_channel != h->nb_channel)
@@ -257,10 +253,6 @@ static void output_alsa_free_stream(struct output_stream *s)
 	/* Free cache buffer */
 	if(s->cache != NULL)
 		cache_close(s->cache);
-
-	/* Free stream name */
-	if(s->name != NULL)
-		free(s->name);
 
 	/* Free stream */
 	free(s);
@@ -497,17 +489,15 @@ int output_alsa_close(struct output *h)
 	return 0;
 }
 
-struct output_handle output_alsa = {
-	.out = NULL,
-	.open = &output_alsa_open,
-	.set_volume = &output_alsa_set_volume,
-	.get_volume = &output_alsa_get_volume,
-	.add_stream = &output_alsa_add_stream,
-	.play_stream = &output_alsa_play_stream,
-	.pause_stream = &output_alsa_pause_stream,
-	.set_volume_stream = &output_alsa_set_volume_stream,
-	.get_volume_stream = &output_alsa_get_volume_stream,
-	.remove_stream = &output_alsa_remove_stream,
-	.close = &output_alsa_close,
+struct output_module output_alsa = {
+	.open = (void*) &output_alsa_open,
+	.set_volume = (void*) &output_alsa_set_volume,
+	.get_volume = (void*) &output_alsa_get_volume,
+	.add_stream = (void*) &output_alsa_add_stream,
+	.play_stream = (void*) &output_alsa_play_stream,
+	.pause_stream = (void*) &output_alsa_pause_stream,
+	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
+	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
+	.remove_stream = (void*) &output_alsa_remove_stream,
+	.close = (void*) &output_alsa_close,
 };
-
