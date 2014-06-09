@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #include "outputs.h"
 #include "output_alsa.h"
@@ -49,6 +50,7 @@ struct output_handle {
 	char *name;
 	/* Outputs associated handle */
 	struct outputs_handle *outputs;
+	pthread_mutex_t *mutex;
 	/* Streams output list */
 	struct output_stream_handle *streams;
 	/* Next output in list */
@@ -78,6 +80,8 @@ struct outputs_handle {
 	/* Configuration */
 	unsigned long samplerate;
 	unsigned char channels;
+	/* Mutex for thread-safe */
+	pthread_mutex_t mutex;
 };
 
 int outputs_open(struct outputs_handle **handle, struct json *config)
@@ -121,15 +125,13 @@ int outputs_open(struct outputs_handle **handle, struct json *config)
 		}
 	}
 
+	/* Init thread mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
 	/* Set configuration */
 	outputs_set_config(h, config);
 
-	/* Dummy output */
-	if(h->current == NULL || h->mod == NULL)
-		return 0;
-
-	/* Open output */
-	return h->mod->open(&h->handle, h->samplerate, h->channels);
+	return 0;
 }
 
 static struct output_list *outputs_find_module(struct outputs_handle *h,
@@ -148,17 +150,72 @@ static struct output_list *outputs_find_module(struct outputs_handle *h,
 	return NULL;
 }
 
+static void outputs_reload(struct outputs_handle *h, struct output_list *new)
+{
+	struct output_stream_handle *stream;
+	struct output_handle *handle;
+
+	if(new != h->current)
+	{
+		/* Close previous output module */
+		if(h->current != NULL && h->mod != NULL && h->handle != NULL)
+		{
+			/* Close output */
+			h->mod->close(h->handle);
+			h->handle = NULL;
+			h->current = NULL;
+			h->mod = NULL;
+		}
+
+		/* Open new output module and reload all streams */
+		if(new != NULL)
+		{
+			h->current = new;
+			h->mod = h->current->mod;
+
+			/* Open output module */
+			if(h->mod->open(&h->handle, h->samplerate, h->channels)
+			   != 0)
+			{
+				h->mod->close(h->handle);
+				h->handle = NULL;
+				return;
+			}
+
+			/* Reload streams */
+			for(handle = h->handles; handle != NULL;
+			    handle = handle->next)
+			{
+				for(stream = handle->streams; stream != NULL;
+				    stream = stream->next)
+				{
+					stream->stream = h->mod->add_stream(
+						       h->handle,
+						       stream->samplerate,
+						       stream->channels,
+						       stream->cache,
+						       stream->use_cache_thread,
+						       stream->input_callback,
+						       stream->user_data);
+				}
+			}
+		}
+	}
+}
+
 int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 {
-	struct output_list *l;
+	struct output_list *current;
 	const char *id;
 
 	if(h == NULL)
 		return -1;
 
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Free all configuration */
-	h->current = NULL;
-	h->mod = NULL;
+	current = NULL;
 	h->samplerate = 0;
 	h->channels = 0;
 
@@ -166,30 +223,27 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	if(cfg != NULL)
 	{
 		id = json_get_string(cfg, "name");
-		l = outputs_find_module(h, id);
-		if(l != NULL)
-		{
-			h->current = l;
-			h->mod = l->mod;
-		}
+		current = outputs_find_module(h, id);
 		h->samplerate = json_get_int(cfg, "samplerate");
 		h->channels = json_get_int(cfg, "channels");
 	}
 
 	/* Set default values */
-	if(h->current == NULL)
+	if(current == NULL)
 	{
 		/* Choose ALSA as defaut module */
-		l = outputs_find_module(h, "alsa");
-		if(l != NULL)
-			h->current = l;
-		if(h->current != NULL)
-			h->mod = h->current->mod;
+		current = outputs_find_module(h, "alsa");
 	}
 	if(h->samplerate == 0)
 		h->samplerate = 44100;
 	if(h->channels == 0)
 		h->channels = 2;
+
+	/* Reload output */
+	outputs_reload(h, current);
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
@@ -207,12 +261,18 @@ struct json *outputs_get_config(struct outputs_handle *h)
 	if(cfg == NULL)
 		return NULL;
 
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Fill configuration */
 	if(h->current != NULL)
 		name = h->current->id;
 	json_set_string(cfg, "name", name);
 	json_set_int(cfg, "samplerate", h->samplerate);
 	json_set_int(cfg, "channels", h->channels);
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return cfg;
 }
@@ -278,11 +338,18 @@ int output_open(struct output_handle **handle, struct outputs_handle *outputs,
 	/* Init structure */
 	h->name = strdup(name);
 	h->outputs = outputs;
+	h->mutex = &outputs->mutex;
 	h->streams = NULL;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
 
 	/* Add output handle to outputs */
 	h->next = outputs->handles;
 	outputs->handles = h;
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
 
 	return 0;
 }
@@ -296,24 +363,27 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 					       void *input_callback,
 					       void *user_data)
 {
-	struct output_stream_handle *s;
+	struct output_stream_handle *s = NULL;
 	struct output_stream *stream;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
 
 	/* Check output module */
 	if(h == NULL || h->outputs->mod == NULL)
-		return NULL;
+		goto end;
 
 	/* Add stream to output module */
 	stream = h->outputs->mod->add_stream(h->outputs->handle, samplerate,
 					     channels, cache, use_cache_thread,
 					     input_callback, user_data);
 	if(stream == NULL)
-		return NULL;
+		goto end;
 
 	/* Alloc stream structure */
 	s = malloc(sizeof(struct output_stream_handle));
 	if(s == NULL)
-		return NULL;
+		goto end;
 
 	/* Fill handle */
 	s->name = name ? strdup(name) : NULL;
@@ -329,6 +399,10 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 	s->next = h->streams;
 	h->streams = s;
 
+end:
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
 	return s;
 }
 
@@ -339,6 +413,9 @@ void output_remove_stream(struct output_handle *h,
 
 	if(h == NULL || s == NULL)
 		return;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
 
 	/* Remove stream from streams */
 	lp = &h->streams;
@@ -357,6 +434,9 @@ void output_remove_stream(struct output_handle *h,
 	/* Remove stream from output module */
 	h->outputs->mod->remove_stream(h->outputs->handle, s->stream);
 
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
 	/* Free stream name */
 	free(s->name);
 
@@ -370,6 +450,9 @@ void output_close(struct output_handle *h)
 
 	if(h == NULL)
 		return;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
 
 	/* Close and remove all streams */
 	while(h->streams != NULL)
@@ -392,6 +475,9 @@ void output_close(struct output_handle *h)
 			lp = &l->next;
 	}
 
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
 	/* Free output name */
 	free(h->name);
 
@@ -405,45 +491,103 @@ void output_close(struct output_handle *h)
 
 int output_play_stream(struct output_handle *h, struct output_stream_handle *s)
 {
-	/* Check output module */
-	if(h == NULL || h->outputs == NULL || h->outputs->mod == NULL ||
-	   h->outputs->handle == NULL || s == NULL || s->stream == NULL)
+	int ret = -1;
+
+	if(h == NULL || s == NULL)
 		return -1;
 
-	return h->outputs->mod->play_stream(h->outputs->handle, s->stream);
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Play stream */
+		ret = h->outputs->mod->play_stream(h->outputs->handle,
+						   s->stream);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
 }
 
 int output_pause_stream(struct output_handle *h, struct output_stream_handle *s)
 {
-	/* Check output module */
-	if(h == NULL || h->outputs == NULL || h->outputs->mod == NULL ||
-	   h->outputs->handle == NULL || s == NULL || s->stream == NULL)
+	int ret = -1;
+
+	if(h == NULL || s == NULL)
 		return -1;
 
-	return h->outputs->mod->pause_stream(h->outputs->handle, s->stream);
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Pause stream */
+		ret = h->outputs->mod->pause_stream(h->outputs->handle,
+						    s->stream);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
 }
 
 int output_set_volume_stream(struct output_handle *h,
 			     struct output_stream_handle *s,
 			     unsigned int volume)
 {
-	/* Check output module */
-	if(h == NULL || h->outputs == NULL || h->outputs->mod == NULL ||
-	   h->outputs->handle == NULL || s == NULL || s->stream == NULL)
+	int ret = -1;
+
+	if(h == NULL || s == NULL)
 		return -1;
 
-	return h->outputs->mod->set_volume_stream(h->outputs->handle, s->stream,
-						  volume);
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Set stream volume */
+		ret = h->outputs->mod->set_volume_stream(h->outputs->handle,
+							 s->stream, volume);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
 }
 
 unsigned int output_get_volume_stream(struct output_handle *h,
 				      struct output_stream_handle *s)
 {
-	/* Check output module */
-	if(h == NULL || h->outputs == NULL || h->outputs->mod == NULL ||
-	   h->outputs->handle == NULL || s == NULL || s->stream == NULL)
+	unsigned int ret = 0;
+
+	if(h == NULL || s == NULL)
 		return 0;
 
-	return h->outputs->mod->get_volume_stream(h->outputs->handle,
-						  s->stream);
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Get stream volume */
+		ret = h->outputs->mod->get_volume_stream(h->outputs->handle,
+							 s->stream);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
 }
