@@ -39,6 +39,7 @@ struct output_stream_handle {
 	char *name;
 	unsigned long samplerate;
 	unsigned char channels;
+	unsigned int volume;
 	int cache;
 	int use_cache_thread;
 	void *input_callback;
@@ -84,6 +85,7 @@ struct outputs_handle {
 	/* Configuration */
 	unsigned long samplerate;
 	unsigned char channels;
+	unsigned int volume;
 	/* Mutex for thread-safe */
 	pthread_mutex_t mutex;
 };
@@ -196,6 +198,7 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 			for(stream = handle->streams; stream != NULL;
 			    stream = stream->next)
 			{
+				/* Add stream */
 				stream->stream = h->mod->add_stream(h->handle,
 						       stream->samplerate,
 						       stream->channels,
@@ -203,6 +206,12 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 						       stream->use_cache_thread,
 						       stream->input_callback,
 						       stream->user_data);
+
+				/* Reset volume */
+				if(stream->stream != NULL)
+					h->mod->set_volume_stream(h->handle,
+							        stream->stream,
+							        stream->volume);
 			}
 		}
 	}
@@ -233,6 +242,7 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		current = outputs_find_module(h, id);
 		samplerate = json_get_int(cfg, "samplerate");
 		channels = json_get_int(cfg, "channels");
+		h->volume = json_get_int(cfg, "volume");
 	}
 
 	/* Set default values */
@@ -245,11 +255,17 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		samplerate = 44100;
 	if(channels == 0)
 		channels = 2;
+	if(h->volume > OUTPUT_VOLUME_MAX)
+		h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Reload output */
 	if(current != h->current || samplerate != h->samplerate ||
 	   channels != h->channels)
 		outputs_reload(h, current, samplerate, channels);
+
+	/* Set volume */
+	if(h->mod != NULL && h->handle != NULL)
+		h->mod->set_volume(h->handle, h->volume);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);
@@ -276,14 +292,54 @@ struct json *outputs_get_config(struct outputs_handle *h)
 	/* Fill configuration */
 	if(h->current != NULL)
 		name = h->current->id;
-	json_set_string(cfg, "name", name);
+	json_set_string(cfg, "id", name);
 	json_set_int(cfg, "samplerate", h->samplerate);
 	json_set_int(cfg, "channels", h->channels);
+	json_set_int(cfg, "volume", h->volume);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);
 
 	return cfg;
+}
+
+int outputs_set_volume(struct outputs_handle *h, unsigned int volume)
+{
+	int ret = -1;
+
+	if(h == NULL)
+		return -1;
+
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
+		ret = h->mod->set_volume(h->handle, volume);
+	h->volume = volume;
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
+}
+unsigned int outputs_get_volue(struct outputs_handle *h)
+{
+	unsigned int vol = 0;
+
+	if(h == NULL)
+		return 0;
+
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
+	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
+		vol = h->mod->get_volume(h->handle);
+	h->volume = vol;
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return vol;
 }
 
 void outputs_close(struct outputs_handle *h)
@@ -403,6 +459,10 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 	s->input_callback = input_callback;
 	s->user_data = user_data;
 	s->stream = stream;
+
+	/* Get default volume */
+	s->volume = h->outputs->mod->get_volume_stream(h->outputs->handle,
+						       s->stream);
 
 	/* Add stream to stream list */
 	s->next = h->streams;
@@ -568,6 +628,7 @@ int output_set_volume_stream(struct output_handle *h,
 		ret = h->outputs->mod->set_volume_stream(h->outputs->handle,
 							 s->stream, volume);
 	}
+	s->volume = volume;
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
@@ -594,6 +655,7 @@ unsigned int output_get_volume_stream(struct output_handle *h,
 		ret = h->outputs->mod->get_volume_stream(h->outputs->handle,
 							 s->stream);
 	}
+	s->volume = ret;
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
@@ -604,6 +666,143 @@ unsigned int output_get_volume_stream(struct output_handle *h,
 /******************************************************************************
  *                              Output URLs part                              *
  ******************************************************************************/
+
+static struct output_stream_handle *outputs_find_stream_from_url(
+						       struct outputs_handle *h,
+						       const char *url)
+{
+	struct output_stream_handle *s;
+	struct output_handle *l;
+	int len, idx, i;
+	char *str;
+
+	if(h == NULL || url == NULL)
+		return NULL;
+
+	/* Get handle name */
+	str = strchr(url, '/');
+	if(str == NULL)
+		return NULL;
+	len = str - url;
+
+	/* Get index */
+	if(url[len+1] < 48 || url[len+1] > 57)
+		return NULL;
+	idx = strtoul(url + len + 1, NULL, 10);
+
+	/* Parse all handle by name */
+	for(l = h->handles; l != NULL; l = l->next)
+	{
+		/* Check handle name */
+		if(strncmp(l->name, url, len) != 0)
+			continue;
+
+		/* Parse streams */
+		for(s = l->streams, i = 0; s != NULL; s = s->next, i++)
+			if(i == idx)
+				return s;
+	}
+
+	return NULL;
+}
+
+static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	struct output_stream_handle *s;
+	unsigned int vol = 0;
+	struct json *json;
+	int is_master;
+	char *str;
+
+	/* Check HTTP method */
+	if(req->method == HTTPD_GET)
+	{
+		/* Create a JSON object */
+		json = json_new();
+
+		/* Lock output access */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Check URL */
+		if(req->resource == NULL || *req->resource == '\0')
+		{
+			/* Add volume */
+			json_set_int(json, "volume", h->volume);
+		}
+		else
+		{
+			/* Get stream from url */
+			s = outputs_find_stream_from_url(h, req->resource);
+			if(s != NULL)
+				json_set_int(json, "volume", s->volume);
+		}
+
+		/* Unlock output access */
+		pthread_mutex_unlock(&h->mutex);
+
+		/* Get JSON string */
+		str = strdup(json_export(json));
+		*buffer = (unsigned char*) str;
+		if(str != NULL)
+			*size = strlen(str);
+
+		/* Free JSON object */
+		json_free(json);
+	}
+	else
+	{
+		/* Get volume at end of URL */
+		str = strrchr(req->resource, '/');
+		if(str == NULL)
+		{
+			is_master = 1;
+			str = req->resource;
+		}
+		else
+		{
+			is_master = 0;
+			str++;
+		}
+		if(*str < 48 || *str > 57)
+			return 400;
+
+		/* Convert volume */
+		vol = strtoul(str, NULL, 10);
+		if(vol > OUTPUT_VOLUME_MAX)
+			vol = OUTPUT_VOLUME_MAX;
+
+		/* Lock output access */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Check URL */
+		if(is_master)
+		{
+			if(h->mod != NULL && h->handle != NULL)
+				h->mod->set_volume(h->handle, vol);
+			h->volume = vol;
+		}
+		else
+		{
+			/* Get stream from url */
+			s = outputs_find_stream_from_url(h, req->resource);
+			if(s != NULL)
+			{
+				if(h->mod != NULL && h->handle != NULL &&
+				   s->stream != NULL)
+					h->mod->set_volume_stream(h->handle,
+								  s->stream,
+								  vol);
+				s->volume = vol;
+			}
+		}
+
+		/* Unlock output access */
+		pthread_mutex_unlock(&h->mutex);
+	}
+
+	return 200;
+}
 
 static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 			      unsigned char **buffer, size_t *size)
@@ -634,6 +833,7 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 	}
 	json_set_int(root, "samplerate", h->samplerate);
 	json_set_int(root, "channels", h->channels);
+	json_set_int(root, "volume", h->volume);
 
 	/* Create a new JSON array */
 	list = json_new_array();
@@ -662,6 +862,7 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 				json_set_string(tmp2, "name", s->name);
 				json_set_int(tmp2, "samplerate", s->samplerate);
 				json_set_int(tmp2, "channels", s->channels);
+				json_set_int(tmp2, "volume", s->volume);
 
 				/* Add object to array */
 				if(json_array_add(list2, tmp2) != 0)
@@ -760,7 +961,11 @@ static int outputs_httpd_list(struct outputs_handle *h, struct httpd_req *req,
 }
 
 struct url_table outputs_urls[] = {
-	{"/status",  0, HTTPD_GET, 0, (void*) &outputs_httpd_status},
-	{"/list",    0, HTTPD_GET, 0, (void*) &outputs_httpd_list},
+	{"/volume", HTTPD_EXT_URL, HTTPD_GET | HTTPD_PUT, 0,
+						 (void*) &outputs_httpd_volume},
+	{"/status", 0,             HTTPD_GET,             0,
+						 (void*) &outputs_httpd_status},
+	{"/list",   0,             HTTPD_GET,             0,
+						   (void*) &outputs_httpd_list},
 	{0, 0, 0, 0}
 };

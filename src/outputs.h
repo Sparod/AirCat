@@ -43,6 +43,8 @@ extern struct url_table outputs_urls[];
 int outputs_open(struct outputs_handle **handle, struct json *config);
 int outputs_set_config(struct outputs_handle *h, struct json *cfg);
 struct json *outputs_get_config(struct outputs_handle *h);
+int outputs_set_volume(struct outputs_handle *h, unsigned int volume);
+unsigned int outputs_get_volue(struct outputs_handle *h);
 void outputs_close(struct outputs_handle *h);
 
 int output_open(struct output_handle **handle, struct outputs_handle *outputs,
