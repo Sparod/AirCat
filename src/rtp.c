@@ -421,13 +421,7 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 	delta = seq - h->next_seq;
 
 	/* Check sequence number */
-	if(delta < 0)
-	{
-		/* Late packet: drop it */
-		fprintf(stderr, "Late RTP packet!\n");
-		goto drop;
-	}
-	else if(delta > h->cache_size)
+	if(delta > h->cache_size || delta < 0)
 	{
 		/* Handle RTP packet jump */
 		if(h->bad_seq+1 == seq)
@@ -437,7 +431,7 @@ static int rtp_queue(struct rtp_handle *h, struct rtp_packet *packet)
 		}
 		else
 		{
-			fprintf(stderr, "RTP packet is too high!\n");
+			fprintf(stderr, "RTP packet is out of range!\n");
 			h->bad_seq = seq;
 			goto drop;
 		}
