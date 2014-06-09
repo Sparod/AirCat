@@ -44,6 +44,8 @@ struct output_stream_handle {
 	int use_cache_thread;
 	void *input_callback;
 	void *user_data;
+	/* Stream status */
+	int is_playing;
 	/* Next stream in list */
 	struct output_stream_handle *next;
 	/* Output stream module handle */
@@ -212,6 +214,11 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 					h->mod->set_volume_stream(h->handle,
 							        stream->stream,
 							        stream->volume);
+
+				/* Play stream */
+				if(stream->stream != NULL && stream->is_playing)
+					h->mod->play_stream(h->handle,
+							    stream->stream);
 			}
 		}
 	}
@@ -232,8 +239,8 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 
 	/* Free all configuration */
 	current = NULL;
-	h->samplerate = 0;
-	h->channels = 0;
+	samplerate = 0;
+	channels = 0;
 
 	/* Get configuration */
 	if(cfg != NULL)
@@ -459,6 +466,7 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 	s->input_callback = input_callback;
 	s->user_data = user_data;
 	s->stream = stream;
+	s->is_playing = 0;
 
 	/* Get default volume */
 	s->volume = h->outputs->mod->get_volume_stream(h->outputs->handle,
@@ -576,6 +584,7 @@ int output_play_stream(struct output_handle *h, struct output_stream_handle *s)
 		ret = h->outputs->mod->play_stream(h->outputs->handle,
 						   s->stream);
 	}
+	s->is_playing = 1;
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
@@ -601,6 +610,7 @@ int output_pause_stream(struct output_handle *h, struct output_stream_handle *s)
 		ret = h->outputs->mod->pause_stream(h->outputs->handle,
 						    s->stream);
 	}
+	s->is_playing = 0;
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
