@@ -19,6 +19,7 @@
 #ifndef _OUTPUTS_H
 #define _OUTPUTS_H
 
+#include "httpd.h"
 #include "output.h"
 #include "json.h"
 
@@ -37,6 +38,7 @@ struct output_module {
 };
 
 struct outputs_handle;
+extern struct url_table outputs_urls[];
 
 int outputs_open(struct outputs_handle **handle, struct json *config);
 int outputs_set_config(struct outputs_handle *h, struct json *cfg);

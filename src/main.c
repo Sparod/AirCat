@@ -198,6 +198,7 @@ int main(int argc, char* argv[])
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
+	httpd_add_urls(httpd, "output", outputs_urls, outputs);
 	httpd_add_urls(httpd, "modules", modules_urls, modules);
 
 	/* Start HTTP Server */

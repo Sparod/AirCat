@@ -30,6 +30,10 @@
 
 #define FREE_STRING(s) if(s != NULL) free(s);
 
+#define NO_ID NULL
+#define NO_NAME "No output"
+#define NO_DESCRIPTION ""
+
 struct output_stream_handle {
 	/* Stream properties */
 	char *name;
@@ -591,3 +595,167 @@ unsigned int output_get_volume_stream(struct output_handle *h,
 
 	return ret;
 }
+
+/******************************************************************************
+ *                              Output URLs part                              *
+ ******************************************************************************/
+
+static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	struct json *root, *list, *list2, *tmp, *tmp2;
+	struct output_stream_handle *s;
+	struct output_handle *l;
+	char *str;
+
+	/* Create a new object */
+	root = json_new();
+
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get output configuration */
+	if(h->current != NULL)
+	{
+		json_set_string(root, "id", h->current->id);
+		json_set_string(root, "name", h->current->name);
+		json_set_string(root, "description", h->current->description);
+	}
+	else
+	{
+		json_set_string(root, "id", NO_ID);
+		json_set_string(root, "name", NO_NAME);
+		json_set_string(root, "description", NO_DESCRIPTION);
+	}
+	json_set_int(root, "samplerate", h->samplerate);
+	json_set_int(root, "channels", h->channels);
+
+	/* Create a new JSON array */
+	list = json_new_array();
+	if(list != NULL)
+	{
+		for(l = h->handles; l != NULL; l = l->next)
+		{
+			/* Create a new object */
+			tmp = json_new();
+			if(tmp == NULL)
+				continue;
+
+			/* Get name */
+			json_set_string(tmp, "name", l->name);
+
+			/* Create stream array */
+			list2 = json_new_array();
+			for(s = l->streams; s != NULL; s = s->next)
+			{
+				/* Create a new object */
+				tmp2 = json_new();
+				if(tmp2 == NULL)
+					continue;
+
+				/* Get stream configuration */
+				json_set_string(tmp2, "name", s->name);
+				json_set_int(tmp2, "samplerate", s->samplerate);
+				json_set_int(tmp2, "channels", s->channels);
+
+				/* Add object to array */
+				if(json_array_add(list2, tmp2) != 0)
+					json_free(tmp2);
+			}
+
+			/* Add stream list to JSON object */
+			json_add(tmp, "streams", list2);
+
+			/* Add object to array */
+			if(json_array_add(list, tmp) != 0)
+				json_free(tmp);
+		}
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* Add list to JSON object */
+	json_add(root, "outputs", list);
+
+	/* Get JSON string */
+	str = strdup(json_export(root));
+	*buffer = (unsigned char*) str;
+	if(str != NULL)
+		*size = strlen(str);
+
+	/* Free JSON object */
+	json_free(root);
+
+	return 200;
+}
+
+static int outputs_httpd_list(struct outputs_handle *h, struct httpd_req *req,
+			      unsigned char **buffer, size_t *size)
+{
+	struct json *root, *tmp;
+	struct output_list *l;
+	char *str;
+
+	/* Create a new JSON array */
+	root = json_new_array();
+
+	/* Lock output access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Fill array */
+	if(root != NULL)
+	{
+		/* Create a new object */
+		tmp = json_new();
+		if(tmp != NULL)
+		{
+			/* Add No output */
+			json_set_string(tmp, "id", NO_ID);
+			json_set_string(tmp, "name", NO_NAME);
+			json_set_string(tmp, "description", NO_DESCRIPTION);
+
+			/* Add object to array */
+			if(json_array_add(root, tmp) != 0)
+				json_free(tmp);
+		}
+
+		/* Get output module list */
+		for(l = h->list; l != NULL; l = l->next)
+		{
+			/* Create a new object */
+			tmp = json_new();
+			if(tmp == NULL)
+				continue;
+
+			/* Get properties */
+			json_set_string(tmp, "id", l->id);
+			json_set_string(tmp, "name", l->name);
+			json_set_string(tmp, "description", l->description);
+
+			/* Add object to array */
+			if(json_array_add(root, tmp) != 0)
+				json_free(tmp);
+		}
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* Get JSON string */
+	str = strdup(json_export(root));
+	*buffer = (unsigned char*) str;
+	if(str != NULL)
+		*size = strlen(str);
+
+	/* Free JSON object */
+	json_free(root);
+
+	return 200;
+}
+
+struct url_table outputs_urls[] = {
+	{"/status",  0, HTTPD_GET, 0, (void*) &outputs_httpd_status},
+	{"/list",    0, HTTPD_GET, 0, (void*) &outputs_httpd_list},
+	{0, 0, 0, 0}
+};
