@@ -260,7 +260,14 @@ static int files_add(struct files_handle *h, const char *filename)
 			    (h->playlist_alloc + PLAYLIST_ALLOC_SIZE) *
 			    sizeof(struct files_playlist));
 		if(p == NULL)
+		{
+			/* Unlock playlist */
+			pthread_mutex_unlock(&h->mutex);
+
+			/* Free real path */
+			free(real_path);
 			return -1;
+		}
 
 		h->playlist = p;
 		h->playlist_alloc += PLAYLIST_ALLOC_SIZE;
@@ -276,6 +283,9 @@ static int files_add(struct files_handle *h, const char *filename)
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
+
+	/* Free real path */
+	free(real_path);
 
 	return h->playlist_len - 1;
 }
