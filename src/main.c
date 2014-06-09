@@ -258,6 +258,9 @@ int main(int argc, char* argv[])
 static int config_httpd_default(void *h, struct httpd_req *req,
 				unsigned char **buffer, size_t *size)
 {
+	/* Set Audio output to default */
+	outputs_set_config(outputs, NULL);
+
 	/* Set HTTP server to default */
 	httpd_set_config(httpd, NULL);
 
@@ -274,6 +277,15 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 
 	/* Load config from file */
 	config_load(config);
+
+	/* Get Audio output configuration from file */
+	cfg = config_get_json(config, "output");
+
+	/* Set Audio output configuration */
+	outputs_set_config(outputs, cfg);
+
+	/* Free configuration */
+	json_free(cfg);
 
 	/* Get HTTP configuration from file */
 	cfg = config_get_json(config, "httpd");
@@ -300,6 +312,15 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 			     unsigned char **buffer, size_t *size)
 {
 	struct json *cfg = NULL;
+
+	/* Get Audio output configuration from module */
+	cfg = outputs_get_config(outputs);
+
+	/* Set Audio output configuration in file */
+	config_set_json(config, "output", cfg);
+
+	/* Free configuration */
+	json_free(cfg);
 
 	/* Get HTTP configuration from module */
 	cfg = httpd_get_config(httpd);
@@ -336,6 +357,15 @@ static int config_httpd(void *h, struct httpd_req *req,
 	{
 		/* Create a JSON object */
 		json = json_new();
+
+		/* Get Audio output configuration from module */
+		if(req->resource == NULL || *req->resource == '\0' ||
+		   strcmp(req->resource, "output") == 0)
+		{
+			tmp = outputs_get_config(outputs);
+			if(tmp != NULL)
+				json_add(json, "output", tmp);
+		}
 
 		/* Get HTTP configuration from module */
 		if(req->resource == NULL || *req->resource == '\0' ||
@@ -391,6 +421,14 @@ static int config_httpd(void *h, struct httpd_req *req,
 			if(req->resource != NULL && *req->resource != '\0' &&
 			   strcmp(req->resource, str) != 0)
 				continue;
+
+			/* Set Audio output configuration */
+			if(strcmp(str, "output") == 0)
+			{
+				/* Set configuration */
+				outputs_set_config(outputs, tmp);
+				continue;
+			}
 
 			/* Set HTTP configuration */
 			if(strcmp(str, "httpd") == 0)

@@ -154,54 +154,55 @@ static struct output_list *outputs_find_module(struct outputs_handle *h,
 	return NULL;
 }
 
-static void outputs_reload(struct outputs_handle *h, struct output_list *new)
+static void outputs_reload(struct outputs_handle *h, struct output_list *new,
+			   unsigned long samplerate, unsigned char channels)
 {
 	struct output_stream_handle *stream;
 	struct output_handle *handle;
 
-	if(new != h->current)
+	/* Update value */
+	h->samplerate = samplerate;
+	h->channels = channels;
+
+	/* Close previous output module */
+	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
 	{
-		/* Close previous output module */
-		if(h->current != NULL && h->mod != NULL && h->handle != NULL)
+		/* Close output */
+		h->mod->close(h->handle);
+		h->handle = NULL;
+		h->current = NULL;
+		h->mod = NULL;
+	}
+
+	/* Open new output module and reload all streams */
+	if(new != NULL)
+	{
+		h->current = new;
+		h->mod = h->current->mod;
+
+		/* Open output module */
+		if(h->mod->open(&h->handle, h->samplerate, h->channels)
+		   != 0)
 		{
-			/* Close output */
 			h->mod->close(h->handle);
 			h->handle = NULL;
-			h->current = NULL;
-			h->mod = NULL;
+			return;
 		}
 
-		/* Open new output module and reload all streams */
-		if(new != NULL)
+		/* Reload streams */
+		for(handle = h->handles; handle != NULL;
+		    handle = handle->next)
 		{
-			h->current = new;
-			h->mod = h->current->mod;
-
-			/* Open output module */
-			if(h->mod->open(&h->handle, h->samplerate, h->channels)
-			   != 0)
+			for(stream = handle->streams; stream != NULL;
+			    stream = stream->next)
 			{
-				h->mod->close(h->handle);
-				h->handle = NULL;
-				return;
-			}
-
-			/* Reload streams */
-			for(handle = h->handles; handle != NULL;
-			    handle = handle->next)
-			{
-				for(stream = handle->streams; stream != NULL;
-				    stream = stream->next)
-				{
-					stream->stream = h->mod->add_stream(
-						       h->handle,
+				stream->stream = h->mod->add_stream(h->handle,
 						       stream->samplerate,
 						       stream->channels,
 						       stream->cache,
 						       stream->use_cache_thread,
 						       stream->input_callback,
 						       stream->user_data);
-				}
 			}
 		}
 	}
@@ -209,7 +210,9 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new)
 
 int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 {
-	struct output_list *current;
+	struct output_list *current = NULL;
+	unsigned long samplerate = 0;
+	unsigned char channels = 0;
 	const char *id;
 
 	if(h == NULL)
@@ -228,8 +231,8 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	{
 		id = json_get_string(cfg, "name");
 		current = outputs_find_module(h, id);
-		h->samplerate = json_get_int(cfg, "samplerate");
-		h->channels = json_get_int(cfg, "channels");
+		samplerate = json_get_int(cfg, "samplerate");
+		channels = json_get_int(cfg, "channels");
 	}
 
 	/* Set default values */
@@ -238,13 +241,15 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		/* Choose ALSA as defaut module */
 		current = outputs_find_module(h, "alsa");
 	}
-	if(h->samplerate == 0)
-		h->samplerate = 44100;
-	if(h->channels == 0)
-		h->channels = 2;
+	if(samplerate == 0)
+		samplerate = 44100;
+	if(channels == 0)
+		channels = 2;
 
 	/* Reload output */
-	outputs_reload(h, current);
+	if(current != h->current || samplerate != h->samplerate ||
+	   channels != h->channels)
+		outputs_reload(h, current, samplerate, channels);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);
