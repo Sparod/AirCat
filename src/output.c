@@ -59,7 +59,8 @@ unsigned int output_get_volume(struct output_handle *h)
 	return h->get_volume(h->out);
 }
 
-struct output_stream *output_add_stream(struct output_handle *h, 
+struct output_stream *output_add_stream(struct output_handle *h,
+					const char *stream_name,
 					unsigned long samplerate,
 					unsigned char nb_channel,
 					unsigned long cache,
@@ -69,7 +70,7 @@ struct output_stream *output_add_stream(struct output_handle *h,
 	if(h == NULL || h->out == NULL)
 		return NULL;
 
-	return h->add_stream(h->out, samplerate, nb_channel, cache,
+	return h->add_stream(h->out, stream_name, samplerate, nb_channel, cache,
 			     use_cache_thread, input_callback, user_data);
 }
 

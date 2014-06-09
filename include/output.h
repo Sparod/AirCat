@@ -28,7 +28,7 @@ struct output_handle {
 	int (*open)(struct output **, unsigned int samplerate, int nb_channel);
 	int (*set_volume)(struct output *, unsigned int);
 	unsigned int (*get_volume)(struct output *);
-	struct output_stream *(*add_stream)(struct output *,
+	struct output_stream *(*add_stream)(struct output *, const char *,
 						   unsigned long, unsigned char,
 						   unsigned long, int, void *,
 						   void *);
@@ -50,7 +50,8 @@ int output_open(struct output_handle **handle, int module,
 		unsigned int samplerate, int nb_channel);
 int output_set_volume(struct output_handle *h, unsigned int volume);
 unsigned int output_get_volume(struct output_handle *h);
-struct output_stream *output_add_stream(struct output_handle *h, 
+struct output_stream *output_add_stream(struct output_handle *h,
+					const char *stream_name,
 					unsigned long samplerate,
 					unsigned char nb_channel,
 					unsigned long cache,

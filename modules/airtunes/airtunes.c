@@ -540,6 +540,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 	char *username;
 	const char *str;
 	char *p;
+	int len;
 
 	/* Allocate structure to handle session */
 	if(cdata == NULL)
@@ -552,7 +553,11 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 		cdata->infos = airtunes_add_stream(h);
 		str = rtsp_get_name(c);
 		if(str != NULL)
-			cdata->infos->name = strdup(str);
+		{
+			/* Remove ".local" from name */
+			len = strlen(str) - (strstr(str, ".local") ? 6 : 0);
+			cdata->infos->name = strndup(str, len);
+		}
 	}
 
 	/* Lock mutex */
@@ -638,6 +643,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 
 			/* Create audio stream output */
 			cdata->stream = output_add_stream(h->output,
+							  cdata->infos->name,
 							  cdata->samplerate,
 							  cdata->channels,0, 0,
 							  &raop_read,
