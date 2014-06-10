@@ -247,6 +247,7 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	current = NULL;
 	samplerate = 0;
 	channels = 0;
+	h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Get configuration */
 	if(cfg != NULL)
@@ -255,7 +256,8 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		current = outputs_find_module(h, id);
 		samplerate = json_get_int(cfg, "samplerate");
 		channels = json_get_int(cfg, "channels");
-		h->volume = json_get_int(cfg, "volume");
+		h->volume = json_has_key(cfg, "volume") ?
+				 json_get_int(cfg, "volume"): OUTPUT_VOLUME_MAX;
 	}
 
 	/* Set default values */
@@ -275,10 +277,6 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	if(current != h->current || samplerate != h->samplerate ||
 	   channels != h->channels)
 		outputs_reload(h, current, samplerate, channels);
-
-	/* Set volume */
-	if(h->mod != NULL && h->handle != NULL)
-		h->mod->set_volume(h->handle, h->volume);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);
