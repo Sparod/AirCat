@@ -29,5 +29,8 @@ int parse_url(const char *url, int *protocol, char **hostname,
 	      unsigned int *port, char **username, char **password,
 	      char **resource);
 
+/* Random string generator */
+char *random_string(int size);
+
 #endif
 

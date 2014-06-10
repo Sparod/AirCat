@@ -27,6 +27,7 @@
 
 #include "outputs.h"
 #include "output_alsa.h"
+#include "utils.h"
 
 #define FREE_STRING(s) if(s != NULL) free(s);
 
@@ -36,6 +37,7 @@
 
 struct output_stream_handle {
 	/* Stream properties */
+	char *id;
 	char *name;
 	unsigned long samplerate;
 	unsigned char channels;
@@ -54,6 +56,7 @@ struct output_stream_handle {
 
 struct output_handle {
 	/* Output name */
+	char *id;
 	char *name;
 	/* Global volume for the handle */
 	unsigned int volume;
@@ -410,6 +413,7 @@ int output_open(struct output_handle **handle, struct outputs_handle *outputs,
 	h = *handle;
 
 	/* Init structure */
+	h->id = random_string(10);
 	h->name = strdup(name);
 	h->outputs = outputs;
 	h->mutex = &outputs->mutex;
@@ -461,6 +465,7 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 		goto end;
 
 	/* Fill handle */
+	s->id = random_string(10);
 	s->name = name ? strdup(name) : NULL;
 	s->samplerate = samplerate;
 	s->channels = channels;
@@ -519,6 +524,7 @@ void output_remove_stream(struct output_handle *h,
 
 	/* Free stream name */
 	free(s->name);
+	free(s->id);
 
 	/* Free structure */
 	free(s);
@@ -601,6 +607,7 @@ void output_close(struct output_handle *h)
 
 	/* Free output name */
 	free(h->name);
+	free(h->id);
 
 	/* Free structure */
 	free(h);
@@ -757,8 +764,8 @@ static int outputs_find_stream_from_url(struct outputs_handle *h,
 {
 	struct output_stream_handle *s;
 	struct output_handle *l;
-	int len, idx, i;
-	char *str;
+	char *str, *idx;
+	int len;
 
 	if(h == NULL || url == NULL)
 		return -1;
@@ -771,7 +778,7 @@ static int outputs_find_stream_from_url(struct outputs_handle *h,
 	for(l = h->handles; l != NULL; l = l->next)
 	{
 		/* Check handle name */
-		if(strncmp(l->name, url, len) != 0)
+		if(strncmp(l->id, url, len) != 0 || strlen(l->id) != len)
 			continue;
 		*handle = l;
 		if((is_get && url[len] != '/') ||
@@ -779,14 +786,14 @@ static int outputs_find_stream_from_url(struct outputs_handle *h,
 			return 0;
 
 		/* Get index */
-		if(url[len+1] < 48 || url[len+1] > 57)
-			return -1;
-		idx = strtoul(url + len + 1, NULL, 10);
+		idx = (char*)url + len + 1;
+		len = is_get ? strlen(idx) : strrchr(url+len, '/') - idx;
 
 		/* Parse streams */
-		for(s = l->streams, i = 0; s != NULL; s = s->next, i++)
+		for(s = l->streams; s != NULL; s = s->next)
 		{
-			if(i == idx)
+			if(strncmp(s->id, idx, len) == 0 &&
+			   strlen(s->id) == len)
 			{
 				*stream = s;
 				return 0;
@@ -942,6 +949,7 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 				continue;
 
 			/* Get name */
+			json_set_string(tmp, "id", l->id);
 			json_set_string(tmp, "name", l->name);
 			json_set_int(tmp, "volume", l->volume);
 
@@ -955,6 +963,7 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 					continue;
 
 				/* Get stream configuration */
+				json_set_string(tmp2, "id", s->id);
 				json_set_string(tmp2, "name", s->name);
 				json_set_int(tmp2, "samplerate", s->samplerate);
 				json_set_int(tmp2, "channels", s->channels);
