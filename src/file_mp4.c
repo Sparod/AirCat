@@ -732,6 +732,10 @@ int file_mp4_get_next_frame(struct file_handle *h)
 	struct mp4_demux *d = h->demux_data;
 	int size;
 
+	/* End of file */
+	if(d->cur_sample >= d->num_samples)
+		return -1;
+
 	/* Read frame */
 	file_seek_input(h, d->cur_offset, SEEK_SET);
 	size = file_read_input(h, d->cur_sample_size);
