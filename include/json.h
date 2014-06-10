@@ -48,6 +48,7 @@ struct json;
 #define json_get_ex(j, k, v) (int) json_object_object_get_ex( \
 						  (struct json_object *) j, k, \
 						  (struct json_object **) v)
+#define json_has_key(j, k) (int) json_get_ex(j, k, NULL)
 #define json_del(j, k) json_object_object_del((struct json_object *) j, k)
 
 /* JSON Array */
