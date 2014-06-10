@@ -19,10 +19,14 @@
 #ifndef _OUTPUT_H
 #define _OUTPUT_H
 
-#define OUTPUT_VOLUME_MAX 65536
+#define OUTPUT_VOLUME_MAX 65535
 
 struct output_handle;
 struct output_stream_handle;
+
+/* Global output volume control */
+int output_set_volume(struct output_handle *h, unsigned int volume);
+unsigned int output_get_volue(struct output_handle *h);
 
 /* Add/Remove output stream */
 struct output_stream_handle *output_add_stream(struct output_handle *h,

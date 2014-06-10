@@ -55,6 +55,8 @@ struct output_stream_handle {
 struct output_handle {
 	/* Output name */
 	char *name;
+	/* Global volume for the handle */
+	unsigned int volume;
 	/* Outputs associated handle */
 	struct outputs_handle *outputs;
 	pthread_mutex_t *mutex;
@@ -91,6 +93,10 @@ struct outputs_handle {
 	/* Mutex for thread-safe */
 	pthread_mutex_t mutex;
 };
+
+static int output_reset_volume_stream(struct outputs_handle *h,
+				      struct output_handle *handle,
+				      struct output_stream_handle *stream);
 
 int outputs_open(struct outputs_handle **handle, struct json *config)
 {
@@ -210,10 +216,7 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 						       stream->user_data);
 
 				/* Reset volume */
-				if(stream->stream != NULL)
-					h->mod->set_volume_stream(h->handle,
-							        stream->stream,
-							        stream->volume);
+				output_reset_volume_stream(h, handle, stream);
 
 				/* Play stream */
 				if(stream->stream != NULL && stream->is_playing)
@@ -341,7 +344,6 @@ unsigned int outputs_get_volue(struct outputs_handle *h)
 
 	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
 		vol = h->mod->get_volume(h->handle);
-	h->volume = vol;
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);
@@ -412,6 +414,7 @@ int output_open(struct output_handle **handle, struct outputs_handle *outputs,
 	h->outputs = outputs;
 	h->mutex = &outputs->mutex;
 	h->streams = NULL;
+	h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Lock output access */
 	pthread_mutex_lock(h->mutex);
@@ -467,10 +470,10 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 	s->user_data = user_data;
 	s->stream = stream;
 	s->is_playing = 0;
+	s->volume = OUTPUT_VOLUME_MAX;
 
-	/* Get default volume */
-	s->volume = h->outputs->mod->get_volume_stream(h->outputs->handle,
-						       s->stream);
+	/* Reset volume */
+	output_reset_volume_stream(h->outputs, h, s);
 
 	/* Add stream to stream list */
 	s->next = h->streams;
@@ -519,6 +522,47 @@ void output_remove_stream(struct output_handle *h,
 
 	/* Free structure */
 	free(s);
+}
+
+int output_set_volume(struct output_handle *h, unsigned int volume)
+{
+	int ret = -1;
+
+	if(h == NULL)
+		return -1;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Set volume */
+	h->volume = volume;
+
+	/* Reload volume for all streams */
+	output_reset_volume_stream(h->outputs, h, NULL);
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
+}
+
+unsigned int output_get_volue(struct output_handle *h)
+{
+	unsigned int vol = 0;
+
+	if(h == NULL)
+		return 0;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Get current volume */
+	vol = h->volume;
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return vol;
 }
 
 void output_close(struct output_handle *h)
@@ -618,6 +662,38 @@ int output_pause_stream(struct output_handle *h, struct output_stream_handle *s)
 	return ret;
 }
 
+static int output_reset_volume_stream(struct outputs_handle *h,
+				      struct output_handle *handle,
+				      struct output_stream_handle *stream)
+{
+	struct output_stream_handle *s;
+	struct output_handle *l;
+	unsigned long vol;
+
+	if(h == NULL || h->mod == NULL || h->handle == NULL)
+		return -1;
+
+	for(l = (handle == NULL ? h->handles : handle); l != NULL;
+	    l = handle == NULL ? l->next : NULL)
+	{
+		for(s = (stream == NULL ? l->streams : stream); s != NULL;
+		    s = stream == NULL ? s->next : NULL)
+		{
+			if(s->stream == NULL)
+				continue;
+
+			/* Calculate volume */
+			vol = s->volume * l->volume / OUTPUT_VOLUME_MAX;
+			vol = vol * h->volume / OUTPUT_VOLUME_MAX;
+
+			/* Set stream volume */
+			h->mod->set_volume_stream(h->handle, s->stream, vol);
+		}
+	}
+
+	return 0;
+}
+
 int output_set_volume_stream(struct output_handle *h,
 			     struct output_stream_handle *s,
 			     unsigned int volume)
@@ -630,15 +706,11 @@ int output_set_volume_stream(struct output_handle *h,
 	/* Lock output access */
 	pthread_mutex_lock(h->mutex);
 
-	/* Check output module */
-	if(h->outputs != NULL && h->outputs->mod != NULL &&
-	   h->outputs->handle != NULL && s->stream != NULL)
-	{
-		/* Set stream volume */
-		ret = h->outputs->mod->set_volume_stream(h->outputs->handle,
-							 s->stream, volume);
-	}
+	/* Set volume */
 	s->volume = volume;
+
+	/* Set stream volume */
+	ret = output_reset_volume_stream(h->outputs, h, s);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
@@ -677,9 +749,11 @@ unsigned int output_get_volume_stream(struct output_handle *h,
  *                              Output URLs part                              *
  ******************************************************************************/
 
-static struct output_stream_handle *outputs_find_stream_from_url(
-						       struct outputs_handle *h,
-						       const char *url)
+static int outputs_find_stream_from_url(struct outputs_handle *h,
+					const char *url,
+					struct output_handle **handle,
+					struct output_stream_handle **stream,
+					int is_get)
 {
 	struct output_stream_handle *s;
 	struct output_handle *l;
@@ -687,18 +761,11 @@ static struct output_stream_handle *outputs_find_stream_from_url(
 	char *str;
 
 	if(h == NULL || url == NULL)
-		return NULL;
+		return -1;
 
 	/* Get handle name */
 	str = strchr(url, '/');
-	if(str == NULL)
-		return NULL;
-	len = str - url;
-
-	/* Get index */
-	if(url[len+1] < 48 || url[len+1] > 57)
-		return NULL;
-	idx = strtoul(url + len + 1, NULL, 10);
+	len = str == NULL ? strlen(url) : str - url;
 
 	/* Parse all handle by name */
 	for(l = h->handles; l != NULL; l = l->next)
@@ -706,20 +773,36 @@ static struct output_stream_handle *outputs_find_stream_from_url(
 		/* Check handle name */
 		if(strncmp(l->name, url, len) != 0)
 			continue;
+		*handle = l;
+		if((is_get && url[len] != '/') ||
+		   (!is_get && strrchr(url+len, '/') == url+len))
+			return 0;
+
+		/* Get index */
+		if(url[len+1] < 48 || url[len+1] > 57)
+			return -1;
+		idx = strtoul(url + len + 1, NULL, 10);
 
 		/* Parse streams */
 		for(s = l->streams, i = 0; s != NULL; s = s->next, i++)
+		{
 			if(i == idx)
-				return s;
+			{
+				*stream = s;
+				return 0;
+			}
+		}
+		return -1;
 	}
 
-	return NULL;
+	return -1;
 }
 
 static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 			      unsigned char **buffer, size_t *size)
 {
-	struct output_stream_handle *s;
+	struct output_stream_handle *s = NULL;
+	struct output_handle *handle = NULL;
 	unsigned int vol = 0;
 	struct json *json;
 	int is_master;
@@ -743,9 +826,12 @@ static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 		else
 		{
 			/* Get stream from url */
-			s = outputs_find_stream_from_url(h, req->resource);
-			if(s != NULL)
-				json_set_int(json, "volume", s->volume);
+			if(outputs_find_stream_from_url(h, req->resource,
+							&handle, &s, 1) == 0)
+			{
+				vol = s == NULL ? handle->volume : s->volume;
+				json_set_int(json, "volume", vol);
+			}
 		}
 
 		/* Unlock output access */
@@ -767,7 +853,7 @@ static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 		if(str == NULL)
 		{
 			is_master = 1;
-			str = req->resource;
+			str = (char*) req->resource;
 		}
 		else
 		{
@@ -795,17 +881,16 @@ static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 		else
 		{
 			/* Get stream from url */
-			s = outputs_find_stream_from_url(h, req->resource);
-			if(s != NULL)
+			if(outputs_find_stream_from_url(h, req->resource,
+							&handle, &s, 0) == 0)
 			{
-				if(h->mod != NULL && h->handle != NULL &&
-				   s->stream != NULL)
-					h->mod->set_volume_stream(h->handle,
-								  s->stream,
-								  vol);
-				s->volume = vol;
+				if(s == NULL)
+					handle->volume = vol;
+				else
+					s->volume = vol;
 			}
 		}
+		output_reset_volume_stream(h, handle, s);
 
 		/* Unlock output access */
 		pthread_mutex_unlock(&h->mutex);
@@ -858,6 +943,7 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 
 			/* Get name */
 			json_set_string(tmp, "name", l->name);
+			json_set_int(tmp, "volume", l->volume);
 
 			/* Create stream array */
 			list2 = json_new_array();
