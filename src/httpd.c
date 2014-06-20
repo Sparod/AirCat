@@ -139,6 +139,7 @@ int httpd_start(struct httpd_handle *h)
 			    NULL, NULL,
 			    &httpd_request, h,
 			    MHD_OPTION_NOTIFY_COMPLETED, &httpd_completed, NULL,
+			    MHD_OPTION_THREAD_POOL_SIZE, 10,
 			    MHD_OPTION_END);
 	if(h->httpd == NULL)
 		return -1;
