@@ -67,6 +67,7 @@ AC_SUBST(modules_DIR)
 
 AC_CONFIG_FILES([Makefile
 		 doc/Makefile
+		 www/Makefile
 		 include/Makefile
 		 modules/Makefile
 		 src/Makefile])
