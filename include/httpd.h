@@ -48,7 +48,7 @@
 #define HTTPD_RAW 0
 #define HTTPD_JSON 1
 
-#define HTTPD_REQ_INIT {NULL, NULL, 0, NULL, NULL, 0}
+#define HTTPD_REQ_INIT {NULL, NULL, 0, NULL, NULL, 0, NULL}
 struct httpd_req {
 	/* URL specific */
 	const char *url;
@@ -58,6 +58,8 @@ struct httpd_req {
 	struct json *json;
 	unsigned char *data;
 	size_t len;
+	/* Private data: do not edit! */
+	void *priv_data;
 };
 
 struct url_table {
@@ -80,5 +82,7 @@ int httpd_close(struct httpd_handle *h);
 int httpd_add_urls(struct httpd_handle *h, const char *name,
 		   struct url_table *urls, void *user_data);
 int httpd_remove_urls(struct httpd_handle *h, const char *name);
+
+const char *httpd_get_query(struct httpd_req *req, const char *key);
 
 #endif

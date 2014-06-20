@@ -703,6 +703,7 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 	struct httpd_req req = HTTPD_REQ_INIT;
 	struct json_data *j_data = NULL;
 	unsigned char *resp = NULL;
+	const char *resource;
 	size_t resp_len = 0;
 	int code = 0;
 	int len;
@@ -725,18 +726,17 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 				return httpd_response(c, 406,
 						      "Method not acceptable!");
 
-			/* Extract and check ressource name */
+			/* Check ressource name*/
+			resource = url + len + strlen(urls[i].url);
 			if(urls[i].extended)
 			{
-				req.resource = url + len + strlen(urls[i].url);
-				if(*req.resource++ == '/' && *req.resource == 0)
+				/* Get resource */
+				if(*resource++ == '/' && *resource == 0)
 					return httpd_response(c, 400,
 								 "Bad request");
-				if(*req.resource == '/')
-					req.resource++;
+				if(*resource == '/')
+					resource++;
 			}
-			else
-				req.resource = NULL;
 
 			/* Get uploaded data */
 			if(method != HTTPD_GET)
@@ -771,11 +771,21 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 				}
 			}
 
-			/* Process URL */
+			/* Fill request structure */
 			req.url = url;
 			req.method = method;
+			req.resource = resource;
+			req.priv_data = c;
+
+			/* Process URL */
 			code = urls[i].process(user_data, &req, &resp,
 					       &resp_len);
+
+			/* Free request values */
+			if(req.json != NULL)
+				json_free(req.json);
+			if(req.data != NULL)
+				free(req.data);
 
 			return httpd_data_response(c, code, resp, resp_len);
 		}
@@ -883,5 +893,15 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 	}
 
 	free(req);
+}
+
+const char *httpd_get_query(struct httpd_req *req, const char *key)
+{
+	if(req == NULL)
+		return NULL;
+
+	return MHD_lookup_connection_value(
+				       (struct MHD_Connection *) req->priv_data,
+				       MHD_GET_ARGUMENT_KIND, key);
 }
 
