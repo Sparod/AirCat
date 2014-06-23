@@ -304,7 +304,14 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 		if(l->enabled == 0 && l->opened != 0)
 		{
 			/* Remove module URLs from HTTP server */
-			httpd_remove_urls(httpd, l->id);
+			if(httpd_remove_urls(httpd, l->id) != 0)
+			{
+				/* Cannot remove URLs from HTTP server: retry on
+				 * next refresh call.
+				 * Keeps the module in disabling status.
+				 */
+				continue;
+			}
 
 			/* Get module config */
 			if(l->mod->get_config != NULL && l->handle != NULL)

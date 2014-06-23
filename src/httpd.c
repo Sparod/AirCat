@@ -37,6 +37,15 @@
 
 #define OPAQUE "11733b200778ce33060f31c9af70a870ba96ddd4"
 
+/* Maximum time to wait end of connections for URL group remove:
+ *   HTTPD_REMOVE_RETRY = number of retry,
+ *   HTTPD_REMOVE_WAIT  = time to wait between to retry (in ms).
+ * Total time is given by HTTPD_REMOVE_RETRY * HTTPD_REMOVE_WAIT in ms.
+ * Default time is 1s.
+ */
+#define HTTPD_REMOVE_RETRY 100
+#define HTTPD_REMOVE_WAIT 10
+
 struct mime_type {
 	const char *ext;
 	const char *mime;
@@ -70,9 +79,16 @@ struct request_attr {
 };
 
 struct httpd_urls {
+	/* Root name of URL group */
 	char *name;
+	/* URL group */
 	void *user_data;
 	struct url_table *urls;
+	/* Mutex and counter for active connections */
+	int abort;
+	int count;
+	pthread_mutex_t mutex;
+	/* Next URL group */
 	struct httpd_urls *next;
 };
 
@@ -261,6 +277,11 @@ int httpd_add_urls(struct httpd_handle *h, const char *name,
 	u->urls = urls;
 	u->user_data = user_data;
 
+	/* Init mutex */
+	pthread_mutex_init(&u->mutex, NULL);
+	u->count = 0;
+	u->abort = 0;
+
 	/* Remove old URLs group */
 	httpd_remove_urls(h, name);
 
@@ -290,28 +311,77 @@ static void httpd_free_urls(struct httpd_urls *u)
 
 int httpd_remove_urls(struct httpd_handle *h, const char *name)
 {
-	struct httpd_urls **up, *u;
+	struct httpd_urls *up, *u = NULL;
+	int count = 1;
+	int i;
 
 	if(name == NULL)
+		return 0;
+
+	/* Lock URLs list access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Find URL group in list */
+	for(u = h->urls; u != NULL; u = u->next)
+	{
+		if(strcmp(u->name, name) == 0)
+			break;
+	}
+
+	/* Unlock URLs list access */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* Check URL group */
+	if(u == NULL)
+		return 0;
+
+	/* Lock this URL group access */
+	pthread_mutex_lock(&u->mutex);
+
+	/* Abort all connections for this URL group */
+	u->abort = 1;
+
+	/* Unlock this URL group access */
+	pthread_mutex_unlock(&u->mutex);
+
+	/* Wait end of all connections */
+	for(i = 0; i < HTTPD_REMOVE_RETRY; i++)
+	{
+		/* Lock specific URL */
+		pthread_mutex_lock(&u->mutex);
+
+		/* Get connection counter */
+		count = u->count;
+
+		/* Unlock specific URL */
+		pthread_mutex_unlock(&u->mutex);
+
+		/* No more connections */
+		if(count == 0)
+			break;
+
+		/* Sleep */
+		usleep(HTTPD_REMOVE_WAIT * 1000);
+	}
+
+	/* Check counter: return failure if time elapsed */
+	if(count > 0)
 		return -1;
 
 	/* Lock URLs list access */
 	pthread_mutex_lock(&h->mutex);
 
-	/* Remove client from list */
-	up = &h->urls;
-	while((*up) != NULL)
+	/* Remove URL group from list */
+	for(up = h->urls; up != NULL; up = up->next)
 	{
-		u = *up;
-		if(strcmp(u->name, name) == 0)
-		{
-			*up = u->next;
-			httpd_free_urls(u);
+		if(up->next == u)
 			break;
-		}
-		else
-			up = &u->next;
 	}
+	if(up != NULL)
+		up->next = u->next;
+	else if(h->urls == u)
+		h->urls = u->next;
+	httpd_free_urls(u);
 
 	/* Unlock URLs list access */
 	pthread_mutex_unlock(&h->mutex);
@@ -694,11 +764,35 @@ enum {
 	HTTPD_NO = MHD_NO
 };
 
-static int httpd_parse_url(struct MHD_Connection *c, const char *url,
-			   int method, const char * upload_data,
-			   size_t * upload_data_size, void ** ptr,
-			   const char *root_url, const struct url_table *urls,
-			   void *user_data)
+struct url_table *httpd_find_url(const char *url, const char *root_url,
+				 struct url_table *urls)
+{
+	int len;
+	int i;
+
+	/* Check URL root */
+	len = strlen(root_url);
+	if(url == NULL || strncmp(url+1, root_url, len) != 0 ||
+	   (*root_url != '\0' && url[len+1] != 0 && url[len+1] != '/'))
+		return NULL;
+
+	/* Parse all URLs */
+	for(i = 0; urls[i].url != NULL; i++)
+	{
+		if(httpd_strcmp(urls[i].url, url+len+1, !urls[i].extended) == 0)
+		{
+			return &urls[i];
+		}
+	}
+
+	return NULL;
+}
+
+static int httpd_process_url(struct MHD_Connection *c, const char *url,
+			     int method, const char *root_url, 
+			     const struct url_table *u, void *user_data,
+			     const char *upload_data, size_t *upload_data_size,
+			     void **ptr)
 {
 	struct request_data **r_data = (struct request_data **)ptr;
 	struct httpd_req req = HTTPD_REQ_INIT;
@@ -707,92 +801,65 @@ static int httpd_parse_url(struct MHD_Connection *c, const char *url,
 	const char *resource;
 	size_t resp_len = 0;
 	int code = 0;
-	int len;
 	int ret;
-	int i;
 
-	/* Check URL root */
-	len = strlen(root_url);
-	if(url == NULL || strncmp(url+1, root_url, len) != 0 ||
-	   (*root_url != '\0' && url[len+1] != 0 && url[len+1] != '/'))
-		return HTTPD_URL_NOT_FOUND;
-
-	/* Parse all URLs */
-	for(i = 0; urls[i].url != NULL; i++)
+	/* Check ressource name*/
+	resource = url + strlen(root_url) + strlen(u->url);
+	if(u->extended)
 	{
-		if(httpd_strcmp(urls[i].url, url+len+1, !urls[i].extended) == 0)
+		/* Get resource */
+		if(*resource++ == '/' && *resource == 0)
+			return httpd_response(c, 400, "Bad request");
+		if(*resource == '/')
+			resource++;
+	}
+
+	/* Get uploaded data */
+	if(method != HTTPD_GET)
+	{
+		/* POST or PUT */
+		if(u->upload == HTTPD_JSON)
 		{
-			/* Verify method */
-			if((urls[i].method & method) == 0)
-				return httpd_response(c, 406,
-						      "Method not acceptable!");
+			/* Parse JSON */
+			ret = httpd_parse_json(r_data, upload_data,
+					       upload_data_size);
+			if(ret == 1)
+				return HTTPD_CONTINUE;
+			else if(ret < 0)
+				return httpd_response(c, 500,
+						      "Internal error!");
 
-			/* Check ressource name*/
-			resource = url + len + strlen(urls[i].url);
-			if(urls[i].extended)
-			{
-				/* Get resource */
-				if(*resource++ == '/' && *resource == 0)
-					return httpd_response(c, 400,
-								 "Bad request");
-				if(*resource == '/')
-					resource++;
-			}
+			/* Get JSON object */
+			j_data = (struct json_data*) ((*r_data)->data);
+			req.json = j_data->object;
 
-			/* Get uploaded data */
-			if(method != HTTPD_GET)
-			{
-				/* POST or PUT */
-				if(urls[i].upload == HTTPD_JSON)
-				{
-					/* Parse JSON */
-					ret = httpd_parse_json(r_data,
-							      upload_data,
-							      upload_data_size);
-					if(ret == 1)
-						return HTTPD_CONTINUE;
-					else if(ret < 0)
-						return httpd_response(c, 500,
-							     "Internal error!");
-
-					/* Get JSON object */
-					j_data = (struct json_data*)
-							      ((*r_data)->data);
-					req.json = j_data->object;
-
-					/* Check JSON object */
-					if(req.json == NULL)
-						return httpd_response(c, 400,
-								 "Bad request");
-				}
-				else
-				{
-					req.data = NULL;
-					req.len = 0;
-				}
-			}
-
-			/* Fill request structure */
-			req.url = url;
-			req.method = method;
-			req.resource = resource;
-			req.priv_data = c;
-
-			/* Process URL */
-			code = urls[i].process(user_data, &req, &resp,
-					       &resp_len);
-
-			/* Free request values */
-			if(req.json != NULL)
-				json_free(req.json);
-			if(req.data != NULL)
-				free(req.data);
-
-			return httpd_data_response(c, code, resp, resp_len);
+			/* Check JSON object */
+			if(req.json == NULL)
+				return httpd_response(c, 400, "Bad request");
+		}
+		else
+		{
+			req.data = NULL;
+			req.len = 0;
 		}
 	}
 
-	return HTTPD_URL_NOT_FOUND;
+	/* Fill request structure */
+	req.url = url;
+	req.method = method;
+	req.resource = resource;
+	req.priv_data = c;
+
+	/* Process URL */
+	code = u->process(user_data, &req, &resp, &resp_len);
+
+	/* Free request values */
+	if(req.json != NULL)
+		json_free(req.json);
+	if(req.data != NULL)
+		free(req.data);
+
+	return httpd_data_response(c, code, resp, resp_len);
 }
 
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
@@ -801,8 +868,9 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 			 size_t *upload_data_size, void **ptr)
 {
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
+	struct httpd_urls *current_urls = NULL;
+	struct url_table *current_url = NULL;
 	struct MHD_Response *response;
-	struct httpd_urls *u;
 	int method_code = 0;
 	char *username;
 	int ret;
@@ -848,26 +916,73 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	/* Lock URLs list access */
 	pthread_mutex_lock(&h->mutex);
 
-	/* Parse URL */
-	u = h->urls;
-	while(u != NULL)
+	/* Find URL in list */
+	current_urls = h->urls;
+	while(current_urls != NULL)
 	{
-		ret = httpd_parse_url(c, url, method_code, upload_data,
-				      upload_data_size, ptr, u->name, u->urls,
-				      u->user_data);
-		if(ret != HTTPD_URL_NOT_FOUND)
-		{
-			/* Unlock URLs list access */
-			pthread_mutex_unlock(&h->mutex);
+		current_url = httpd_find_url(url, current_urls->name,
+					     current_urls->urls);
+		if(current_url != NULL)
+			break;
 
-			return ret;
-		}
-		u = u->next;
+		current_urls = current_urls->next;
 	}
+
+	/* No URL found */
+	if(current_urls == NULL || current_url == NULL)
+	{
+		/* Unlock URLs list access */
+		pthread_mutex_unlock(&h->mutex);
+
+		goto process_file;
+	}
+
+	/* Lock specific URL */
+	pthread_mutex_lock(&current_urls->mutex);
+
+	/* Check abort signal */
+	if(current_urls->abort)
+	{
+		/* Unlock specific URL */
+		pthread_mutex_unlock(&current_urls->mutex);
+
+		/* Unlock URLs list access */
+		pthread_mutex_unlock(&h->mutex);
+
+		goto process_file;
+	}
+
+	/* Increment connection counter */
+	current_urls->count++;
+
+	/* Unlock specific URL */
+	pthread_mutex_unlock(&current_urls->mutex);
 
 	/* Unlock URLs list access */
 	pthread_mutex_unlock(&h->mutex);
 
+	/* Check method */
+	if((current_url->method & method_code) == 0)
+		return httpd_response(c, 406, "Method not acceptable!");
+
+	/* Process URL */
+	ret =  httpd_process_url(c, url, method_code, current_urls->name,
+				 current_url, current_urls->user_data,
+				 upload_data, upload_data_size,
+				 ptr);
+
+	/* Lock specific URL */
+	pthread_mutex_lock(&current_urls->mutex);
+
+	/* Decrement connection counter */
+	current_urls->count--;
+
+	/* Unlock specific URL */
+	pthread_mutex_unlock(&current_urls->mutex);
+
+	return ret;
+
+process_file:
 	/* Accept only GET method if not a special URL */
 	if(method_code != HTTPD_GET)
 		return httpd_response(c, 406, "Method not acceptable!");
