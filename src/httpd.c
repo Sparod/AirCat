@@ -24,10 +24,9 @@
 #include <pthread.h>
 
 #include <microhttpd.h>
-#include <json.h>
-#include <json_tokener.h>
 
 #include "config_file.h"
+#include "json.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
