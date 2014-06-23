@@ -215,7 +215,7 @@ char *random_string(int size)
 	/* Generate string */
 	for(i = 0; i < size; i++)
 	{
-		str[i] = base64_table[random() * 62 / RAND_MAX];
+		str[i] = base64_table[rand() % 62];
 	}
 
 	/* Finish string */
