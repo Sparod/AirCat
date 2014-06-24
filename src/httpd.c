@@ -962,12 +962,6 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	/* Process URL */
 	code = u->process(user_data, &req, &resp, &resp_len);
 
-	/* Free request values */
-	if(req.json != NULL)
-		json_free(req.json);
-	if(req.data != NULL)
-		free(req.data);
-
 	/* Check response buffer */
 	if(resp == NULL || resp_len == 0)
 		return httpd_response(c, code, "");
