@@ -809,27 +809,22 @@ static void httpd_free_json(struct json_data *json)
 	}
 }
 
-static int httpd_parse_json(struct httpd_req_data **data, const char *buffer,
+static int httpd_parse_json(struct httpd_req_data *req, const char *buffer,
 			    size_t *len)
 {
 	struct json_data *json;
 
 	/* Allocate data handlers if first call */
-	if(*data == NULL)
+	if(req->data == NULL)
 	{
-		/* Allocate request data */
-		*data = malloc(sizeof(struct httpd_req_data));
-		if(*data == NULL)
-			return -1;
-
 		/* Allocate JSON data and set free function */
-		(*data)->free = (void(*)(void*))&httpd_free_json;
-		(*data)->data = malloc(sizeof(struct json_data));
-		if((*data)->data == NULL)
+		req->free = (void(*)(void*))&httpd_free_json;
+		req->data = malloc(sizeof(struct json_data));
+		if(req->data == NULL)
 			return -1;
 
 		/* Prepare JSON handler */
-		json = (struct json_data*) (*data)->data;
+		json = (struct json_data*) req->data;
 		json->object = NULL;
 		json->tokener = json_tokener_new();
 		if(json->tokener == NULL)
@@ -840,7 +835,7 @@ static int httpd_parse_json(struct httpd_req_data **data, const char *buffer,
 	}
 
 	/* Get pointer of JSON data */
-	json = (struct json_data*) (*data)->data;
+	json = (struct json_data*) req->data;
 	if(json == NULL || json->tokener == NULL)
 		return -1;
 
@@ -906,9 +901,8 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			     int method, const char *root_url, 
 			     const struct url_table *u, void *user_data,
 			     const char *upload_data, size_t *upload_data_size,
-			     void **ptr)
+			     struct httpd_req_data *r_data)
 {
-	struct httpd_req_data **r_data = (struct httpd_req_data **)ptr;
 	struct httpd_req req = HTTPD_REQ_INIT;
 	struct json_data *j_data = NULL;
 	struct MHD_Response *response;
@@ -945,7 +939,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 						      "Internal error!");
 
 			/* Get JSON object */
-			j_data = (struct json_data*) ((*r_data)->data);
+			j_data = (struct json_data*) r_data->data;
 			req.json = j_data->object;
 
 			/* Check JSON object */
@@ -1042,6 +1036,13 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	if(method_code == 0)
 		return httpd_response(c, 405, "Method not allowed!");
 
+	/* Allocate data handlers if first call */
+	if(*ptr == NULL)
+	{
+		/* Allocate request data */
+		*ptr = calloc(sizeof(struct httpd_req_data), 1);
+	}
+
 	/* Lock URLs list access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -1098,7 +1099,7 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	ret =  httpd_process_url(c, url, method_code, current_urls->name,
 				 current_url, current_urls->user_data,
 				 upload_data, upload_data_size,
-				 ptr);
+				 *ptr);
 
 	/* Lock specific URL */
 	pthread_mutex_lock(&current_urls->mutex);
