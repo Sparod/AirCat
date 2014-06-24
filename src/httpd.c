@@ -26,6 +26,7 @@
 #include <microhttpd.h>
 
 #include "config_file.h"
+#include "utils.h"
 #include "json.h"
 
 #ifdef HAVE_CONFIG_H
@@ -45,6 +46,14 @@
 #define HTTPD_REMOVE_RETRY 100
 #define HTTPD_REMOVE_WAIT 10
 
+/* Sessions parameters
+ *    HTTPD_SESSION_NAME   = name of cookie which handle session ID,
+ *    HTTPD_SESSION_EXPIRE = expiration time for session handling (in s).
+ * Default expiration time is 1h.
+ */
+#define HTTPD_SESSION_NAME "session"
+#define HTTPD_SESSION_EXPIRE 3600
+
 struct mime_type {
 	const char *ext;
 	const char *mime;
@@ -61,20 +70,23 @@ struct mime_type {
 	{0, 0}
 };
 
-struct request_data {
-	void *data;
-	void (*free)(void *);
+struct httpd_session {
+	/* Session ID */
+	char id[33];
+	/* Last time of activity on this session */
+	time_t time;
+	/* Counter for active connection on this session */
+	int count;
+	/* Next session in list */
+	struct httpd_session *next;
 };
 
-struct request_attr {
-	struct httpd_handle *handle;
-	struct MHD_Connection *connection;
-	const char *url;
-	const char *res;
-	int method;
-	const char *upload_data;
-	size_t *upload_data_size;
-	struct request_data **req_data;
+struct httpd_req_data {
+	/* Associated session */
+	struct httpd_session *session;
+	/* POST/PUT data */
+	void *data;
+	void (*free)(void *);
 };
 
 struct httpd_urls {
@@ -103,6 +115,9 @@ struct httpd_handle {
 	/* URLs list */
 	struct httpd_urls *urls;
 	pthread_mutex_t mutex;
+	/* Session list */
+	struct httpd_session *sessions;
+	pthread_mutex_t session_mutex;
 };
 
 static int httpd_request(void * user_data, struct MHD_Connection *c,
@@ -130,9 +145,11 @@ int httpd_open(struct httpd_handle **handle, struct json *config)
 	h->password = NULL;
 	h->port = 0;
 	h->urls = NULL;
+	h->sessions = NULL;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
+	pthread_mutex_init(&h->session_mutex, NULL);
 
 	/* Set configuration */
 	httpd_set_config(h, config);
@@ -390,6 +407,7 @@ int httpd_remove_urls(struct httpd_handle *h, const char *name)
 
 int httpd_close(struct httpd_handle *h)
 {
+	struct httpd_session *s;
 	struct httpd_urls *u;
 
 	if(h == NULL)
@@ -398,6 +416,14 @@ int httpd_close(struct httpd_handle *h)
 	/* Stop HTTP server */
 	if(h->httpd != NULL)
 		httpd_stop(h);
+
+	/* Free session list */
+	while(h->sessions != NULL)
+	{
+		s = h->sessions;
+		h->sessions = s->next;
+		free(s);
+	}
 
 	/* Free URLs grouo */
 	while(h->urls != NULL)
@@ -460,25 +486,114 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
 	return ret;
 }
 
-static int httpd_data_response(struct MHD_Connection *c, int code,
-			       unsigned char *buffer, size_t len)
+/******************************************************************************
+ *                              Session handling                              *
+ ******************************************************************************/
+
+static void httpd_expire_session(struct httpd_handle *h)
 {
-	struct MHD_Response *response;
-	int ret;
+	struct httpd_session *s, **sp;
+	time_t now;
 
-	if(buffer == NULL || len == 0)
-		return httpd_response(c, code, "");
+	/* Get current time */
+	now = time(NULL);
 
-	/* Create HTTP response with message */
-	response = MHD_create_response_from_data(len, buffer, MHD_YES, MHD_NO);
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
 
-	/* Queue it */
-	ret = MHD_queue_response(c, code, response);
+	/* Find expired session */
+	sp = &h->sessions;
+	while((*sp) != NULL)
+	{
+		s = *sp;
+		if(s->count == 0 && s->time + HTTPD_SESSION_EXPIRE < now)
+		{
+			/* Free session */
+			*sp = s->next;
+			free(s);
+		}
+		else
+			sp = &s->next;
+	}
 
-	/* Destroy local response */
-	MHD_destroy_response(response);
+	/* Unlock session list access */
+	pthread_mutex_unlock(&h->session_mutex);
+}
 
-	return ret;
+static void httpd_release_session(struct httpd_handle *h,
+				  struct httpd_session *s)
+{
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
+
+	/* Decrement active connections */
+	s->count--;
+
+	/* Unlock session list access */
+	pthread_mutex_unlock(&h->session_mutex);
+}
+
+static struct httpd_session *httpd_get_session(struct httpd_handle *h,
+					       const char *id)
+{
+	struct httpd_session *s;
+	time_t now;
+	char *str;
+
+	/* Check sessions */
+	httpd_expire_session(h);
+
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
+
+	/* Get current time */
+	now = time(NULL);
+
+	/* Find session ID in list */
+	if(id != NULL)
+	{
+		/* Parse list */
+		for(s = h->sessions; s != NULL; s = s->next)
+		{
+			if(strcmp(s->id, id) == 0 &&
+			   s->time + HTTPD_SESSION_EXPIRE > now)
+			{
+				/* Update time */
+				s->time = now;
+
+				/* Increment active connection */
+				s->count++;
+
+				goto end;
+			}
+		}
+	}
+	if(s != NULL)
+		goto end;
+
+	/* Create a new session */
+	s = malloc(sizeof(struct httpd_session));
+	if(s == NULL)
+		goto end;
+
+	/* Generate a random ID */
+	str = random_string(32);
+	strcpy(s->id, str);
+	free(str);
+
+	/* Set time and active counter */
+	s->time = time(NULL);
+	s->count = 1;
+
+	/* Add to list */
+	s->next = h->sessions;
+	h->sessions = s;
+
+end:
+	/* Unlock session list access */
+	pthread_mutex_unlock(&h->session_mutex);
+
+	return s;
 }
 
 /******************************************************************************
@@ -694,7 +809,7 @@ static void httpd_free_json(struct json_data *json)
 	}
 }
 
-static int httpd_parse_json(struct request_data **data, const char *buffer,
+static int httpd_parse_json(struct httpd_req_data **data, const char *buffer,
 			    size_t *len)
 {
 	struct json_data *json;
@@ -703,7 +818,7 @@ static int httpd_parse_json(struct request_data **data, const char *buffer,
 	if(*data == NULL)
 	{
 		/* Allocate request data */
-		*data = malloc(sizeof(struct request_data));
+		*data = malloc(sizeof(struct httpd_req_data));
 		if(*data == NULL)
 			return -1;
 
@@ -793,9 +908,10 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			     const char *upload_data, size_t *upload_data_size,
 			     void **ptr)
 {
-	struct request_data **r_data = (struct request_data **)ptr;
+	struct httpd_req_data **r_data = (struct httpd_req_data **)ptr;
 	struct httpd_req req = HTTPD_REQ_INIT;
 	struct json_data *j_data = NULL;
+	struct MHD_Response *response;
 	unsigned char *resp = NULL;
 	const char *resource;
 	size_t resp_len = 0;
@@ -858,7 +974,21 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	if(req.data != NULL)
 		free(req.data);
 
-	return httpd_data_response(c, code, resp, resp_len);
+	/* Check response buffer */
+	if(resp == NULL || resp_len == 0)
+		return httpd_response(c, code, "");
+
+	/* Create HTTP response with message */
+	response = MHD_create_response_from_data(resp_len, resp, MHD_YES,
+						 MHD_NO);
+
+	/* Queue it */
+	ret = MHD_queue_response(c, code, response);
+
+	/* Destroy local response */
+	MHD_destroy_response(response);
+
+	return ret;
 }
 
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
@@ -993,7 +1123,7 @@ process_file:
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe)
 {
-	struct request_data *req = *((struct request_data **)ptr);
+	struct httpd_req_data *req = *((struct httpd_req_data **)ptr);
 
 	if(req == NULL)
 		return;
