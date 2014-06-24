@@ -170,7 +170,7 @@ int httpd_start(struct httpd_handle *h)
 	h->httpd = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, h->port, 
 			    NULL, NULL,
 			    &httpd_request, h,
-			    MHD_OPTION_NOTIFY_COMPLETED, &httpd_completed, NULL,
+			    MHD_OPTION_NOTIFY_COMPLETED, &httpd_completed, h,
 			    MHD_OPTION_THREAD_POOL_SIZE, 10,
 			    MHD_OPTION_END);
 	if(h->httpd == NULL)
@@ -909,6 +909,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	unsigned char *resp = NULL;
 	const char *resource;
 	size_t resp_len = 0;
+	char str[256];
 	int code = 0;
 	int ret;
 
@@ -970,6 +971,15 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	response = MHD_create_response_from_data(resp_len, resp, MHD_YES,
 						 MHD_NO);
 
+	/* Add session cookie */
+	if(r_data != NULL && r_data->session != NULL)
+	{
+		snprintf(str, sizeof(str), "%s=%s", HTTPD_SESSION_NAME,
+			 r_data->session->id);
+		MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE,
+					str);
+	}
+
 	/* Queue it */
 	ret = MHD_queue_response(c, code, response);
 
@@ -987,7 +997,9 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
 	struct httpd_urls *current_urls = NULL;
 	struct url_table *current_url = NULL;
+	struct httpd_req_data *req = NULL;
 	struct MHD_Response *response;
+	const char *id = NULL;
 	int method_code = 0;
 	char *username;
 	int ret;
@@ -1034,7 +1046,17 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	if(*ptr == NULL)
 	{
 		/* Allocate request data */
-		*ptr = calloc(sizeof(struct httpd_req_data), 1);
+		*ptr = calloc(1, sizeof(struct httpd_req_data));
+		req = *ptr;
+	}
+
+	/* Get session */
+	if(req->session == NULL)
+	{
+		/* Get Session cookie from connection */
+		id = MHD_lookup_connection_value(c, MHD_COOKIE_KIND,
+						 HTTPD_SESSION_NAME);
+		req->session = httpd_get_session(h, id);
 	}
 
 	/* Lock URLs list access */
@@ -1119,9 +1141,14 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe)
 {
 	struct httpd_req_data *req = *((struct httpd_req_data **)ptr);
+	struct httpd_handle *h = (struct httpd_handle*) user_data;
 
 	if(req == NULL)
 		return;
+
+	/* Free session */
+	if(req->session != NULL)
+		httpd_release_session(h, req->session);
 
 	/* Free request data */
 	if(req->data != NULL)
