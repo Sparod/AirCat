@@ -1003,11 +1003,13 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 		/* Create a new session if no existing has been found */
 		r_data->session = httpd_new_session(r_data->handle);
 
-		/* Add session in cookie header. */
+		/* Add session in cookie header. "path=/" is appended to string
+		 * to apply this cookie for all the domain.
+		 */
 		if(r_data->session != NULL)
 		{
-			snprintf(str, sizeof(str), "%s=%s", HTTPD_SESSION_NAME,
-				 r_data->session->id);
+			snprintf(str, sizeof(str), "%s=%s; path=/",
+				 HTTPD_SESSION_NAME, r_data->session->id);
 			MHD_add_response_header(response,
 						MHD_HTTP_HEADER_SET_COOKIE,
 						str);
