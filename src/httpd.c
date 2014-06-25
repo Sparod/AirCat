@@ -1072,15 +1072,15 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	{
 		/* Allocate request data */
 		*ptr = calloc(1, sizeof(struct httpd_req_data));
-		req = *ptr;
-
-		/* Set handle in request data */
-		req->handle = h;
 	}
+	req = *ptr;
 
 	/* Get session */
-	if(req->session == NULL)
+	if(req != NULL && req->session == NULL)
 	{
+		/* Set handle in request data */
+		req->handle = h;
+
 		/* Process expired sessions */
 		httpd_expire_session(h);
 
