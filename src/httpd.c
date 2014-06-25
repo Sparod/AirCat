@@ -997,13 +997,21 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	response = MHD_create_response_from_data(resp_len, resp, MHD_YES,
 						 MHD_NO);
 
-	/* Add session cookie */
-	if(r_data != NULL && r_data->session != NULL)
+	/* Create new session */
+	if(r_data != NULL && r_data->session == NULL)
 	{
-		snprintf(str, sizeof(str), "%s=%s", HTTPD_SESSION_NAME,
-			 r_data->session->id);
-		MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE,
-					str);
+		/* Create a new session if no existing has been found */
+		r_data->session = httpd_new_session(r_data->handle);
+
+		/* Add session in cookie header. */
+		if(r_data->session != NULL)
+		{
+			snprintf(str, sizeof(str), "%s=%s", HTTPD_SESSION_NAME,
+				 r_data->session->id);
+			MHD_add_response_header(response,
+						MHD_HTTP_HEADER_SET_COOKIE,
+						str);
+		}
 	}
 
 	/* Queue it */
@@ -1087,10 +1095,6 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		/* Get Session cookie from connection */
 		MHD_get_connection_values(c, MHD_COOKIE_KIND,
 					  &httpd_get_session, req);
-
-		/* Create a new session if no existing has been found */
-		if(req->session == NULL)
-			req->session = httpd_new_session(h);
 	}
 
 	/* Lock URLs list access */
