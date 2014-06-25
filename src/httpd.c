@@ -49,10 +49,18 @@
 /* Sessions parameters
  *    HTTPD_SESSION_NAME   = name of cookie which handle session ID,
  *    HTTPD_SESSION_EXPIRE = expiration time for session handling (in s).
+ *    HTTPD_SESSION_ABORT  = minimum time life for a session (in s): if no more
+ *                           is available for a new session (count >=
+ *                           HTTPD_SESSION_MAX), oldest session is removed
+ *                           except if its age is under HTTPD_SESSION_ABORT.
+ *    HTTPD_SESSION_MAX    = maximum session number handled by server.
  * Default expiration time is 1h.
+ * Default minimum time life is 10min.
  */
 #define HTTPD_SESSION_NAME "session"
 #define HTTPD_SESSION_EXPIRE 3600
+#define HTTPD_SESSION_ABORT 600
+#define HTTPD_SESSION_MAX 200
 
 struct mime_type {
 	const char *ext;
@@ -120,6 +128,7 @@ struct httpd_handle {
 	/* Session list */
 	struct httpd_session *sessions;
 	pthread_mutex_t session_mutex;
+	unsigned long session_count;
 };
 
 static int httpd_request(void * user_data, struct MHD_Connection *c,
@@ -148,6 +157,7 @@ int httpd_open(struct httpd_handle **handle, struct json *config)
 	h->port = 0;
 	h->urls = NULL;
 	h->sessions = NULL;
+	h->session_count = 0;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -492,13 +502,14 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
  *                              Session handling                              *
  ******************************************************************************/
 
-static void httpd_expire_session(struct httpd_handle *h)
+static void httpd_expire_session(struct httpd_handle *h, int force)
 {
-	struct httpd_session *s, **sp;
-	time_t now;
+	struct httpd_session *s, **sp, **op = NULL;
+	time_t now, oldest;
 
 	/* Get current time */
 	now = time(NULL);
+	oldest = now;
 
 	/* Lock session list access */
 	pthread_mutex_lock(&h->session_mutex);
@@ -513,9 +524,30 @@ static void httpd_expire_session(struct httpd_handle *h)
 			/* Free session */
 			*sp = s->next;
 			free(s);
+
+			/* Update session count */
+			h->session_count--;
+		}
+		else if(s->count == 0 && s->time + HTTPD_SESSION_ABORT < oldest)
+		{
+			/* Save ref and update min time */
+			op = sp;
+			oldest = s->time;
 		}
 		else
 			sp = &s->next;
+	}
+
+	/* Free oldest session if found */
+	if(force && h->session_count >= HTTPD_SESSION_MAX && op != NULL)
+	{
+		/* Free session */
+		s = *op;
+		*op = s->next;
+		free(s);
+
+		/* Update session count */
+		h->session_count--;
 	}
 
 	/* Unlock session list access */
@@ -575,7 +607,24 @@ static struct httpd_session *httpd_find_session(struct httpd_handle *h,
 static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 {
 	struct httpd_session *s;
+	int count = 0;
 	char *str;
+
+	/* Process expired sessions and force free if no more space */
+	httpd_expire_session(h, 1);
+
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
+
+	/* Get session count */
+	count = h->session_count;
+
+	/* Unlock session list access */
+	pthread_mutex_unlock(&h->session_mutex);
+
+	/* Check session count */
+	if(count >= HTTPD_SESSION_MAX)
+		return NULL;
 
 	/* Create a new session */
 	s = malloc(sizeof(struct httpd_session));
@@ -597,6 +646,9 @@ static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 	/* Add to list */
 	s->next = h->sessions;
 	h->sessions = s;
+
+	/* Update session count */
+	h->session_count++;
 
 	/* Unlock session list access */
 	pthread_mutex_unlock(&h->session_mutex);
@@ -1092,7 +1144,7 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		req->handle = h;
 
 		/* Process expired sessions */
-		httpd_expire_session(h);
+		httpd_expire_session(h, 0);
 
 		/* Get Session cookie from connection */
 		MHD_get_connection_values(c, MHD_COOKIE_KIND,
