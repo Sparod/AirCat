@@ -82,6 +82,8 @@ struct httpd_session {
 };
 
 struct httpd_req_data {
+	/* Handle of HTTP Server */
+	struct httpd_handle *handle;
 	/* Associated session */
 	struct httpd_session *session;
 	/* POST/PUT data */
@@ -533,48 +535,52 @@ static void httpd_release_session(struct httpd_handle *h,
 	pthread_mutex_unlock(&h->session_mutex);
 }
 
-static struct httpd_session *httpd_get_session(struct httpd_handle *h,
-					       const char *id)
+static struct httpd_session *httpd_find_session(struct httpd_handle *h,
+						const char *id)
 {
 	struct httpd_session *s;
 	time_t now;
-	char *str;
 
-	/* Check sessions */
-	httpd_expire_session(h);
-
-	/* Lock session list access */
-	pthread_mutex_lock(&h->session_mutex);
+	/* Check id */
+	if(id == NULL)
+		return NULL;
 
 	/* Get current time */
 	now = time(NULL);
 
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
+
 	/* Find session ID in list */
-	if(id != NULL)
+	for(s = h->sessions; s != NULL; s = s->next)
 	{
-		/* Parse list */
-		for(s = h->sessions; s != NULL; s = s->next)
+		if(strcmp(s->id, id) == 0 &&
+		   s->time + HTTPD_SESSION_EXPIRE > now)
 		{
-			if(strcmp(s->id, id) == 0 &&
-			   s->time + HTTPD_SESSION_EXPIRE > now)
-			{
-				/* Update time */
-				s->time = now;
-
+			/* Update time */
+			s->time = now;
 				/* Increment active connection */
-				s->count++;
+			s->count++;
 
-				goto end;
-			}
+			break;
 		}
 	}
-	if(s != NULL)
-		goto end;
+
+	/* Unlock session list access */
+	pthread_mutex_unlock(&h->session_mutex);
+
+	return s;
+}
+
+static struct httpd_session *httpd_new_session(struct httpd_handle *h)
+{
+	struct httpd_session *s;
+	char *str;
 
 	/* Create a new session */
 	s = malloc(sizeof(struct httpd_session));
 	if(s == NULL)
-		goto end;
+		return NULL;
 
 	/* Generate a random ID */
 	str = random_string(32);
@@ -585,15 +591,35 @@ static struct httpd_session *httpd_get_session(struct httpd_handle *h,
 	s->time = time(NULL);
 	s->count = 1;
 
+	/* Lock session list access */
+	pthread_mutex_lock(&h->session_mutex);
+
 	/* Add to list */
 	s->next = h->sessions;
 	h->sessions = s;
 
-end:
 	/* Unlock session list access */
 	pthread_mutex_unlock(&h->session_mutex);
 
 	return s;
+}
+
+static int httpd_get_session(void *user_data, enum MHD_ValueKind kind,
+			     const char *key, const char *value)
+{
+	struct httpd_req_data *req = (struct httpd_req_data *) user_data;
+
+	/* Check key */
+	if(strcmp(key, HTTPD_SESSION_NAME) != 0)
+		return MHD_YES;
+
+	/* Find the session */
+	req->session = httpd_find_session(req->handle, value);
+	if(req->session == NULL)
+		return MHD_YES;
+
+	/* A session has been found: abort parsing */
+	return MHD_YES;
 }
 
 /******************************************************************************
@@ -999,7 +1025,6 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	struct url_table *current_url = NULL;
 	struct httpd_req_data *req = NULL;
 	struct MHD_Response *response;
-	const char *id = NULL;
 	int method_code = 0;
 	char *username;
 	int ret;
@@ -1048,15 +1073,24 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		/* Allocate request data */
 		*ptr = calloc(1, sizeof(struct httpd_req_data));
 		req = *ptr;
+
+		/* Set handle in request data */
+		req->handle = h;
 	}
 
 	/* Get session */
 	if(req->session == NULL)
 	{
+		/* Process expired sessions */
+		httpd_expire_session(h);
+
 		/* Get Session cookie from connection */
-		id = MHD_lookup_connection_value(c, MHD_COOKIE_KIND,
-						 HTTPD_SESSION_NAME);
-		req->session = httpd_get_session(h, id);
+		MHD_get_connection_values(c, MHD_COOKIE_KIND,
+					  &httpd_get_session, req);
+
+		/* Create a new session if no existing has been found */
+		if(req->session == NULL)
+			req->session = httpd_new_session(h);
 	}
 
 	/* Lock URLs list access */
