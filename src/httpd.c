@@ -1251,7 +1251,9 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			free(req->data);
 	}
 
+	/* Free request data */
 	free(req);
+	*ptr = NULL;
 }
 
 const char *httpd_get_query(struct httpd_req *req, const char *key)
