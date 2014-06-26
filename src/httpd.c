@@ -1091,6 +1091,52 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	char *username;
 	int ret;
 
+#if (MHD_VERSION >= 0x00093500) && (MHD_VERSION < 0x00093700)
+	/* Cause to a regression, version 9.35 to 9.36 included don't unescape
+	 * URL anymore. So URL needs to be unescaped here.
+	 */
+	char buf[3] = { 0, 0, 0 };
+	unsigned long n;
+	char *u = url;
+	char *w = url;
+	char *end;
+
+	/* Process all URL */
+	while(*u != '\0')
+	{
+		/* A special character to unescape */
+		if(*u == '%')
+		{
+			/* End of string */
+			if(u[1] == '\0' || u[2] == '\0')
+			{
+				*w = '\0';
+				break;
+			}
+
+			/* Get value */
+			buf[0] = u[1];
+			buf[1] = u[2];
+			n = strtoul(buf, &end, 16);
+			if(*end == '\0')
+			{
+				*w = (char) ((unsigned char) n);
+				w++;
+				u += 3;
+				continue;
+			}
+		}
+
+		/* Increment */
+		*w = *u;
+		u++;
+		w++;
+	}
+
+	/* Terminate string */
+	*w = '\0';
+#endif
+
 	/* Authentication check */
 	if(*ptr == NULL && h->password != NULL)
 	{
