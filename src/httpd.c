@@ -1365,7 +1365,7 @@ const char *httpd_get_query(struct httpd_req *req, const char *key)
 int httpd_set_session_value(struct httpd_req *req, const char *key,
 			    const char *value)
 {
-	struct httpd_session_value *v;
+	struct httpd_session_value **vp, *v = NULL;
 	struct httpd_req_data *r;
 
 	if(req == NULL || req->priv_data == NULL || key == NULL)
@@ -1380,10 +1380,38 @@ int httpd_set_session_value(struct httpd_req *req, const char *key,
 	pthread_mutex_lock(&r->session->values_mutex);
 
 	/* Find value */
-	for(v = r->session->values; v != NULL; v = v->next)
+	vp = &r->session->values;
+	while((*vp) != NULL)
 	{
+		v = *vp;
 		if(strcmp(v->key, key) == 0)
 			break;
+		else
+		{
+			vp = &v->next;
+			v = NULL;
+		}
+	}
+
+	/* Remove value from list */
+	if(value == NULL)
+	{
+		/* No value in list */
+		if(v == NULL)
+			goto end;
+
+		/* Free both strings */
+		if(v->value != NULL)
+			free(v->value);
+		if(v->key != NULL)
+			free(v->key);
+
+		/* Update list and free */
+		*vp = v->next;
+		free(v);
+
+		/* Exit */
+		goto end;
 	}
 
 	/* Check entry */
@@ -1418,6 +1446,7 @@ int httpd_set_session_value(struct httpd_req *req, const char *key,
 	if(value != NULL)
 		v->value = strdup(value);
 
+end:
 	/* Unlock session values access */
 	pthread_mutex_unlock(&r->session->values_mutex);
 
