@@ -72,6 +72,7 @@ struct url_table {
 
 struct httpd_handle;
 
+/* HTTP basic functions */
 int httpd_open(struct httpd_handle **handle, struct json *config);
 int httpd_start(struct httpd_handle *h);
 int httpd_stop(struct httpd_handle *h);
@@ -79,10 +80,17 @@ int httpd_set_config(struct httpd_handle *h, struct json *c);
 struct json *httpd_get_config(struct httpd_handle *h);
 int httpd_close(struct httpd_handle *h);
 
+/* Add/Remove a URL group */
 int httpd_add_urls(struct httpd_handle *h, const char *name,
 		   struct url_table *urls, void *user_data);
 int httpd_remove_urls(struct httpd_handle *h, const char *name);
 
+/* Get stringquery values in URL */
 const char *httpd_get_query(struct httpd_req *req, const char *key);
+
+/* Set/Get values in session */
+int httpd_set_session_value(struct httpd_req *req, const char *key,
+			     const char *value);
+char *httpd_get_session_value(struct httpd_req *req, const char *key);
 
 #endif

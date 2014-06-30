@@ -78,9 +78,18 @@ struct mime_type {
 	{0, 0}
 };
 
+struct httpd_session_value {
+	char *key;
+	char *value;
+	struct httpd_session_value *next;
+};
+
 struct httpd_session {
 	/* Session ID */
 	char id[33];
+	/* Session values */
+	struct httpd_session_value *values;
+	pthread_mutex_t values_mutex;
 	/* Last time of activity on this session */
 	time_t time;
 	/* Counter for active connection on this session */
@@ -92,6 +101,7 @@ struct httpd_session {
 struct httpd_req_data {
 	/* Handle of HTTP Server */
 	struct httpd_handle *handle;
+	struct MHD_Connection *connection;
 	/* Associated session */
 	struct httpd_session *session;
 	/* POST/PUT data */
@@ -502,6 +512,31 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
  *                              Session handling                              *
  ******************************************************************************/
 
+static void httpd_free_session(struct httpd_session *s)
+{
+	struct httpd_session_value *v;
+
+	if(s == NULL)
+		return;
+
+	/* Free values */
+	while(s->values != NULL)
+	{
+		v = s->values;
+		s->values = v->next;
+
+		/* Free strings */
+		if(v->key != NULL)
+			free(v->key);
+		if(v->value != NULL)
+			free(v->value);
+		free(v);
+	}
+
+	/* Free value */
+	free(s);
+}
+
 static void httpd_expire_session(struct httpd_handle *h, int force)
 {
 	struct httpd_session *s, **sp, **op = NULL;
@@ -523,7 +558,7 @@ static void httpd_expire_session(struct httpd_handle *h, int force)
 		{
 			/* Free session */
 			*sp = s->next;
-			free(s);
+			httpd_free_session(s);
 
 			/* Update session count */
 			h->session_count--;
@@ -544,7 +579,7 @@ static void httpd_expire_session(struct httpd_handle *h, int force)
 		/* Free session */
 		s = *op;
 		*op = s->next;
-		free(s);
+		httpd_free_session(s);
 
 		/* Update session count */
 		h->session_count--;
@@ -639,6 +674,10 @@ static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 	/* Set time and active counter */
 	s->time = time(NULL);
 	s->count = 1;
+
+	/* Set values session */
+	s->values = NULL;
+	pthread_mutex_init(&s->values_mutex, NULL);
 
 	/* Lock session list access */
 	pthread_mutex_lock(&h->session_mutex);
@@ -1032,40 +1071,39 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 		}
 	}
 
-	/* Fill request structure */
-	req.url = url;
-	req.method = method;
-	req.resource = resource;
-	req.priv_data = c;
-
-	/* Process URL */
-	code = u->process(user_data, &req, &resp, &resp_len);
-
-	/* Check response buffer */
-	if(resp == NULL || resp_len == 0)
-		return httpd_response(c, code, "");
-
-	/* Create HTTP response with message */
-	response = MHD_create_response_from_data(resp_len, resp, MHD_YES,
-						 MHD_NO);
-
 	/* Create new session */
 	if(r_data != NULL && r_data->session == NULL)
 	{
 		/* Create a new session if no existing has been found */
 		r_data->session = httpd_new_session(r_data->handle);
+	}
 
-		/* Add session in cookie header. "path=/" is appended to string
-		 * to apply this cookie for all the domain.
-		 */
-		if(r_data->session != NULL)
-		{
-			snprintf(str, sizeof(str), "%s=%s; path=/",
-				 HTTPD_SESSION_NAME, r_data->session->id);
-			MHD_add_response_header(response,
-						MHD_HTTP_HEADER_SET_COOKIE,
-						str);
-		}
+	/* Fill request structure */
+	req.url = url;
+	req.method = method;
+	req.resource = resource;
+	req.priv_data = r_data;
+
+	/* Process URL */
+	code = u->process(user_data, &req, &resp, &resp_len);
+
+	/* Create HTTP response with message */
+	if(resp == NULL || resp_len == 0)
+		response = MHD_create_response_from_data(0, "",
+							 MHD_NO, MHD_NO);
+	else
+		response = MHD_create_response_from_data(resp_len, resp,
+							 MHD_YES, MHD_NO);
+
+	/* Add session in cookie header. "path=/" is appended to string
+	 * to apply this cookie for all the domain.
+	 */
+	if(r_data->session != NULL)
+	{
+		snprintf(str, sizeof(str), "%s=%s; path=/", HTTPD_SESSION_NAME,
+			 r_data->session->id);
+		MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE,
+					str);
 	}
 
 	/* Queue it */
@@ -1188,6 +1226,7 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	{
 		/* Set handle in request data */
 		req->handle = h;
+		req->connection = c;
 
 		/* Process expired sessions */
 		httpd_expire_session(h, 0);
@@ -1302,13 +1341,121 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 	*ptr = NULL;
 }
 
+/******************************************************************************
+ *                        Callback specific functions                         *
+ ******************************************************************************/
+
 const char *httpd_get_query(struct httpd_req *req, const char *key)
 {
+	struct httpd_req_data *r;
+
 	if(req == NULL)
 		return NULL;
 
-	return MHD_lookup_connection_value(
-				       (struct MHD_Connection *) req->priv_data,
-				       MHD_GET_ARGUMENT_KIND, key);
+	/* Get req_data */
+	r = (struct httpd_req_data *) req->priv_data;
+	if(r == NULL)
+		return NULL;
+
+	/* Return query value */
+	return MHD_lookup_connection_value(r->connection, MHD_GET_ARGUMENT_KIND,
+					   key);
+}
+
+int httpd_set_session_value(struct httpd_req *req, const char *key,
+			    const char *value)
+{
+	struct httpd_session_value *v;
+	struct httpd_req_data *r;
+
+	if(req == NULL || req->priv_data == NULL || key == NULL)
+		return -1;
+
+	/* Get req_data */
+	r = (struct httpd_req_data *) req->priv_data;
+	if(r == NULL || r->session == NULL)
+		return -1;
+
+	/* Lock session values access */
+	pthread_mutex_lock(&r->session->values_mutex);
+
+	/* Find value */
+	for(v = r->session->values; v != NULL; v = v->next)
+	{
+		if(strcmp(v->key, key) == 0)
+			break;
+	}
+
+	/* Check entry */
+	if(v != NULL)
+	{
+		/* Reset entry */
+		if(v->value != NULL)
+			free(v->value);
+		v->value = NULL;
+	}
+	else
+	{
+		/* Create new entry */
+		v = calloc(1, sizeof(struct httpd_session_value));
+		if(v == NULL)
+		{
+			/* Unlock session values access */
+			pthread_mutex_unlock(&r->session->values_mutex);
+
+			return -1;
+		}
+
+		/* Copy key string */
+		v->key = strdup(key);
+
+		/* Add to value list */
+		v->next = r->session->values;
+		r->session->values = v;
+	}
+
+	/* Copy new string */
+	if(value != NULL)
+		v->value = strdup(value);
+
+	/* Unlock session values access */
+	pthread_mutex_unlock(&r->session->values_mutex);
+
+	return 0;
+}
+
+char *httpd_get_session_value(struct httpd_req *req, const char *key)
+{
+	struct httpd_session_value *v;
+	struct httpd_req_data *r;
+	char *str = NULL;
+
+	if(req == NULL || req->priv_data == NULL || key == NULL)
+		return NULL;
+
+	/* Get req_data */
+	r = (struct httpd_req_data *) req->priv_data;
+	if(r == NULL || r->session == NULL)
+		return NULL;
+
+	/* Lock session values access */
+	pthread_mutex_lock(&r->session->values_mutex);
+
+	/* Find value */
+	for(v = r->session->values; v != NULL; v = v->next)
+	{
+		if(strcmp(v->key, key) == 0)
+		{
+			/* Copy string */
+			if(v->value != NULL)
+				str = strdup(v->value);
+			break;
+		}
+	}
+
+	/* Unlock session values access */
+	pthread_mutex_unlock(&r->session->values_mutex);
+
+	return str;
 }
 
