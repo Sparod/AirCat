@@ -62,6 +62,10 @@
 #define HTTPD_SESSION_ABORT 600
 #define HTTPD_SESSION_MAX 200
 
+/* Authentication method available */
+#define HTTPD_AUTH_HTTP 0
+#define HTTPD_AUTH_SESSION 1
+
 struct mime_type {
 	const char *ext;
 	const char *mime;
@@ -134,6 +138,7 @@ struct httpd_handle {
 	char *name;
 	char *path;
 	char *password;
+	int auth_method;
 	unsigned int port;
 	/* URLs list */
 	struct httpd_urls *urls;
@@ -171,6 +176,7 @@ int httpd_open(struct httpd_handle **handle, struct json *config)
 	h->urls = NULL;
 	h->sessions = NULL;
 	h->session_count = 0;
+	h->auth_method = 0;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -253,6 +259,7 @@ int httpd_set_config(struct httpd_handle *h, struct json *cfg)
 	h->name = NULL;
 	h->path = NULL;
 	h->password = NULL;
+	h->auth_method = -1;
 	h->port = 0;
 
 	/* Get configuration */
@@ -268,6 +275,14 @@ int httpd_set_config(struct httpd_handle *h, struct json *cfg)
 		str = json_get_string(cfg, "password");
 		if(str != NULL && *str != '\0')
 			h->password = strdup(str);
+		str = json_get_string(cfg, "auth");
+		if(str != NULL)
+		{
+			if(strcmp(str, "http") == 0)
+				h->auth_method = HTTPD_AUTH_HTTP;
+			else if(strcmp(str, "session") == 0)
+				h->auth_method = HTTPD_AUTH_SESSION;
+		}
 		h->port = json_get_int(cfg, "port");
 	}
 
@@ -276,6 +291,8 @@ int httpd_set_config(struct httpd_handle *h, struct json *cfg)
 		h->name = strdup("AirCat");
 	if(h->path == NULL)
 		h->path = strdup("/var/aircat/www");
+	if(h->auth_method < 0)
+		h->auth_method = HTTPD_AUTH_HTTP;
 	if(h->port == 0)
 		h->port = 8080;
 
@@ -950,6 +967,20 @@ static int httpd_parse_json(struct httpd_req_data *req, const char *buffer,
 	return 0;
 }
 
+static const char *httpd_find_post(struct httpd_req_data *req, const char *key)
+{
+	struct httpd_value *v;
+
+	/* Find value */
+	for(v = req->post; v != NULL; v = v->next)
+	{
+		if(strcmp(v->key, key) == 0)
+			return v->value;
+	}
+
+	return NULL;
+}
+
 static int httpd_post_iterator(void *user_data, enum MHD_ValueKind kind,
 				const char *key, const char *filename,
 				const char *content_type,
@@ -1093,7 +1124,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			ret = httpd_parse_json(r_data, upload_data,
 					       upload_data_size);
 			if(ret == 1)
-				return HTTPD_CONTINUE;
+				return HTTPD_YES;
 			else if(ret < 0)
 				return httpd_response(c, 500,
 						      "Internal error!");
@@ -1111,7 +1142,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			ret = httpd_parse_post(r_data, upload_data,
 					       upload_data_size);
 			if(ret == 1)
-				return HTTPD_CONTINUE;
+				return HTTPD_YES;
 			else if(ret < 0)
 				return httpd_response(c, 500,
 						      "Internal error!");
@@ -1207,6 +1238,11 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	return HTTPD_CONTINUE;
 }
 
+static int httpd_auth_by_session()
+{
+	return HTTPD_CONTINUE;
+}
+
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
 			 const char *url, const char *method, 
 			 const char *version, const char *upload_data,
@@ -1266,7 +1302,8 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 #endif
 
 	/* HTTP authentication check */
-	if(*ptr == NULL && h->password != NULL)
+	if(*ptr == NULL && h->password != NULL &&
+	   h->auth_method == HTTPD_AUTH_HTTP)
 	{
 		ret = httpd_auth_by_http(h, c);
 		if(ret != HTTPD_CONTINUE)
@@ -1299,6 +1336,14 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		/* Get Session cookie from connection */
 		MHD_get_connection_values(c, MHD_COOKIE_KIND,
 					  &httpd_get_session, req);
+
+		/* Session authentication check */
+		if(h->password != NULL && h->auth_method == HTTPD_AUTH_SESSION)
+		{
+			ret = httpd_auth_by_session();
+			if(ret != HTTPD_CONTINUE)
+				return ret;
+		}
 	}
 
 	/* Lock URLs list access */
@@ -1570,7 +1615,6 @@ char *httpd_get_session_value(struct httpd_req *req, const char *key)
 const char *httpd_get_post_value(struct httpd_req *req, const char *key)
 {
 	struct httpd_req_data *r;
-	struct httpd_value *v;
 
 	if(req == NULL || req->priv_data == NULL || key == NULL)
 		return NULL;
@@ -1580,13 +1624,6 @@ const char *httpd_get_post_value(struct httpd_req *req, const char *key)
 	if(r == NULL)
 		return NULL;
 
-	/* Find value */
-	for(v = r->post; v != NULL; v = v->next)
-	{
-		if(strcmp(v->key, key) == 0)
-			return v->value;
-	}
-
-	return NULL;
+	return httpd_find_post(r, key);
 }
 
