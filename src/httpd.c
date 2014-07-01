@@ -91,6 +91,8 @@ struct httpd_value {
 struct httpd_session {
 	/* Session ID */
 	char id[33];
+	/* Login flag */
+	int logged;
 	/* Session values */
 	struct httpd_value *values;
 	pthread_mutex_t values_mutex;
@@ -292,7 +294,7 @@ int httpd_set_config(struct httpd_handle *h, struct json *cfg)
 	if(h->path == NULL)
 		h->path = strdup("/var/aircat/www");
 	if(h->auth_method < 0)
-		h->auth_method = HTTPD_AUTH_HTTP;
+		h->auth_method = HTTPD_AUTH_SESSION;
 	if(h->port == 0)
 		h->port = 8080;
 
@@ -691,6 +693,9 @@ static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 	strcpy(s->id, str);
 	free(str);
 
+	/* Set logged flag to zero */
+	s->logged = 0;
+
 	/* Set time and active counter */
 	s->time = time(NULL);
 	s->count = 1;
@@ -731,6 +736,23 @@ static int httpd_get_session(void *user_data, enum MHD_ValueKind kind,
 
 	/* A session has been found: abort parsing */
 	return MHD_YES;
+}
+
+static void httpd_add_session_header(struct MHD_Response *response,
+				     struct httpd_session *session)
+{
+	char str[256];
+
+	/* Add session in cookie header. "path=/" is appended to string
+	 * to apply this cookie for all the domain.
+	 */
+	if(session != NULL)
+	{
+		snprintf(str, sizeof(str), "%s=%s; path=/", HTTPD_SESSION_NAME,
+			 session->id);
+		MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE,
+					str);
+	}
 }
 
 /******************************************************************************
@@ -1058,10 +1080,10 @@ static int httpd_parse_post(struct httpd_req_data *req, const char *buffer,
  ******************************************************************************/
 
 enum {
-	HTTPD_URL_NOT_FOUND,
-	HTTPD_CONTINUE,
+	HTTPD_NO = MHD_NO,
 	HTTPD_YES = MHD_YES,
-	HTTPD_NO = MHD_NO
+	HTTPD_URL_NOT_FOUND,
+	HTTPD_CONTINUE
 };
 
 struct url_table *httpd_find_url(const char *url, const char *root_url,
@@ -1099,7 +1121,6 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	unsigned char *resp = NULL;
 	const char *resource;
 	size_t resp_len = 0;
-	char str[256];
 	int code = 0;
 	int ret;
 
@@ -1173,22 +1194,13 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 
 	/* Create HTTP response with message */
 	if(resp == NULL || resp_len == 0)
-		response = MHD_create_response_from_data(0, "",
-							 MHD_NO, MHD_NO);
+		response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
 	else
 		response = MHD_create_response_from_data(resp_len, resp,
 							 MHD_YES, MHD_NO);
 
-	/* Add session in cookie header. "path=/" is appended to string
-	 * to apply this cookie for all the domain.
-	 */
-	if(r_data->session != NULL)
-	{
-		snprintf(str, sizeof(str), "%s=%s; path=/", HTTPD_SESSION_NAME,
-			 r_data->session->id);
-		MHD_add_response_header(response, MHD_HTTP_HEADER_SET_COOKIE,
-					str);
-	}
+	/* Add session in cookie header */
+	httpd_add_session_header(response, r_data->session);
 
 	/* Queue it */
 	ret = MHD_queue_response(c, code, response);
@@ -1238,9 +1250,75 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	return HTTPD_CONTINUE;
 }
 
-static int httpd_auth_by_session()
+static int httpd_auth_by_session(struct MHD_Connection *c, const char *url,
+				 int method, const char *upload_data,
+				 size_t *upload_data_size,
+				 struct httpd_handle *h,
+				 struct httpd_req_data *req)
 {
-	return HTTPD_CONTINUE;
+	struct MHD_Response *response;
+	const char *loc = "/login";
+	const char *password;
+	int ret;
+
+	/* Check URL */
+	if(strcmp(url, "/login") == 0)
+	{
+		/* Check POST data */
+		if(method == HTTPD_POST)
+		{
+			/* Parse POST */
+			ret = httpd_parse_post(req, upload_data,
+					       upload_data_size);
+			if(ret == 1)
+				return HTTPD_YES;
+			else if(ret < 0)
+				return httpd_response(c, 500,
+						      "Internal error!");
+
+			/* Get password */
+			password = httpd_find_post(req, "password");
+			if(password != NULL &&
+			   strcmp(password, h->password) == 0)
+			{
+				/* Create a new session */
+				if(req->session == NULL)
+					req->session = httpd_new_session(h);
+
+				/* Set logged flag */
+				req->session->logged = 1;
+
+				/* Set new location */
+				loc = "/";
+				goto redirect;
+			}
+		}
+
+		/* Respond with login page */
+		return httpd_file_response(c, h->path, "/login.html");
+	}
+
+	/* Check session */
+	if(req->session != NULL && req->session->logged != 0)
+		return HTTPD_CONTINUE;
+
+redirect:
+	/* Create response */
+	response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
+
+	/* Add session in cookie header */
+	httpd_add_session_header(response, req->session);
+
+	/* Add location header to redirect */
+	MHD_add_response_header(response, MHD_HTTP_HEADER_LOCATION, loc);
+
+	/* Queue it */
+	ret = MHD_queue_response(c, 302, response);
+
+	/* Destroy local response */
+	MHD_destroy_response(response);
+
+	return ret;
 }
 
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
@@ -1340,7 +1418,9 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		/* Session authentication check */
 		if(h->password != NULL && h->auth_method == HTTPD_AUTH_SESSION)
 		{
-			ret = httpd_auth_by_session();
+			ret = httpd_auth_by_session(c, url, method_code,
+						    upload_data,
+						    upload_data_size, h, req);
 			if(ret != HTTPD_CONTINUE)
 				return ret;
 		}
