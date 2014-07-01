@@ -78,17 +78,17 @@ struct mime_type {
 	{0, 0}
 };
 
-struct httpd_session_value {
+struct httpd_value {
 	char *key;
 	char *value;
-	struct httpd_session_value *next;
+	struct httpd_value *next;
 };
 
 struct httpd_session {
 	/* Session ID */
 	char id[33];
 	/* Session values */
-	struct httpd_session_value *values;
+	struct httpd_value *values;
 	pthread_mutex_t values_mutex;
 	/* Last time of activity on this session */
 	time_t time;
@@ -516,7 +516,7 @@ static int httpd_response(struct MHD_Connection *c, int code, char *msg)
 
 static void httpd_free_session(struct httpd_session *s)
 {
-	struct httpd_session_value *v;
+	struct httpd_value *v;
 
 	if(s == NULL)
 		return;
@@ -1394,7 +1394,7 @@ const char *httpd_get_query(struct httpd_req *req, const char *key)
 int httpd_set_session_value(struct httpd_req *req, const char *key,
 			    const char *value)
 {
-	struct httpd_session_value **vp, *v = NULL;
+	struct httpd_value **vp, *v = NULL;
 	struct httpd_req_data *r;
 
 	if(req == NULL || req->priv_data == NULL || key == NULL)
@@ -1454,7 +1454,7 @@ int httpd_set_session_value(struct httpd_req *req, const char *key,
 	else
 	{
 		/* Create new entry */
-		v = calloc(1, sizeof(struct httpd_session_value));
+		v = calloc(1, sizeof(struct httpd_value));
 		if(v == NULL)
 		{
 			/* Unlock session values access */
@@ -1484,7 +1484,7 @@ end:
 
 char *httpd_get_session_value(struct httpd_req *req, const char *key)
 {
-	struct httpd_session_value *v;
+	struct httpd_value *v;
 	struct httpd_req_data *r;
 	char *str = NULL;
 
