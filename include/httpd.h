@@ -94,4 +94,7 @@ int httpd_set_session_value(struct httpd_req *req, const char *key,
 			     const char *value);
 char *httpd_get_session_value(struct httpd_req *req, const char *key);
 
+/* Get POST data in request */
+const char *httpd_get_post_value(struct httpd_req *req, const char *key);
+
 #endif

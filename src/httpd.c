@@ -109,6 +109,7 @@ struct httpd_req_data {
 	struct json *json;
 	/* POST uploaded data */
 	struct MHD_PostProcessor *post_proc;
+	struct httpd_value *post;
 };
 
 struct httpd_urls {
@@ -955,6 +956,30 @@ static int httpd_post_iterator(void *user_data, enum MHD_ValueKind kind,
 				const char *transfer_encoding, const char *data,
 				uint64_t off, size_t size)
 {
+	struct httpd_value **post = (struct httpd_value **) user_data;
+	struct httpd_value *v;
+
+	/* Check key and content type (accept only string */
+	if(key == NULL || content_type != NULL)
+		return MHD_YES;
+
+	/* Do not support yet long strings */
+	if(off > 0)
+		return MHD_YES;
+
+	/* Allocate new value */
+	v = malloc(sizeof(struct httpd_value));
+	if(v == NULL)
+		return MHD_YES;
+
+	/* Fill the value */
+	v->key = strdup(key);
+	v->value = strndup(data, size);
+
+	/* Add to value list */
+	v->next = *post;
+	*post = v;
+
 	return MHD_YES;
 }
 
@@ -968,7 +993,7 @@ static int httpd_parse_post(struct httpd_req_data *req, const char *buffer,
 		req->post_proc = MHD_create_post_processor(req->connection,
 							   512,
 							   &httpd_post_iterator,
-							   NULL);
+							   &req->post);
 		if(req->post_proc == NULL)
 			return -1;
 
@@ -1347,6 +1372,7 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 {
 	struct httpd_req_data *req = *((struct httpd_req_data **)ptr);
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
+	struct httpd_value *v;
 
 	if(req == NULL)
 		return;
@@ -1364,6 +1390,18 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 	/* Free POST data */
 	if(req->post_proc != NULL)
 		MHD_destroy_post_processor(req->post_proc);
+	while(req->post != NULL)
+	{
+		v = req->post;
+		req->post = v->next;
+
+		/* Free value */
+		if(v->key != NULL)
+			free(v->key);
+		if(v->value != NULL)
+			free(v->value);
+		free(v);
+	}
 
 	/* Free request data */
 	free(req);
@@ -1515,5 +1553,28 @@ char *httpd_get_session_value(struct httpd_req *req, const char *key)
 	pthread_mutex_unlock(&r->session->values_mutex);
 
 	return str;
+}
+
+const char *httpd_get_post_value(struct httpd_req *req, const char *key)
+{
+	struct httpd_req_data *r;
+	struct httpd_value *v;
+
+	if(req == NULL || req->priv_data == NULL || key == NULL)
+		return NULL;
+
+	/* Get req_data */
+	r = (struct httpd_req_data *) req->priv_data;
+	if(r == NULL)
+		return NULL;
+
+	/* Find value */
+	for(v = r->post; v != NULL; v = v->next)
+	{
+		if(strcmp(v->key, key) == 0)
+			return v->value;
+	}
+
+	return NULL;
 }
 
