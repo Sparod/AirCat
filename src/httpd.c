@@ -104,9 +104,9 @@ struct httpd_req_data {
 	struct MHD_Connection *connection;
 	/* Associated session */
 	struct httpd_session *session;
-	/* POST/PUT data */
-	void *data;
-	void (*free)(void *);
+	/* JSON uploaded data */
+	struct json_tokener *json_tokener;
+	struct json *json;
 };
 
 struct httpd_urls {
@@ -906,63 +906,31 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 }
 
 /******************************************************************************
- *                                JSON Parser                                 *
+ *                            Uploaded data Parser                            *
  ******************************************************************************/
-
-struct json_data {
-	struct json_tokener *tokener;
-	struct json *object;
-};
-
-static void httpd_free_json(struct json_data *json)
-{
-	if(json != NULL)
-	{
-		if(json->tokener != NULL)
-			json_tokener_free(json->tokener);
-		if(json->object != NULL)
-			json_free(json->object);
-		free(json);
-	}
-}
 
 static int httpd_parse_json(struct httpd_req_data *req, const char *buffer,
 			    size_t *len)
 {
-	struct json_data *json;
-
-	/* Allocate data handlers if first call */
-	if(req->data == NULL)
+	/* Allocate tokener */
+	if(req->json_tokener == NULL)
 	{
-		/* Allocate JSON data and set free function */
-		req->free = (void(*)(void*))&httpd_free_json;
-		req->data = malloc(sizeof(struct json_data));
-		if(req->data == NULL)
-			return -1;
-
-		/* Prepare JSON handler */
-		json = (struct json_data*) req->data;
-		json->object = NULL;
-		json->tokener = json_tokener_new();
-		if(json->tokener == NULL)
+		/* Create a new JSON tokener */
+		req->json_tokener = json_tokener_new();
+		if(req->json_tokener == NULL)
 			return -1;
 
 		/* Continue */
 		return 1;
 	}
 
-	/* Get pointer of JSON data */
-	json = (struct json_data*) req->data;
-	if(json == NULL || json->tokener == NULL)
-		return -1;
-
 	/* Some data are still available: parse it */
 	if(*len != 0)
 	{
 		/* Append buffer and parse it */
-		json->object = (struct json *) json_tokener_parse_ex(
-							  json->tokener, buffer,
-							  *len);
+		req->json = (struct json *) json_tokener_parse_ex(
+							      req->json_tokener,
+							      buffer, *len);
 		*len = 0;
 
 		/* Continue */
@@ -970,10 +938,10 @@ static int httpd_parse_json(struct httpd_req_data *req, const char *buffer,
 	}
 
 	/* End of stream */
-	if(json != NULL && json->tokener != NULL)
+	if(req->json_tokener != NULL)
 	{
-		json_tokener_free(json->tokener);
-		json->tokener = NULL;
+		json_tokener_free(req->json_tokener);
+		req->json_tokener = NULL;
 	}
 
 	return 0;
@@ -1021,7 +989,6 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			     struct httpd_req_data *r_data)
 {
 	struct httpd_req req = HTTPD_REQ_INIT;
-	struct json_data *j_data = NULL;
 	struct MHD_Response *response;
 	unsigned char *resp = NULL;
 	const char *resource;
@@ -1057,8 +1024,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 						      "Internal error!");
 
 			/* Get JSON object */
-			j_data = (struct json_data*) r_data->data;
-			req.json = j_data->object;
+			req.json = r_data->json;
 
 			/* Check JSON object */
 			if(req.json == NULL)
@@ -1066,6 +1032,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 		}
 		else
 		{
+			/* Get raw data */
 			req.data = NULL;
 			req.len = 0;
 		}
@@ -1327,14 +1294,11 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 	if(req->session != NULL)
 		httpd_release_session(h, req->session);
 
-	/* Free request data */
-	if(req->data != NULL)
-	{
-		if(req->free != NULL)
-			req->free(req->data);
-		else
-			free(req->data);
-	}
+	/* Free JSON data */
+	if(req->json_tokener != NULL)
+		json_tokener_free(req->json_tokener);
+	if(req->json != NULL)
+		json_free(req->json);
 
 	/* Free request data */
 	free(req);
