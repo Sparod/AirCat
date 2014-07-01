@@ -1168,6 +1168,45 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	return ret;
 }
 
+static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
+{
+	struct MHD_Response *response;
+	char *username;
+	int ret;
+
+	/* Get username */
+	username = MHD_digest_auth_get_username(c);
+	if(username != NULL)
+	{
+		/* Check password */
+		ret = MHD_digest_auth_check(c, h->name, username,
+					    h->password, 300);
+		free(username);
+	}
+	else
+		ret = MHD_NO;
+
+	/* Bad authentication */
+	if((ret == MHD_INVALID_NONCE) || (ret == MHD_NO))
+	{
+		/* Create HTTP response with failure page */
+		response = MHD_create_response_from_buffer(2, "KO",
+						MHD_RESPMEM_PERSISTENT);
+
+		/* Queue it with Authentication headers */
+		ret = MHD_queue_auth_fail_response(c, h->name,
+			 h->opaque, response,
+			 (ret == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
+
+		/* Destroy local response */
+		MHD_destroy_response(response);
+
+		return ret;
+	}
+
+	return HTTPD_CONTINUE;
+}
+
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
 			 const char *url, const char *method, 
 			 const char *version, const char *upload_data,
@@ -1177,9 +1216,7 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	struct httpd_urls *current_urls = NULL;
 	struct url_table *current_url = NULL;
 	struct httpd_req_data *req = NULL;
-	struct MHD_Response *response;
 	int method_code = 0;
-	char *username;
 	int ret;
 
 #if (MHD_VERSION >= 0x00093500) && (MHD_VERSION < 0x00093700)
@@ -1228,37 +1265,12 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	*w = '\0';
 #endif
 
-	/* Authentication check */
+	/* HTTP authentication check */
 	if(*ptr == NULL && h->password != NULL)
 	{
-		/* Get username */
-		username = MHD_digest_auth_get_username(c);
-		if(username != NULL)
-		{
-			/* Check password */
-			ret = MHD_digest_auth_check(c, h->name, username,
-						    h->password, 300);
-			free(username);
-		}
-		else
-			ret = MHD_NO;
-
-		/* Bad authentication */
-		if((ret == MHD_INVALID_NONCE) || (ret == MHD_NO))
-		{
-			/* Create HTTP response with failure page */
-			response = MHD_create_response_from_buffer(2, "KO",
-							MHD_RESPMEM_PERSISTENT);
-
-			/* Queue it with Authentication headers */
-			ret = MHD_queue_auth_fail_response(c, h->name,
-				 h->opaque, response,
-				 (ret == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
-
-			/* Destroy local response */
-			MHD_destroy_response(response);
+		ret = httpd_auth_by_http(h, c);
+		if(ret != HTTPD_CONTINUE)
 			return ret;
-		}
 	}
 
 	/* Get methode code */
