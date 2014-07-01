@@ -47,6 +47,7 @@
 /* JSON/RAW uploaded data */
 #define HTTPD_RAW 0
 #define HTTPD_JSON 1
+/* HTTPD_POST is used here too */
 
 #define HTTPD_REQ_INIT {NULL, NULL, 0, NULL, NULL, 0, NULL}
 struct httpd_req {

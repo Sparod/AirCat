@@ -107,6 +107,8 @@ struct httpd_req_data {
 	/* JSON uploaded data */
 	struct json_tokener *json_tokener;
 	struct json *json;
+	/* POST uploaded data */
+	struct MHD_PostProcessor *post_proc;
 };
 
 struct httpd_urls {
@@ -947,6 +949,54 @@ static int httpd_parse_json(struct httpd_req_data *req, const char *buffer,
 	return 0;
 }
 
+static int httpd_post_iterator(void *user_data, enum MHD_ValueKind kind,
+				const char *key, const char *filename,
+				const char *content_type,
+				const char *transfer_encoding, const char *data,
+				uint64_t off, size_t size)
+{
+	return MHD_YES;
+}
+
+static int httpd_parse_post(struct httpd_req_data *req, const char *buffer,
+			    size_t *len)
+{
+	/* Allocate POST processor */
+	if(req->post_proc == NULL)
+	{
+		/* Create a new POST processor */
+		req->post_proc = MHD_create_post_processor(req->connection,
+							   512,
+							   &httpd_post_iterator,
+							   NULL);
+		if(req->post_proc == NULL)
+			return -1;
+
+		/* Continue */
+		return 1;
+	}
+
+	/* Some data are still available: parse it */
+	if(*len != 0)
+	{
+		/* Contine parsing */
+		MHD_post_process(req->post_proc, buffer, *len);
+		*len = 0;
+
+		/* Continue */
+		return 1;
+	}
+
+	/* End of stream */
+	if(req->post_proc != NULL)
+	{
+		MHD_destroy_post_processor(req->post_proc);
+		req->post_proc = NULL;
+	}
+
+	return 0;
+}
+
 /******************************************************************************
  *                          Main HTTP request parser                          *
  ******************************************************************************/
@@ -1029,6 +1079,17 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			/* Check JSON object */
 			if(req.json == NULL)
 				return httpd_response(c, 400, "Bad request");
+		}
+		else if(u->upload == HTTPD_POST)
+		{
+			/* Parse POST */
+			ret = httpd_parse_post(r_data, upload_data,
+					       upload_data_size);
+			if(ret == 1)
+				return HTTPD_CONTINUE;
+			else if(ret < 0)
+				return httpd_response(c, 500,
+						      "Internal error!");
 		}
 		else
 		{
@@ -1299,6 +1360,10 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 		json_tokener_free(req->json_tokener);
 	if(req->json != NULL)
 		json_free(req->json);
+
+	/* Free POST data */
+	if(req->post_proc != NULL)
+		MHD_destroy_post_processor(req->post_proc);
 
 	/* Free request data */
 	free(req);
