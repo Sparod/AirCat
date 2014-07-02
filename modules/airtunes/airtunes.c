@@ -310,7 +310,7 @@ static int airtunes_set_config(struct airtunes_handle *h, const struct json *c)
 		if(name != NULL)
 			h->name = strdup(name);
 		password = json_get_string(c, "password");
-		if(password != NULL)
+		if(password != NULL && *password != '\0')
 			h->password = strdup(password);
 	}
 
