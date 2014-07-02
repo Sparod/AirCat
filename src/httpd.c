@@ -79,6 +79,18 @@
 "  </body>\n" \
 "</html>"
 
+#define HTTPD_DEFAULT_404 \
+"<!DOCTYPE html>\n" \
+"<html lang=\"en\">\n" \
+"  <head>\n" \
+"    <meta charset=\"utf-8\">\n" \
+"    <title>Not found</title>\n" \
+"  </head>\n" \
+"  <body style=\"text-align: center;\">\n" \
+"    <h1>Not found</h1>\n" \
+"  </body>\n" \
+"</html>"
+
 #define HTTPD_DEFAULT_LOGIN \
 "<!DOCTYPE html>\n" \
 "<html lang=\"en\">\n" \
@@ -859,18 +871,12 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 
 	/* Verify web path */
 	if(web_path == NULL)
-	{
-		*code = 500;
-		return httpd_response("Web path not configured!");
-	}
+		goto error;
 
 	/* Create file path */
 	path = malloc(strlen(web_path) + strlen(url) + 12);
 	if(path == NULL)
-	{
-		*code = 500;
-		return httpd_response("Internal Error");
-	}
+		goto error;
 	sprintf(path, "%s%s", web_path, url);
 
 	/* Get file properties */
@@ -886,7 +892,8 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 		}
 
 		*code = 404;
-		return httpd_response("File not found");
+		return httpd_file_response(web_path, "/404.html", &i,
+					   HTTPD_DEFAULT_404);
 	}
 
 	/* Check if it is a directory */
@@ -899,10 +906,7 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 			/* Prepare directory structure */
 			d_data = malloc(sizeof(struct dir_data));
 			if(d_data == NULL)
-			{
-				*code = 500;
-				return httpd_response("Internal Error");
-			}
+				goto error;
 
 			/* List files in directory */
 			path[strlen(path)-11] = 0;
@@ -911,8 +915,7 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 			if(d_data->dir == NULL)
 			{
 				free(d_data);
-				*code = 404;
-				return httpd_response("No directory");
+				goto error;
 			}
 
 			/* Copy URL */
@@ -941,8 +944,7 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 		if(fp == NULL)
 		{
 			free(path);
-			*code = 404;
-			return httpd_response("File not found");
+			goto error;
 		}
 
 		/* Create HTTP response with file content */
@@ -974,6 +976,10 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 
 	*code = 200;
 	return response;
+
+error:
+	*code = 500;
+	return httpd_response("Internal Error");
 }
 
 /******************************************************************************
