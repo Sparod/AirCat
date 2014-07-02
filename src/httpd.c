@@ -66,6 +66,9 @@
 #define HTTPD_AUTH_HTTP 0
 #define HTTPD_AUTH_SESSION 1
 
+#define httpd_response(msg) MHD_create_response_from_data(strlen(msg), msg, \
+							  MHD_NO, MHD_NO);
+
 struct mime_type {
 	const char *ext;
 	const char *mime;
@@ -512,24 +515,6 @@ static int httpd_get_method_code(const char *method)
 	return 0;
 }
 
-static int httpd_response(struct MHD_Connection *c, int code, char *msg)
-{
-	struct MHD_Response *response;
-	int ret;
-
-	/* Create HTTP response with message */
-	response = MHD_create_response_from_data(strlen(msg), msg, MHD_NO, 
-						 MHD_NO);
-
-	/* Queue it */
-	ret = MHD_queue_response(c, code, response);
-
-	/* Destroy local response */
-	MHD_destroy_response(response);
-
-	return ret;
-}
-
 /******************************************************************************
  *                              Session handling                              *
  ******************************************************************************/
@@ -827,8 +812,8 @@ static void httpd_file_free_cb(void *user_data)
 		fclose(fp);
 }
 
-static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
-			       const char *url)
+static struct MHD_Response *httpd_file_response(const char *web_path,
+						const char *url, int *code)
 {
 	struct MHD_Response *response;
 	struct dir_data *d_data;
@@ -841,19 +826,26 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 
 	/* Verify web path */
 	if(web_path == NULL)
-		return httpd_response(c, 500, "Web path not configured!");
+	{
+		*code = 500;
+		return httpd_response("Web path not configured!");
+	}
 
 	/* Create file path */
 	path = malloc(strlen(web_path) + strlen(url) + 12);
 	if(path == NULL)
-		return httpd_response(c, 500, "Internal Error");
+	{
+		*code = 500;
+		return httpd_response("Internal Error");
+	}
 	sprintf(path, "%s%s", web_path, url);
 
 	/* Get file properties */
 	if(stat(path, &s) != 0)
 	{
 		free(path);
-		return httpd_response(c, 404, "File not found");
+		*code = 404;
+		return httpd_response("File not found");
 	}
 	/* Check if it is a directory */
 	if(S_ISDIR(s.st_mode))
@@ -865,7 +857,10 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 			/* Prepare directory structure */
 			d_data = malloc(sizeof(struct dir_data));
 			if(d_data == NULL)
-				return httpd_response(c, 500, "Internal Error");
+			{
+				*code = 500;
+				return httpd_response("Internal Error");
+			}
 
 			/* List files in directory */
 			path[strlen(path)-11] = 0;
@@ -874,7 +869,8 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 			if(d_data->dir == NULL)
 			{
 				free(d_data);
-				return httpd_response(c, 404, "No directory");
+				*code = 404;
+				return httpd_response("No directory");
 			}
 
 			/* Copy URL */
@@ -890,13 +886,8 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 							d_data,
 							&httpd_dir_free_cb);
 
-			/* Queue it */
-			ret = MHD_queue_response(c, 200, response);
-
-			/* Destroy local response */
-			MHD_destroy_response(response);
-
-			return ret;
+			*code = 200;
+			return response;
 		}
 	}
 
@@ -908,7 +899,8 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 		if(fp == NULL)
 		{
 			free(path);
-			return httpd_response(c, 404, "File not found");
+			*code = 404;
+			return httpd_response("File not found");
 		}
 
 		/* Create HTTP response with file content */
@@ -938,13 +930,8 @@ static int httpd_file_response(struct MHD_Connection *c, const char *web_path,
 	}
 	free(path);
 
-	/* Queue it */
-	ret = MHD_queue_response(c, 200, response);
-
-	/* Destroy local response */
-	MHD_destroy_response(response);
-
-	return ret;
+	*code = 200;
+	return response;
 }
 
 /******************************************************************************
@@ -1110,18 +1097,20 @@ struct url_table *httpd_find_url(const char *url, const char *root_url,
 	return NULL;
 }
 
-static int httpd_process_url(struct MHD_Connection *c, const char *url,
-			     int method, const char *root_url, 
-			     const struct url_table *u, void *user_data,
-			     const char *upload_data, size_t *upload_data_size,
-			     struct httpd_req_data *r_data)
+static struct MHD_Response *httpd_process_url(const char *url, int method,
+					      const char *root_url, 
+					      const struct url_table *u,
+					      void *user_data,
+					      const char *upload_data,
+					      size_t *upload_data_size,
+					      struct httpd_req_data *r_data,
+					      int *code)
 {
 	struct httpd_req req = HTTPD_REQ_INIT;
 	struct MHD_Response *response;
 	unsigned char *resp = NULL;
 	const char *resource;
 	size_t resp_len = 0;
-	int code = 0;
 	int ret;
 
 	/* Check ressource name*/
@@ -1130,7 +1119,10 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	{
 		/* Get resource */
 		if(*resource++ == '/' && *resource == 0)
-			return httpd_response(c, 400, "Bad request");
+		{
+			*code = 400;
+			return httpd_response("Bad request");
+		}
 		if(*resource == '/')
 			resource++;
 	}
@@ -1145,17 +1137,22 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			ret = httpd_parse_json(r_data, upload_data,
 					       upload_data_size);
 			if(ret == 1)
-				return HTTPD_YES;
+				return NULL;
 			else if(ret < 0)
-				return httpd_response(c, 500,
-						      "Internal error!");
+			{
+				*code = 500;
+				return httpd_response("Internal error!");
+			}
 
 			/* Get JSON object */
 			req.json = r_data->json;
 
 			/* Check JSON object */
 			if(req.json == NULL)
-				return httpd_response(c, 400, "Bad request");
+			{
+				*code = 400;
+				return httpd_response("Bad request");
+			}
 		}
 		else if(u->upload == HTTPD_POST)
 		{
@@ -1163,10 +1160,12 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 			ret = httpd_parse_post(r_data, upload_data,
 					       upload_data_size);
 			if(ret == 1)
-				return HTTPD_YES;
+				return NULL;
 			else if(ret < 0)
-				return httpd_response(c, 500,
-						      "Internal error!");
+			{
+				*code = 500;
+				return httpd_response("Internal error!");
+			}
 		}
 		else
 		{
@@ -1190,7 +1189,7 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	req.priv_data = r_data;
 
 	/* Process URL */
-	code = u->process(user_data, &req, &resp, &resp_len);
+	*code = u->process(user_data, &req, &resp, &resp_len);
 
 	/* Create HTTP response with message */
 	if(resp == NULL || resp_len == 0)
@@ -1202,19 +1201,14 @@ static int httpd_process_url(struct MHD_Connection *c, const char *url,
 	/* Add session in cookie header */
 	httpd_add_session_header(response, r_data->session);
 
-	/* Queue it */
-	ret = MHD_queue_response(c, code, response);
-
-	/* Destroy local response */
-	MHD_destroy_response(response);
-
-	return ret;
+	return response;
 }
 
 static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 {
 	struct MHD_Response *response;
 	char *username;
+	int code;
 	int ret;
 
 	/* Get username */
@@ -1222,8 +1216,8 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	if(username != NULL)
 	{
 		/* Check password */
-		ret = MHD_digest_auth_check(c, h->name, username,
-					    h->password, 300);
+		ret = MHD_digest_auth_check(c, h->name, username, h->password,
+					    300);
 		free(username);
 	}
 	else
@@ -1233,13 +1227,13 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	if((ret == MHD_INVALID_NONCE) || (ret == MHD_NO))
 	{
 		/* Create HTTP response with failure page */
-		response = MHD_create_response_from_buffer(2, "KO",
-						MHD_RESPMEM_PERSISTENT);
+		response = httpd_file_response(h->path, "/401.html", &code);
 
 		/* Queue it with Authentication headers */
-		ret = MHD_queue_auth_fail_response(c, h->name,
-			 h->opaque, response,
-			 (ret == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
+		ret = MHD_queue_auth_fail_response(c, h->name, h->opaque,
+						   response,
+						   (ret == MHD_INVALID_NONCE) ?
+						   MHD_YES : MHD_NO);
 
 		/* Destroy local response */
 		MHD_destroy_response(response);
@@ -1250,13 +1244,13 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	return HTTPD_CONTINUE;
 }
 
-static int httpd_auth_by_session(struct MHD_Connection *c, const char *url,
-				 int method, const char *upload_data,
+static int httpd_auth_by_session(const char *url, int method,
+				 const char *upload_data,
 				 size_t *upload_data_size,
 				 struct httpd_handle *h,
-				 struct httpd_req_data *req)
+				 struct httpd_req_data *req,
+				 struct MHD_Response **response, int *code)
 {
-	struct MHD_Response *response;
 	const char *loc = "/login";
 	const char *password;
 	int ret;
@@ -1273,8 +1267,11 @@ static int httpd_auth_by_session(struct MHD_Connection *c, const char *url,
 			if(ret == 1)
 				return HTTPD_YES;
 			else if(ret < 0)
-				return httpd_response(c, 500,
-						      "Internal error!");
+			{
+				*code = 500;
+				*response = httpd_response("Internal error!");
+				return HTTPD_YES;
+			}
 
 			/* Get password */
 			password = httpd_find_post(req, "password");
@@ -1295,7 +1292,8 @@ static int httpd_auth_by_session(struct MHD_Connection *c, const char *url,
 		}
 
 		/* Respond with login page */
-		return httpd_file_response(c, h->path, "/login.html");
+		*response = httpd_file_response(h->path, "/login.html", code);
+		return HTTPD_YES;
 	}
 
 	/* Check session */
@@ -1304,21 +1302,16 @@ static int httpd_auth_by_session(struct MHD_Connection *c, const char *url,
 
 redirect:
 	/* Create response */
-	response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
+	*response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
 
 	/* Add session in cookie header */
-	httpd_add_session_header(response, req->session);
+	httpd_add_session_header(*response, req->session);
 
 	/* Add location header to redirect */
-	MHD_add_response_header(response, MHD_HTTP_HEADER_LOCATION, loc);
+	MHD_add_response_header(*response, MHD_HTTP_HEADER_LOCATION, loc);
 
-	/* Queue it */
-	ret = MHD_queue_response(c, 302, response);
-
-	/* Destroy local response */
-	MHD_destroy_response(response);
-
-	return ret;
+	*code = 302;
+	return HTTPD_YES;
 }
 
 static int httpd_request(void *user_data, struct MHD_Connection *c, 
@@ -1328,9 +1321,11 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 {
 	struct httpd_handle *h = (struct httpd_handle*) user_data;
 	struct httpd_urls *current_urls = NULL;
+	struct MHD_Response *response = NULL;
 	struct url_table *current_url = NULL;
 	struct httpd_req_data *req = NULL;
 	int method_code = 0;
+	int code;
 	int ret;
 
 #if (MHD_VERSION >= 0x00093500) && (MHD_VERSION < 0x00093700)
@@ -1391,7 +1386,11 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	/* Get methode code */
 	method_code = httpd_get_method_code(method);
 	if(method_code == 0)
-		return httpd_response(c, 405, "Method not allowed!");
+	{
+		response = httpd_response("Method not allowed!");
+		code = 405;
+		goto end;
+	}
 
 	/* Allocate data handlers if first call */
 	if(*ptr == NULL)
@@ -1418,11 +1417,16 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 		/* Session authentication check */
 		if(h->password != NULL && h->auth_method == HTTPD_AUTH_SESSION)
 		{
-			ret = httpd_auth_by_session(c, url, method_code,
-						    upload_data,
-						    upload_data_size, h, req);
+			ret = httpd_auth_by_session(url, method_code,
+							 upload_data,
+							 upload_data_size, h,
+							 req, &response, &code);
 			if(ret != HTTPD_CONTINUE)
-				return ret;
+			{
+				if(response == NULL)
+					return ret;
+				goto end;
+			}
 		}
 	}
 
@@ -1476,13 +1480,17 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 
 	/* Check method */
 	if((current_url->method & method_code) == 0)
-		return httpd_response(c, 406, "Method not acceptable!");
+	{
+		response = httpd_response("Method not acceptable!");
+		code = 406;
+		goto end;
+	}
 
 	/* Process URL */
-	ret =  httpd_process_url(c, url, method_code, current_urls->name,
-				 current_url, current_urls->user_data,
-				 upload_data, upload_data_size,
-				 *ptr);
+	response = httpd_process_url(url, method_code, current_urls->name,
+				     current_url, current_urls->user_data,
+				     upload_data, upload_data_size, *ptr,
+				     &code);
 
 	/* Lock specific URL */
 	pthread_mutex_lock(&current_urls->mutex);
@@ -1493,15 +1501,38 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	/* Unlock specific URL */
 	pthread_mutex_unlock(&current_urls->mutex);
 
-	return ret;
+	/* Continue */
+	if(response == NULL)
+		return MHD_YES;
+
+	goto end;
 
 process_file:
 	/* Accept only GET method if not a special URL */
 	if(method_code != HTTPD_GET)
-		return httpd_response(c, 406, "Method not acceptable!");
+	{
+		response = httpd_response("Method not acceptable!");
+		code = 406;
+		goto end;
+	}
 
 	/* Response with the requested file */
-	return httpd_file_response(c, h->path, url);
+	response = httpd_file_response(h->path, url, &code);
+
+end:
+	if(response == NULL)
+	{
+		response = httpd_response("Internal error");
+		code = 500;
+	}
+
+	/* Queue it */
+	ret = MHD_queue_response(c, code, response);
+
+	/* Destroy local response */
+	MHD_destroy_response(response);
+
+	return ret;
 }
 
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
