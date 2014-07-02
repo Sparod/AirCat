@@ -66,7 +66,39 @@
 #define HTTPD_AUTH_HTTP 0
 #define HTTPD_AUTH_SESSION 1
 
-#define httpd_response(msg) MHD_create_response_from_data(strlen(msg), msg, \
+/* Default page */
+#define HTTPD_DEFAULT_401 \
+"<!DOCTYPE html>\n" \
+"<html lang=\"en\">\n" \
+"  <head>\n" \
+"    <meta charset=\"utf-8\">\n" \
+"    <title>Authorization Required</title>\n" \
+"  </head>\n" \
+"  <body style=\"text-align: center;\">\n" \
+"    <h1>Authorization Required</h1>\n" \
+"  </body>\n" \
+"</html>"
+
+#define HTTPD_DEFAULT_LOGIN \
+"<!DOCTYPE html>\n" \
+"<html lang=\"en\">\n" \
+"  <head>\n" \
+"    <meta charset=\"utf-8\">\n" \
+"    <title>Authentication</title>\n" \
+"  </head>\n" \
+"  <body style=\"text-align: center;\">\n" \
+"    <h1>Authentication</h1>\n" \
+"    Please enter a valid password:<br/><br/>\n" \
+"    <form name=\"login\" method=\"post\" action=\"login\">\n" \
+"      Password: <input type=\"password\" value=\"\" name=\"password\"/>" \
+"<br/><br/>\n" \
+"      <input type=\"submit\" name=\"submit\" value=\"Login\"/>\n" \
+"    </form>\n" \
+"  </body>\n" \
+"</html>"
+
+#define httpd_response(msg) MHD_create_response_from_data(strlen(msg), \
+							  (char*) msg, \
 							  MHD_NO, MHD_NO);
 
 struct mime_type {
@@ -813,7 +845,8 @@ static void httpd_file_free_cb(void *user_data)
 }
 
 static struct MHD_Response *httpd_file_response(const char *web_path,
-						const char *url, int *code)
+						const char *url, int *code,
+						const char *default_page)
 {
 	struct MHD_Response *response;
 	struct dir_data *d_data;
@@ -844,9 +877,18 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 	if(stat(path, &s) != 0)
 	{
 		free(path);
+
+		/* Send default page instead of 404 */
+		if(default_page != NULL)
+		{
+			*code = 200;
+			return httpd_response(default_page);
+		}
+
 		*code = 404;
 		return httpd_response("File not found");
 	}
+
 	/* Check if it is a directory */
 	if(S_ISDIR(s.st_mode))
 	{
@@ -1227,7 +1269,8 @@ static int httpd_auth_by_http(struct httpd_handle *h, struct MHD_Connection *c)
 	if((ret == MHD_INVALID_NONCE) || (ret == MHD_NO))
 	{
 		/* Create HTTP response with failure page */
-		response = httpd_file_response(h->path, "/401.html", &code);
+		response = httpd_file_response(h->path, "/401.html", &code,
+					       HTTPD_DEFAULT_401);
 
 		/* Queue it with Authentication headers */
 		ret = MHD_queue_auth_fail_response(c, h->name, h->opaque,
@@ -1292,7 +1335,8 @@ static int httpd_auth_by_session(const char *url, int method,
 		}
 
 		/* Respond with login page */
-		*response = httpd_file_response(h->path, "/login.html", code);
+		*response = httpd_file_response(h->path, "/login.html", code,
+					        HTTPD_DEFAULT_LOGIN);
 		return HTTPD_YES;
 	}
 
@@ -1517,7 +1561,7 @@ process_file:
 	}
 
 	/* Response with the requested file */
-	response = httpd_file_response(h->path, url, &code);
+	response = httpd_file_response(h->path, url, &code, NULL);
 
 end:
 	if(response == NULL)
