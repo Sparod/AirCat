@@ -129,7 +129,7 @@ static long decoder_mp3_fill_output(struct decoder *dec,
 			*(p++) = mad_scale(dec->Synth.pcm.samples[1][pos]);
 	}
 
-	dec->pcm_remain = dec->Synth.pcm.length-pos;
+	dec->pcm_remain = dec->Synth.pcm.length - pos;
 
 	return i;
 }
@@ -148,6 +148,8 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 		/* Update buffer */
 		info->used = 0;
 		info->remaining = dec->pcm_remain;
+		info->samplerate = dec->Frame.header.samplerate;
+		info->channels = MAD_NCHANNELS(&dec->Frame.header);
 
 		return size;
 	}
@@ -190,6 +192,8 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 	/* Update buffer */
 	info->used = dec->Stream.next_frame - dec->Stream.buffer;
 	info->remaining = dec->pcm_remain;
+	info->samplerate = dec->Frame.header.samplerate;
+	info->channels = MAD_NCHANNELS(&dec->Frame.header);
 
 	return size;
 }

@@ -23,6 +23,8 @@
 struct decoder_info {
 	unsigned long used;		// Bytes consumed from input buffer
 	unsigned long remaining;	// Remaining samples in decoder
+	unsigned long samplerate;	// Samplerate for this frame
+	unsigned char channels;		// Channel count for this frame
 };
 
 enum {

@@ -187,6 +187,8 @@ int decoder_alac_decode(struct decoder *dec, unsigned char *in_buffer,
 		/* Fill decoder info */
 		info->used = 0;
 		info->remaining = dec->pcm_remain;
+		info->samplerate = dec->alac.samplerate;
+		info->channels = dec->alac.numchannels;
 
 		return size;
 	}
@@ -211,6 +213,8 @@ int decoder_alac_decode(struct decoder *dec, unsigned char *in_buffer,
 	/* Fill decoder info */
 	info->used = in_size;
 	info->remaining = dec->pcm_remain;
+	info->samplerate = dec->alac.samplerate;
+	info->channels = dec->alac.numchannels;
 
 	return size;
 }

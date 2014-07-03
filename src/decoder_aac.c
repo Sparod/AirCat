@@ -43,7 +43,7 @@ struct decoder {
 	unsigned long pcm_remain;
 	/* Infos */
 	unsigned long samplerate;
-	unsigned char nb_channel;
+	unsigned char channels;
 };
 
 int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
@@ -86,13 +86,13 @@ int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
 	{
 		/* Init decoder from frame */
 		ret = NeAACDecInit(dec->hDec, dec_config, dec_config_size,
-				   &dec->samplerate, &dec->nb_channel);
+				   &dec->samplerate, &dec->channels);
 	}
 	else
 	{
 		/* Init decoder */
 		ret = NeAACDecInit2(dec->hDec, dec_config, dec_config_size,
-				    &dec->samplerate, &dec->nb_channel);
+				    &dec->samplerate, &dec->channels);
 	}
 
 	/* Check init return */
@@ -107,7 +107,7 @@ int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
 	if(samplerate != NULL)
 		*samplerate = dec->samplerate;
 	if(channels != NULL)
-		*channels = dec->nb_channel;
+		*channels = dec->channels;
 
 	return 0;
 }
@@ -126,7 +126,7 @@ static long decoder_aac_fill_output(struct decoder *dec,
 		size = dec->pcm_remain;
 
 	/* Copy samples to output buffer */
-	if(dec->nb_channel > 2) /* Specific case of surround file */
+	if(dec->channels > 2) /* Specific case of surround file */
 	{
 		/* Transform:
 		 * From (3 channels) FC , FL , FR
@@ -175,6 +175,8 @@ int decoder_aac_decode(struct decoder *dec, unsigned char *in_buffer,
 		/* Update buffer */
 		info->used = 0;
 		info->remaining = dec->pcm_remain;
+		info->samplerate = dec->samplerate;
+		info->channels = dec->channels;
 
 		return size;
 	}
@@ -195,11 +197,15 @@ int decoder_aac_decode(struct decoder *dec, unsigned char *in_buffer,
 	/* Fill output buffer with PCM */
 	dec->pcm_remain = frameInfo.samples;
 	dec->pcm_length = frameInfo.samples;
+	dec->samplerate = frameInfo.samplerate;
+	dec->channels = frameInfo.channels;
 	size = decoder_aac_fill_output(dec, out_buffer, out_size);
 
 	/* Update buffer */
 	info->used = frameInfo.bytesconsumed;
 	info->remaining = dec->pcm_remain;
+	info->samplerate = dec->samplerate;
+	info->channels = dec->channels;
 
 	return size;
 }
