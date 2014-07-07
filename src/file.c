@@ -309,8 +309,10 @@ int file_get_status(struct file_handle *h)
 	return FILE_OPENED;
 }
 
-int file_read(struct file_handle *h, unsigned char *buffer, size_t size)
+int file_read(void *user_data, unsigned char *buffer, size_t size,
+	      struct a_format *fmt)
 {
+	struct file_handle *h = (struct file_handle *) user_data;
 	struct decoder_info info;
 	int total_samples = 0;
 	int samples;

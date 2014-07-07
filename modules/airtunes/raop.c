@@ -250,8 +250,10 @@ static int raop_get_next_packet(struct raop_handle *h)
 	return 0;
 }
 
-int raop_read(struct raop_handle *h, unsigned char *buffer, size_t size)
+int raop_read(void *user_data, unsigned char *buffer, size_t size,
+	      struct a_format *fmt)
 {
+	struct raop_handle *h = (struct raop_handle *) user_data;
 	struct decoder_info info;
 	int total_samples = 0;
 	int samples;

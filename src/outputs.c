@@ -437,7 +437,7 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 					       unsigned char channels,
 					       unsigned long cache,
 					       int use_cache_thread,
-					       void *input_callback,
+					       a_read_cb input_callback,
 					       void *user_data)
 {
 	struct output_stream_handle *s = NULL;

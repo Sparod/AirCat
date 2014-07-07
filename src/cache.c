@@ -34,7 +34,7 @@ struct cache_handle {
 	/* Cache properties */
 	int use_thread;
 	/* Input callback */
-	int (*input_callback)(void *, unsigned char *, size_t);
+	a_read_cb input_callback;
 	void *user_data;
 	/* Buffer handling */
 	unsigned char *buffer;
@@ -51,7 +51,7 @@ struct cache_handle {
 static void *cache_read_thread(void *user_data);
 
 int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
-	       void *input_callback, void *user_data)
+	       a_read_cb input_callback, void *user_data)
 {
 	struct cache_handle *h;
 
@@ -109,7 +109,7 @@ static void *cache_read_thread(void *user_data)
 		{
 			/* Read next packet from input callback */
 			ret = h->input_callback(h->user_data, &buffer[len*4],
-						(BUFFER_SIZE / 4) - len);
+						(BUFFER_SIZE / 4) - len, NULL);
 			if(ret < 0)
 				break;
 			len += ret;
@@ -144,8 +144,10 @@ static void *cache_read_thread(void *user_data)
 	return NULL;
 }
 
-int cache_read(struct cache_handle *h, unsigned char *buffer, size_t size)
+int cache_read(void *user_data, unsigned char *buffer, size_t size,
+	       struct a_format *fmt)
 {
+	struct cache_handle *h = (struct cache_handle *) user_data;
 	unsigned long in_size;
 	long len;
 
@@ -183,7 +185,7 @@ int cache_read(struct cache_handle *h, unsigned char *buffer, size_t size)
 		/* Fill cache with some samples */
 		in_size = h->size - h->len;
 		len = h->input_callback(h->user_data, &h->buffer[h->len*4],
-					in_size);
+					in_size, NULL);
 		if(len < 0)
 		{
 			if(h->len == 0)

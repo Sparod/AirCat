@@ -45,7 +45,7 @@ struct output_stream {
 	/* Resample object */
 	struct resample_handle *res;
 	/* Input callback */
-	int (*input_callback)(void *, unsigned char *, size_t);
+	a_read_cb input_callback;
 	void *user_data;
 	/* Format */
 	unsigned long samplerate;
@@ -145,7 +145,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 					     unsigned char nb_channel,
 					     unsigned long cache,
 					     int use_cache_thread,
-					     void *input_callback,
+					     a_read_cb input_callback,
 					     void *user_data)
 {
 	struct output_stream *s;
@@ -342,6 +342,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 				   unsigned char *out_buffer, size_t len)
 {
 	struct output_stream *s;
+	struct a_format fmt = A_FORMAT_INIT;
 #ifdef USE_FLOAT
 	float *p_in = (float*) in_buffer;
 	float *p_out = (float*) out_buffer;
@@ -363,7 +364,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			continue;
 
 		/* Get input data */
-		in_size = s->input_callback(s->user_data, in_buffer, len);
+		in_size = s->input_callback(s->user_data, in_buffer, len, &fmt);
 		if(in_size <= 0)
 			continue;
 

@@ -28,7 +28,7 @@ struct output_module {
 	int (*set_volume)(void *, unsigned int);
 	unsigned int (*get_volume)(void *);
 	void *(*add_stream)(void *, unsigned long, unsigned char, unsigned long,
-			    int, void *, void *);
+			    int, a_read_cb, void *);
 	int (*play_stream)(void *, void *);
 	int (*pause_stream)(void *, void *);
 	int (*set_volume_stream)(void *, void *, unsigned int);

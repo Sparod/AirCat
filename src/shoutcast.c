@@ -351,8 +351,10 @@ static int shoutcast_sync_aac_stream(struct shout_handle *h)
 	return -1;
 }
 
-int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size)
+int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
+		   struct a_format *fmt)
 {
+	struct shout_handle *h = (struct shout_handle *) user_data;
 	struct decoder_info info;
 	int total_samples = 0;
 	int samples;

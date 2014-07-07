@@ -42,7 +42,7 @@ struct resample_handle {
 	unsigned long out_samplerate;
 	unsigned char out_channels;
 	/* Input callback */
-	int (*input_callback)( void *, unsigned char *, size_t);
+	a_read_cb input_callback;
 	void *user_data;
 	/* Input buffer */
 	unsigned char *in_buffer;
@@ -63,7 +63,7 @@ struct resample_handle {
 
 int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 		  unsigned char in_channels, unsigned long out_samplerate,
-		  unsigned char out_channels, void *input_callback,
+		  unsigned char out_channels, a_read_cb input_callback,
 		  void *user_data)
 {
 	struct resample_handle *h;
@@ -232,8 +232,10 @@ static int resample_up_mix(struct resample_handle *h, unsigned char *in_buffer,
 	return len *out_channels / in_channels;
 }
 
-int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
+int resample_read(void *user_data, unsigned char *buffer, size_t size,
+		  struct a_format *fmt)
 {
+	struct resample_handle *h = (struct resample_handle *) user_data;
 	size_t in_consumed, out_samples;
 	unsigned char *p_in, *p_out;
 	unsigned long total_size = 0;
@@ -245,7 +247,7 @@ int resample_read(struct resample_handle *h, unsigned char *buffer, size_t size)
 	{
 		/* Fill as possible input buffer */
 		len = h->input_callback(h->user_data, &h->in_buffer[h->in_len],
-					(h->in_size - h->in_len) / 4);
+					(h->in_size - h->in_len) / 4, NULL);
 		if(len == 0)
 			break;
 

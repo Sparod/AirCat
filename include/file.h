@@ -20,6 +20,7 @@
 #define _FILE_CLIENT_H
 
 #include "file_format.h"
+#include "format.h"
 
 /* File status */
 enum {
@@ -41,8 +42,8 @@ int file_get_pos(struct file_handle *h);
 int file_get_length(struct file_handle *h);
 int file_get_status(struct file_handle *h);
 
-int file_read(struct file_handle *h, unsigned char *buffer, size_t size);
-
+int file_read(void *h, unsigned char *buffer, size_t size,
+	      struct a_format *fmt);
 int file_close(struct file_handle *h);
 
 #endif

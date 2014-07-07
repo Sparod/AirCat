@@ -19,6 +19,8 @@
 #ifndef _RAOP_SERVER_H
 #define _RAOP_SERVER_H
 
+#include "format.h"
+
 enum {RAOP_PCM, RAOP_ALAC, RAOP_AAC};
 enum {RAOP_TCP, RAOP_UDP};
 
@@ -45,7 +47,8 @@ struct raop_handle;
 
 int raop_open(struct raop_handle **h, struct raop_attr *attr);
 
-int raop_read(struct raop_handle *h, unsigned char *buffer, size_t size);
+int raop_read(void *h, unsigned char *buffer, size_t size,
+	      struct a_format *fmt);
 
 unsigned long raop_get_samplerate(struct raop_handle *h);
 

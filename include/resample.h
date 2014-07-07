@@ -19,14 +19,16 @@
 #ifndef _RESAMPLE_H
 #define _RESAMPLE_H
 
+#include "format.h"
+
 struct resample_handle;
 
 int resample_open(struct resample_handle **h, unsigned long in_samplerate,
 		  unsigned char in_channels, unsigned long out_samplerate,
-		  unsigned char out_channels, void *input_callback,
+		  unsigned char out_channels, a_read_cb input_callback,
 		  void *user_data);
-int resample_read(struct resample_handle *h, unsigned char *buffer,
-		  size_t size);
+int resample_read(void *h, unsigned char *buffer, size_t size,
+		  struct a_format *fmt);
 int resample_close(struct resample_handle *h);
 
 #endif

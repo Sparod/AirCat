@@ -19,6 +19,8 @@
 #ifndef _SHOUTCAST_CLIENT_H
 #define _SHOUTCAST_CLIENT_H
 
+#include "format.h"
+
 enum {NONE_STREAM, MPEG_STREAM, AAC_STREAM};
 
 struct radio_info {
@@ -43,7 +45,8 @@ unsigned long shoutcast_get_samplerate(struct shout_handle *h);
 
 unsigned char shoutcast_get_channels(struct shout_handle *h);
 
-int shoutcast_read(struct shout_handle *h, unsigned char *buffer, size_t size);
+int shoutcast_read(void *h, unsigned char *buffer, size_t size,
+		   struct a_format *fmt);
 
 const struct radio_info *shoutcast_get_info(struct shout_handle *h);
 

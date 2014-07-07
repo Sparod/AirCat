@@ -1,5 +1,5 @@
 /*
- * cache.h - A generic cache module
+ * format.h - Audio output module
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -16,18 +16,18 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _CACHE_H
-#define _CACHE_H
+#ifndef _FORMAT_H
+#define _FORMAT_H
 
-#include "format.h"
+#define A_FORMAT_INIT {0, 0}
 
-struct cache_handle;
+struct a_format {
+	unsigned long samplerate;
+	unsigned char channels;
+};
 
-int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
-	       a_read_cb input_callback, void *user_data);
-int cache_read(void *h, unsigned char *buffer, size_t size,
-	       struct a_format *fmt);
-int cache_close(struct cache_handle *h);
+typedef int (*a_read_cb) (void *user_data, unsigned char *buffer,
+			  size_t size, struct a_format *fmt);
 
 #endif
 
