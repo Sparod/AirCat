@@ -536,10 +536,10 @@ int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 	return 0;
 }
 
-int http_close(struct http_handle *h)
+void http_close(struct http_handle *h)
 {
 	if(h == NULL)
-		return 0;
+		return;
 
 	/* Close socket */
 	if(h->sock >= 0)
@@ -567,5 +567,6 @@ int http_close(struct http_handle *h)
 	FREE_STR(h->extra);
 	FREE_STR(h->proxy_hostname);
 
-	return 0;
+	/* Free handle */
+	free(h);
 }

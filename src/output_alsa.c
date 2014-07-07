@@ -246,13 +246,13 @@ unsigned int output_alsa_get_volume_stream(struct output *h,
 
 static void output_alsa_free_stream(struct output_stream *s)
 {
-	/* Close resample module */
-	if(s->res != NULL)
-		resample_close(s->res);
-
 	/* Free cache buffer */
 	if(s->cache != NULL)
 		cache_close(s->cache);
+
+	/* Close resample module */
+	if(s->res != NULL)
+		resample_close(s->res);
 
 	/* Free stream */
 	free(s);

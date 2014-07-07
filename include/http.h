@@ -47,7 +47,7 @@ char *http_get_header(struct http_handle *h, const char *name,
 int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 		      long timeout);
 
-int http_close(struct http_handle *h);
+void http_close(struct http_handle *h);
 
 #endif
 
