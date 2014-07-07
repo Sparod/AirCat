@@ -337,6 +337,14 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 			return -1;
 		}
 
+		/* Update audio format */
+		if(info.samplerate != h->samplerate ||
+		   info.channels != h->channels)
+		{
+			h->samplerate = info.samplerate;
+			h->channels = info.channels;
+		}
+
 		h->pcm_remaining -= samples;
 		total_samples += samples;
 	}
@@ -368,6 +376,18 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
+
+		/* Check audio format */
+		if(info.samplerate != h->samplerate ||
+		   info.channels != h->channels)
+		{
+			/* Reset internal position */
+			decoder_decode(h->dec, NULL, 0, NULL, 0, NULL);
+			h->pcm_remaining += samples;
+			break;
+		}
+
+		/* Update samples returned */
 		total_samples += samples;
 	}
 
@@ -379,6 +399,13 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	/* End of stream */
 	if(len < 0 && total_samples == 0)
 		return -1;
+
+	/* Fill audio format */
+	if(fmt != NULL)
+	{
+		fmt->samplerate = h->samplerate;
+		fmt->channels = h->channels;
+	}
 
 	return total_samples;
 }
