@@ -140,6 +140,13 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 {
 	unsigned short size = 0;
 
+	/* Reset position of PCM output buffer */
+	if(in_buffer == NULL && out_buffer == 0 && out_size == 0)
+	{
+		dec->pcm_remain = dec->Synth.pcm.length;
+		return 0;
+	}
+
 	/* Empty remaining PCM before decoding another frame */
 	if(dec->pcm_remain > 0 || in_buffer == NULL)
 	{
