@@ -41,6 +41,9 @@ struct resample_handle {
 	unsigned char in_channels;
 	unsigned long out_samplerate;
 	unsigned char out_channels;
+	unsigned long new_samplerate;
+	unsigned char new_channels;
+	size_t fmt_has_changed;
 	/* Input callback */
 	a_read_cb input_callback;
 	void *user_data;
@@ -61,15 +64,16 @@ struct resample_handle {
 	} * out_specs;
 };
 
+static int resample_init(struct resample_handle *h);
+
 int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 		  unsigned char in_channels, unsigned long out_samplerate,
 		  unsigned char out_channels, a_read_cb input_callback,
 		  void *user_data)
 {
 	struct resample_handle *h;
-	soxr_io_spec_t io_spec;
-	int i, j;
-	
+
+	/* Allocate handle */
 	*handle = malloc(sizeof(struct resample_handle));
 	if(*handle == NULL)
 		return -1;
@@ -87,25 +91,35 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 	h->in_channels = in_channels;
 	h->out_samplerate = out_samplerate;
 	h->out_channels = out_channels;
+	h->fmt_has_changed = 0;
 
-	/* Alloc buffer */
+	/* Allocate input buffer */
 	h->in_len = 0;
-	h->in_size = BUFFER_SIZE * max(in_channels, out_channels);
+	h->in_size = BUFFER_SIZE;
 	h->in_buffer = malloc(h->in_size * 4); //32-bit wide sample
 	if(h->in_buffer == NULL)
 		return -1;
 
+	/* Init resample engine */
+	return resample_init(h);
+}
+
+static int resample_init(struct resample_handle *h)
+{
+	soxr_io_spec_t io_spec;
+	int i, j;
+
 	/* Alloc a second buffer for in channel < out_channel */
-	if(in_channels < out_channels)
+	if(h->in_channels < h->out_channels)
 	{
-		h->out_size = BUFFER_SIZE * in_channels;
+		h->out_size = BUFFER_SIZE * h->in_channels;
 		h->out_buffer = malloc(h->out_size * 4); //32-bit wide sample
 		if(h->out_buffer == NULL)
 			return -1;
 	}
 
 	/* Prepapre values for down/up-mixing */
-	if(in_channels != out_channels)
+	if(h->in_channels != h->out_channels)
 	{
 		h->out_specs = malloc(h->out_channels * sizeof(*h->out_specs));
 		if(h->out_specs == NULL)
@@ -158,13 +172,37 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 #endif
 
 	/* Create converter */
-	h->soxr = soxr_create((double)in_samplerate, (double)out_samplerate,
-			      min(in_channels, out_channels), NULL,
+	h->soxr = soxr_create((double)h->in_samplerate,
+			      (double)h->out_samplerate,
+			      min(h->in_channels, h->out_channels), NULL,
 			      &io_spec, NULL, NULL);
 	if(h->soxr == NULL)
 		return -1;
 
 	return 0;
+}
+
+static void resample_free(struct resample_handle *h)
+{
+	/* Close libsoxr */
+	if(h->soxr != NULL)
+		soxr_delete(h->soxr);
+
+	/* Free specs for down/up-mixing */
+	if(h->out_specs != NULL)
+	{
+		int i;
+		for(i = 0; i < h->out_channels; i++)
+			if(h->out_specs[i].in_specs != NULL)
+				free(h->out_specs[i].in_specs);
+		free(h->out_specs);
+	}
+	h->out_specs = NULL;
+
+	/* Free buffer */
+	if(h->out_buffer != NULL)
+		free(h->out_buffer);
+	h->out_buffer = NULL;
 }
 
 static int resample_down_mix(struct resample_handle *h, unsigned char *buffer,
@@ -239,18 +277,43 @@ int resample_read(void *user_data, unsigned char *buffer, size_t size,
 	size_t in_consumed, out_samples;
 	unsigned char *p_in, *p_out;
 	unsigned long total_size = 0;
+	struct a_format in_fmt;
 	size_t in_scale; // samples * _scale => bytes * channels */
+	ssize_t len = 0; // => samples * channels
 	size_t out_len;
-	ssize_t len; // => samples * channels
 
 	while(total_size < size)
 	{
+		/* Check if format has changed */
+		if(h->fmt_has_changed > 0)
+			goto flush;
+
 		/* Fill as possible input buffer */
 		len = h->input_callback(h->user_data, &h->in_buffer[h->in_len],
-					(h->in_size - h->in_len) / 4, NULL);
+					(h->in_size - h->in_len) / 4, &in_fmt);
 		if(len == 0)
 			break;
 
+		/* Check audio format */
+		if(h->fmt_has_changed == 0 && ((in_fmt.samplerate != 0 &&
+		    in_fmt.samplerate != h->in_samplerate) ||
+		   (in_fmt.channels != 0 && in_fmt.channels != h->in_channels)))
+		{
+			/* When audio format (samplerate/channels) change, do
+			 * some tasks:
+			 *  1. save buffer len with new format,
+			 *  2. flush remaining data in resample/mixer engine,
+			 *  3. close and free resample/mixer engine,
+			 *  4. init a new resample/mixer engine,
+			 *  5. continue normal operation.
+			 */
+			h->fmt_has_changed = len;
+			h->new_samplerate = in_fmt.samplerate;
+			h->new_channels = in_fmt.channels;
+			goto flush;
+		}
+
+done:
 		/* Down-mixing channels */
 		if(len > 0)
 		{
@@ -264,6 +327,7 @@ int resample_read(void *user_data, unsigned char *buffer, size_t size,
 			h->in_len += len * 4;
 		}
 
+flush:
 		/* End of stream handling */
 		p_in = len < 0 && h->in_len == 0 ? NULL : h->in_buffer;
 		in_scale = h->in_channels > h->out_channels ?
@@ -286,6 +350,21 @@ int resample_read(void *user_data, unsigned char *buffer, size_t size,
 			/* Move remaining data in input buffer */
 			memmove(h->in_buffer,
 				&h->in_buffer[in_consumed*in_scale], h->in_len);
+		}
+
+		/* Audio format has changed and engine is flushed */
+		if(h->fmt_has_changed > 0 && out_samples == 0)
+		{
+			/* Reset resample/mixer engine */
+			resample_free(h);
+			h->in_samplerate = h->new_samplerate;
+			h->in_channels = h->new_channels;
+			resample_init(h);
+
+			/* Restore input buffer */
+			len = h->fmt_has_changed;
+			h->fmt_has_changed = 0;
+			goto done;
 		}
 
 		/* End of stream and all remaining data has been consumed */
@@ -313,25 +392,12 @@ int resample_close(struct resample_handle *h)
 	if(h == NULL)
 		return 0;
 
-	/* Close libsoxr */
-	if(h->soxr != NULL)
-		soxr_delete(h->soxr);
+	/* Free resample engine */
+	resample_free(h);
 
-	/* Free specs for down/up-mixing */
-	if(h->out_specs != NULL)
-	{
-		int i;
-		for(i = 0; i < h->out_channels; i++)
-			if(h->out_specs[i].in_specs != NULL)
-				free(h->out_specs[i].in_specs);
-		free(h->out_specs);
-	}
-
-	/* Free buffer */
+	/* Free input buffer */
 	if(h->in_buffer != NULL)
 		free(h->in_buffer);
-	if(h->out_buffer != NULL)
-		free(h->out_buffer);
 
 	/* Free structure */
 	free(h);
