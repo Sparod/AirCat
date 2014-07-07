@@ -1,5 +1,5 @@
 /*
- * format.h - Audio output module
+ * format.h - Stream format definition
  *
  * Copyright (c) 2014   A. Dilly
  *
