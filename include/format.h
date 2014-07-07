@@ -29,5 +29,20 @@ struct a_format {
 typedef int (*a_read_cb) (void *user_data, unsigned char *buffer,
 			  size_t size, struct a_format *fmt);
 
+static inline void format_cpy(struct a_format *f1, struct a_format *f2)
+{
+	if(f1 != NULL && f2 != NULL)
+		memcpy(f1, f2, sizeof(struct a_format));
+}
+
+static inline int format_cmp(struct a_format *f1, struct a_format *f2)
+{
+	if(f1 != NULL && f2 != NULL &&
+	   f1->samplerate == f2->samplerate &&
+	   f1->channels == f2->channels)
+		return 0;
+
+	return 1;
+}
 #endif
 

@@ -30,6 +30,12 @@
 
 #define BUFFER_SIZE 8192
 
+struct cache_format {
+	struct a_format fmt;
+	unsigned long len;
+	struct cache_format *next;
+};
+
 struct cache_handle {
 	/* Cache properties */
 	int use_thread;
@@ -42,6 +48,10 @@ struct cache_handle {
 	unsigned long len;
 	unsigned long pos;
 	int is_ready;
+	/* Associated format to buffer */
+	struct cache_format *fmt_first;
+	struct cache_format *fmt_last;
+	unsigned long fmt_len;
 	/* Thread objects */
 	pthread_t thread;
 	pthread_mutex_t mutex;
@@ -74,6 +84,9 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	h->user_data = user_data;
 	h->use_thread = use_thread;
 	h->stop = 0;
+	h->fmt_first = NULL;
+	h->fmt_last = NULL;
+	h->fmt_len = 0;
 
 	/* Allocate buffer */
 	h->buffer = malloc(size * 4);
@@ -93,9 +106,52 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	return 0;
 }
 
+static int cache_put_format(struct cache_handle *h, struct a_format *fmt)
+{
+	struct cache_format *cf;
+
+	/* Allocate format entry */
+	cf = malloc(sizeof(struct cache_format));
+	if(cf == NULL)
+		return -1;
+
+	/* Copy format */
+	format_cpy(&cf->fmt, fmt);
+
+	/* Set len before format change */
+	cf->len = h->fmt_len;
+	cf->next = NULL;
+
+	/* Add to format list */
+	if(h->fmt_last != NULL)
+		h->fmt_last->next = cf;
+	h->fmt_last = cf;
+	if(h->fmt_first == NULL)
+		h->fmt_first = cf;
+	h->fmt_len = 0;
+
+	return 0;
+}
+
+static void cache_get_format(struct cache_handle *h)
+{
+	struct cache_format *cf;
+
+	if(h->fmt_first == NULL)
+		return;
+
+	/* Update list */
+	cf = h->fmt_first;
+	h->fmt_first = cf->next;
+
+	/* Free current entry */
+	free(cf);
+}
+
 static void *cache_read_thread(void *user_data)
 {
 	struct cache_handle *h = (struct cache_handle *) user_data;
+	struct a_format in_fmt = A_FORMAT_INIT;
 	unsigned char buffer[BUFFER_SIZE];
 	unsigned long in_size = 0;
 	unsigned long len = 0;
@@ -109,7 +165,8 @@ static void *cache_read_thread(void *user_data)
 		{
 			/* Read next packet from input callback */
 			ret = h->input_callback(h->user_data, &buffer[len*4],
-						(BUFFER_SIZE / 4) - len, NULL);
+						(BUFFER_SIZE / 4) - len,
+						&in_fmt);
 			if(ret < 0)
 				break;
 			len += ret;
@@ -128,6 +185,13 @@ static void *cache_read_thread(void *user_data)
 		memcpy(&h->buffer[h->len*4], buffer, in_size * 4);
 		h->len += in_size;
 		len -= in_size;
+
+		/* Update format list */
+		if(h->fmt_last == NULL ||
+		   ((in_fmt.samplerate != 0 || in_fmt.channels != 0) &&
+		    format_cmp(&in_fmt, &h->fmt_last->fmt) != 0))
+			cache_put_format(h, &in_fmt);
+		h->fmt_len += in_size;
 
 		/* Cache is full */
 		if(h->len == h->size)
@@ -148,6 +212,8 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 	       struct a_format *fmt)
 {
 	struct cache_handle *h = (struct cache_handle *) user_data;
+	struct a_format in_fmt = A_FORMAT_INIT;
+	struct cache_format *next_fmt;
 	unsigned long in_size;
 	long len;
 
@@ -163,6 +229,30 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Some data is available */
 		if(size > h->len)
 			size = h->len;
+
+		/* Check format list */
+		if(h->fmt_first != NULL)
+		{
+			/* Copy current format */
+			format_cpy(fmt, &h->fmt_first->fmt);
+
+			/* Check next format */
+			next_fmt = h->fmt_first->next;
+			if(next_fmt != NULL)
+			{
+				if(next_fmt->len < size)
+				{
+					/* Limit size to format switching byte
+					 * and free current format
+					 */
+					size = next_fmt->len;
+					cache_get_format(h);
+				}
+				next_fmt->len -= size;
+			}
+			else
+				h->fmt_len -= size;
+		}
 
 		/* Read in cache */
 		memcpy(buffer, h->buffer, size*4);
@@ -185,7 +275,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Fill cache with some samples */
 		in_size = h->size - h->len;
 		len = h->input_callback(h->user_data, &h->buffer[h->len*4],
-					in_size, NULL);
+					in_size, &in_fmt);
 		if(len < 0)
 		{
 			if(h->len == 0)
@@ -193,6 +283,13 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 			return size;
 		}
 		h->len += len;
+
+		/* Update format list */
+		if(h->fmt_last == NULL ||
+		   ((in_fmt.samplerate != 0 || in_fmt.channels != 0) &&
+		    format_cmp(&in_fmt, &h->fmt_last->fmt) != 0))
+			cache_put_format(h, &in_fmt);
+		h->fmt_len += len;
 
 		/* Cache is full */
 		if(h->len == h->size)
@@ -204,6 +301,8 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 
 int cache_close(struct cache_handle *h)
 {
+	struct cache_format *cf;
+
 	if(h == NULL)
 		return 0;
 
@@ -215,6 +314,14 @@ int cache_close(struct cache_handle *h)
 
 		/* Wait end of the thread */
 		pthread_join(h->thread, NULL);
+	}
+
+	/* Free format list */
+	while(h->fmt_first != NULL)
+	{
+		cf = h->fmt_first;
+		h->fmt_first = cf->next;
+		free(cf);
 	}
 
 	/* Free buffer */
