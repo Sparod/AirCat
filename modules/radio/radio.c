@@ -127,6 +127,7 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	char *artist = NULL;
 	char *title = NULL;
 	char *str = NULL;
+	unsigned long v;
 
 	/* No radio playing */
 	if(h->radio == NULL)
@@ -179,6 +180,20 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 		/* Add title and artist */
 		json_set_string(root, "title", title);
 		json_set_string(root, "artist", artist);
+
+		/* Add playing status */
+		v = output_get_status_stream(h->output, h->stream,
+					     OUTPUT_STREAM_CACHE_STATUS);
+		if(v == CACHE_BUFFERING)
+		{
+			/* Get cache filling rate */
+			v = output_get_status_stream(h->output, h->stream,
+						   OUTPUT_STREAM_CACHE_FILLING);
+			json_set_int(root, "buffering", v);
+		}
+		v = output_get_status_stream(h->output, h->stream,
+					     OUTPUT_STREAM_PLAYED);
+		json_set_int(root, "elapsed", v / 1000);
 
 		/* Free string */
 		if(str != NULL)
