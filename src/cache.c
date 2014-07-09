@@ -55,6 +55,8 @@ struct cache_handle {
 	/* Thread objects */
 	pthread_t thread;
 	pthread_mutex_t mutex;
+	pthread_mutex_t input_lock;
+	int flush;
 	int stop;
 };
 
@@ -95,6 +97,7 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 
 	/* Init thread mutex */
 	pthread_mutex_init(&h->mutex, NULL);
+	pthread_mutex_init(&h->input_lock, NULL);
 
 	if(use_thread)
 	{
@@ -195,6 +198,16 @@ static void *cache_read_thread(void *user_data)
 	/* Read indefinitively the input callback */
 	while(!h->stop)
 	{
+		/* Lock input callback */
+		cache_lock(h);
+
+		/* Flush this buffer */
+		if(h->flush)
+		{
+			h->flush = 0;
+			len = 0;
+		}
+
 		/* Check buffer len */
 		if(len < BUFFER_SIZE / 4)
 		{
@@ -206,9 +219,6 @@ static void *cache_read_thread(void *user_data)
 				break;
 			len += ret;
 		}
-		else
-			/* Buffer is already fill: sleep 1ms */
-			usleep(1000);
 
 		/* Lock cache access */
 		pthread_mutex_lock(&h->mutex);
@@ -238,6 +248,13 @@ static void *cache_read_thread(void *user_data)
 		/* Move remaining data*/
 		if(len > 0)
 			memmove(buffer, &buffer[in_size*4], len * 4);
+
+		/* Unlock cache */
+		cache_unlock(h);
+
+		/* Buffer is already fill: sleep 1ms */
+		if(len >= BUFFER_SIZE / 4)
+			usleep(1000);
 	}
 
 	return NULL;
@@ -307,6 +324,10 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 	/* Check cache status */
 	if(!h->use_thread && h->len < h->size)
 	{
+		/* Check input callback access */
+		if(pthread_mutex_trylock(&h->input_lock) != 0)
+			return size;
+
 		/* Fill cache with some samples */
 		in_size = h->size - h->len;
 		len = h->input_callback(h->user_data, &h->buffer[h->len*4],
@@ -329,9 +350,55 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Cache is full */
 		if(h->len == h->size)
 			h->is_ready = 1;
+
+		/* Unlock input callback access */
+		cache_unlock(h);
 	}
 
 	return size;
+}
+
+void cache_flush(struct cache_handle *h)
+{
+	struct cache_format *cf;
+
+	/* Lock input callback */
+	cache_lock(h);
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Flush the cache */
+	h->is_ready = 0;
+	h->len = 0;
+
+	/* Flush format list */
+	while(h->fmt_first != NULL)
+	{
+		cf = h->fmt_first;
+		h->fmt_first = cf->next;
+		free(cf);
+	}
+	h->fmt_last = NULL;
+
+	/* Notice flush to thread */
+	if(h->use_thread)
+		h->flush = 1;
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
+}
+
+void cache_lock(struct cache_handle *h)
+{
+	/* Lock input callback access */
+	pthread_mutex_lock(&h->input_lock);
+}
+
+void cache_unlock(struct cache_handle *h)
+{
+	/* Unlock input callback access */
+	pthread_mutex_unlock(&h->input_lock);
 }
 
 int cache_close(struct cache_handle *h)
@@ -340,6 +407,9 @@ int cache_close(struct cache_handle *h)
 
 	if(h == NULL)
 		return 0;
+
+	/* Unlock input callback */
+	cache_unlock(h);
 
 	/* Stop thread */
 	if(h->use_thread)

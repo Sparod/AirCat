@@ -29,6 +29,9 @@ int cache_is_ready(struct cache_handle *h);
 unsigned char cache_get_filling(struct cache_handle *h);
 int cache_read(void *h, unsigned char *buffer, size_t size,
 	       struct a_format *fmt);
+void cache_flush(struct cache_handle *h);
+void cache_lock(struct cache_handle *h);
+void cache_unlock(struct cache_handle *h);
 int cache_close(struct cache_handle *h);
 
 #endif
