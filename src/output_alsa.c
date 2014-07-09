@@ -203,7 +203,14 @@ error:
 int output_alsa_play_stream(struct output *h, struct output_stream *s)
 {
 	pthread_mutex_lock(&h->mutex);
+
+	/* Play */
 	s->is_playing = 1;
+
+	/* Unlock cache after a flush */
+	if(s->cache != NULL)
+		cache_unlock(s->cache);
+
 	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
@@ -212,10 +219,30 @@ int output_alsa_play_stream(struct output *h, struct output_stream *s)
 int output_alsa_pause_stream(struct output *h, struct output_stream *s)
 {
 	pthread_mutex_lock(&h->mutex);
+
+	/* Pause */
 	s->is_playing = 0;
+
 	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
+}
+
+void output_alsa_flush_stream(struct output *h, struct output_stream *s)
+{
+	pthread_mutex_lock(&h->mutex);
+
+	if(s->cache != NULL)
+	{
+		/* Flush the cache */
+		cache_flush(s->cache);
+
+		/* Must unlock input callback in cache after a flush */
+		if(s->is_playing)
+			cache_unlock(s->cache);
+	}
+
+	pthread_mutex_unlock(&h->mutex);
 }
 
 int output_alsa_set_volume_stream(struct output *h, struct output_stream *s,
@@ -544,6 +571,7 @@ struct output_module output_alsa = {
 	.add_stream = (void*) &output_alsa_add_stream,
 	.play_stream = (void*) &output_alsa_play_stream,
 	.pause_stream = (void*) &output_alsa_pause_stream,
+	.flush_stream = (void*) &output_alsa_flush_stream,
 	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
 	.get_status_stream = (void*) &output_alsa_get_status_stream,

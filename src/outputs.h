@@ -31,6 +31,7 @@ struct output_module {
 			    int, a_read_cb, void *);
 	int (*play_stream)(void *, void *);
 	int (*pause_stream)(void *, void *);
+	void (*flush_stream)(void *, void *);
 	int (*set_volume_stream)(void *, void *, unsigned int);
 	unsigned int (*get_volume_stream)(void *, void *);
 	unsigned long (*get_status_stream)(void *, void *,

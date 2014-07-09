@@ -68,6 +68,8 @@ void output_remove_stream(struct output_handle *h,
 int output_play_stream(struct output_handle *h, struct output_stream_handle *s);
 int output_pause_stream(struct output_handle *h,
 			struct output_stream_handle *s);
+void output_flush_stream(struct output_handle *h,
+			 struct output_stream_handle *s);
 
 /* Volume output stream control */
 int output_set_volume_stream(struct output_handle *h,
