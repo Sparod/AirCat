@@ -106,6 +106,41 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	return 0;
 }
 
+int cache_is_ready(struct cache_handle *h)
+{
+	int ret;
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Check data availability in cache */
+	ret = h->is_ready;
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
+}
+
+unsigned char cache_get_filling(struct cache_handle *h)
+{
+	unsigned long percent;
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Check data availability in cache */
+	if(h->is_ready)
+		percent = 100;
+	else
+		percent = h->len * 100 / h->size;
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return (unsigned char) percent;
+}
+
 static int cache_put_format(struct cache_handle *h, struct a_format *fmt)
 {
 	struct cache_format *cf;
