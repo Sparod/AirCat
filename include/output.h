@@ -23,6 +23,28 @@
 
 #define OUTPUT_VOLUME_MAX 65535
 
+enum output_stream_key {
+	/* Stream status (see enum stream_status) */
+	OUTPUT_STREAM_STATUS,
+	/* Time played on stream (in ms) */
+	OUTPUT_STREAM_PLAYED,
+	/* Stream cache status (see enum stream_cache_status) */
+	OUTPUT_STREAM_CACHE_STATUS,
+	/* Stream cache fill (in %) */
+	OUTPUT_STREAM_CACHE_FILLING
+};
+
+enum stream_status {
+	STREAM_PLAYING,
+	STREAM_PAUSED,
+	STREAM_ENDED
+};
+
+enum streamcache_status {
+	CACHE_READY,
+	CACHE_BUFFERING
+};
+
 struct output_handle;
 struct output_stream_handle;
 
@@ -53,5 +75,10 @@ int output_set_volume_stream(struct output_handle *h,
 			     unsigned int volume);
 unsigned int output_get_volume_stream(struct output_handle *h,
 				      struct output_stream_handle *s);
+
+/* Output stream status */
+unsigned long output_get_status_stream(struct output_handle *h,
+				       struct output_stream_handle *s,
+				       enum output_stream_key key);
 
 #endif

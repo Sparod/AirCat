@@ -33,6 +33,8 @@ struct output_module {
 	int (*pause_stream)(void *, void *);
 	int (*set_volume_stream)(void *, void *, unsigned int);
 	unsigned int (*get_volume_stream)(void *, void *);
+	unsigned long (*get_status_stream)(void *, void *,
+					   enum output_stream_key);
 	int (*remove_stream)(void *, void *);
 	int (*close)(void *);
 };

@@ -52,6 +52,8 @@ struct output_stream {
 	unsigned char nb_channel;
 	/* Stream status */
 	int is_playing;
+	int end_of_stream;
+	unsigned long played;
 	/* Stream volume */
 	unsigned int volume;
 	/* Stream cache */
@@ -161,6 +163,8 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->nb_channel = nb_channel;
 	s->res = NULL;
 	s->is_playing = 0;
+	s->end_of_stream = 0;
+	s->played = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
 
@@ -232,7 +236,7 @@ int output_alsa_set_volume_stream(struct output *h, struct output_stream *s,
 	return 0;
 }
 
-unsigned int output_alsa_get_volume_stream(struct output *h, 
+unsigned int output_alsa_get_volume_stream(struct output *h,
 					   struct output_stream *s)
 {
 	unsigned int volume;
@@ -242,6 +246,50 @@ unsigned int output_alsa_get_volume_stream(struct output *h,
 	pthread_mutex_unlock(&h->mutex);
 
 	return volume;
+}
+
+unsigned long output_alsa_get_status_stream(struct output *h,
+					    struct output_stream *s,
+					    enum output_stream_key key)
+{
+	unsigned long ret;
+
+	/* Lock stream access */
+	pthread_mutex_lock(&h->mutex);
+
+	switch(key)
+	{
+		case OUTPUT_STREAM_STATUS:
+			if(s->end_of_stream)
+				ret = STREAM_ENDED;
+			else if(s->is_playing)
+				ret = STREAM_PLAYING;
+			else
+				ret = STREAM_PAUSED;
+			break;
+		case OUTPUT_STREAM_PLAYED:
+			ret = s->played;
+			break;
+		case OUTPUT_STREAM_CACHE_STATUS:
+			if(s->cache != NULL && cache_is_ready(s->cache) == 0)
+				ret = CACHE_BUFFERING;
+			else
+				ret = CACHE_READY;
+			break;
+		case OUTPUT_STREAM_CACHE_FILLING:
+			if(s->cache != NULL)
+				ret = cache_get_filling(s->cache);
+			else
+				ret = 100;
+			break;
+		default:
+			ret = 0;
+	}
+
+	/* Unlock stream access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
 }
 
 static void output_alsa_free_stream(struct output_stream *s)
@@ -360,13 +408,20 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 	pthread_mutex_lock(&h->mutex);
 	for(s = h->streams; s != NULL; s = s->next)
 	{
-		if(!s->is_playing)
+		if(!s->is_playing || s->end_of_stream)
 			continue;
 
 		/* Get input data */
 		in_size = s->input_callback(s->user_data, in_buffer, len, &fmt);
 		if(in_size <= 0)
+		{
+			if(in_size < 0)
+				s->end_of_stream = 1;
 			continue;
+		}
+
+		/* Update played value (in ms) */
+		s->played += in_size * 1000 / h->samplerate / h->nb_channel;
 
 		/* Add it to output buffer */
 		if(first)
@@ -499,6 +554,7 @@ struct output_module output_alsa = {
 	.pause_stream = (void*) &output_alsa_pause_stream,
 	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
+	.get_status_stream = (void*) &output_alsa_get_status_stream,
 	.remove_stream = (void*) &output_alsa_remove_stream,
 	.close = (void*) &output_alsa_close,
 };
