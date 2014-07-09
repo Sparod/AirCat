@@ -168,20 +168,12 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
 
-	/* Use resampler module if samplerate or/and channels are different */
-	if(samplerate != h->samplerate || nb_channel != h->nb_channel)
-	{
-		if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
-			      h->nb_channel, input_callback, user_data) != 0)
-			goto error;
-		s->input_callback = (void*) &resample_read;
-		s->user_data = s->res;
-	}
-	else
-	{
-		s->input_callback = input_callback;
-		s->user_data = user_data;
-	}
+	/* Open resample/mixer filter */
+	if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
+		      h->nb_channel, input_callback, user_data) != 0)
+		goto error;
+	s->input_callback = &resample_read;
+	s->user_data = s->res;
 
 	/* Add cache */
 	if(cache > 0)
@@ -193,7 +185,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 			goto error;
 
 		/* replace callback with cache */
-		s->input_callback = (void*) &cache_read;
+		s->input_callback = &cache_read;
 		s->user_data = s->cache;
 	}
 
