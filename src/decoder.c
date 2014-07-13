@@ -25,9 +25,9 @@
 #include "decoder_aac.h"
 #include "decoder_mp3.h"
 
-int decoder_open(struct decoder_handle **handle, int codec,
-		 unsigned char *buffer, size_t len, unsigned long *samplerate,
-		 unsigned char *channels)
+int decoder_open(struct decoder_handle **handle, enum a_codec codec,
+		 const unsigned char *buffer, size_t len,
+		 unsigned long *samplerate, unsigned char *channels)
 {
 	struct decoder_handle *h;
 

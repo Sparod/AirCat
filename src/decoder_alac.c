@@ -104,7 +104,7 @@ static void decoder_alac_decode_frame(struct alac_decoder *alac,
 				      unsigned char *in_buffer,
 				      void *out_buffer, int *output_size);
 
-int decoder_alac_open(struct decoder **decoder, unsigned char *config,
+int decoder_alac_open(struct decoder **decoder, const unsigned char *config,
 		      size_t config_size, unsigned long *samplerate,
 		      unsigned char *channels)
 {

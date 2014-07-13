@@ -46,7 +46,7 @@ struct decoder {
 	unsigned char channels;
 };
 
-int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
+int decoder_aac_open(struct decoder **decoder, const unsigned char *dec_config,
 		     size_t dec_config_size, unsigned long *samplerate,
 		     unsigned char *channels)
 {
@@ -85,14 +85,16 @@ int decoder_aac_open(struct decoder **decoder, unsigned char *dec_config,
 	   memcmp(dec_config, "ADIF", 4) == 0)
 	{
 		/* Init decoder from frame */
-		ret = NeAACDecInit(dec->hDec, dec_config, dec_config_size,
-				   &dec->samplerate, &dec->channels);
+		ret = NeAACDecInit(dec->hDec, (unsigned char *) dec_config,
+				   dec_config_size, &dec->samplerate,
+				   &dec->channels);
 	}
 	else
 	{
 		/* Init decoder */
-		ret = NeAACDecInit2(dec->hDec, dec_config, dec_config_size,
-				    &dec->samplerate, &dec->channels);
+		ret = NeAACDecInit2(dec->hDec, (unsigned char *) dec_config,
+				    dec_config_size, &dec->samplerate,
+				    &dec->channels);
 	}
 
 	/* Check init return */

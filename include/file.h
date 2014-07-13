@@ -32,19 +32,19 @@ enum {
 
 struct file_handle;
 
-int file_open(struct file_handle **h, const char *name);
+int file_open(struct file_handle **h, const char *uri);
 
 unsigned long file_get_samplerate(struct file_handle *h);
 unsigned char file_get_channels(struct file_handle *h);
 
-int file_set_pos(struct file_handle *h, int pos);
-int file_get_pos(struct file_handle *h);
-int file_get_length(struct file_handle *h);
+unsigned long file_set_pos(struct file_handle *h, unsigned long pos);
+unsigned long file_get_pos(struct file_handle *h);
+long file_get_length(struct file_handle *h);
 int file_get_status(struct file_handle *h);
 
 int file_read(void *h, unsigned char *buffer, size_t size,
 	      struct a_format *fmt);
-int file_close(struct file_handle *h);
+void file_close(struct file_handle *h);
 
 #endif
 

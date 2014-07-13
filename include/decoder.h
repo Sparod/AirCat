@@ -19,6 +19,8 @@
 #ifndef _DECODER_H
 #define _DECODER_H
 
+#include "format.h"
+
 /* Output status for decoder */
 struct decoder_info {
 	unsigned long used;		// Bytes consumed from input buffer
@@ -35,23 +37,16 @@ enum {
 /* Generic handle */
 struct decoder_handle {
 	struct decoder *dec;
-	int (*open)(struct decoder**, unsigned char *, size_t, unsigned long*,
-		    unsigned char*);
+	int (*open)(struct decoder**, const unsigned char *, size_t,
+		    unsigned long*, unsigned char*);
 	int (*decode)(struct decoder*, unsigned char*, size_t, unsigned char*,
 		      size_t, struct decoder_info*);
 	int (*close)(struct decoder*);
 };
 
-enum {
-	CODEC_NO,
-	CODEC_ALAC,
-	CODEC_MP3,
-	CODEC_AAC
-};
-
-int decoder_open(struct decoder_handle **handle, int codec,
-		 unsigned char *buffer, size_t len, unsigned long *samplerate,
-		 unsigned char *channels);
+int decoder_open(struct decoder_handle **handle, enum a_codec codec,
+		 const unsigned char *buffer, size_t len,
+		 unsigned long *samplerate, unsigned char *channels);
 int decoder_decode(struct decoder_handle *h, unsigned char *in_buffer,
 		   size_t in_size, unsigned char *out_buffer,
 		   size_t out_size, struct decoder_info *info);

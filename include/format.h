@@ -21,6 +21,13 @@
 
 #define A_FORMAT_INIT {0, 0}
 
+enum a_codec {
+	CODEC_NO,
+	CODEC_ALAC,
+	CODEC_MP3,
+	CODEC_AAC
+};
+
 struct a_format {
 	unsigned long samplerate;
 	unsigned char channels;

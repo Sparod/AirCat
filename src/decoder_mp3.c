@@ -35,7 +35,7 @@ struct decoder {
 	unsigned long pcm_remain;
 };
 
-int decoder_mp3_open(struct decoder **decoder, unsigned char *config,
+int decoder_mp3_open(struct decoder **decoder, const unsigned char *config,
 		     size_t config_size, unsigned long *samplerate,
 		     unsigned char *channels)
 {

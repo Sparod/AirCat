@@ -1,5 +1,5 @@
 /*
- * file_mp3.c - A MP3 file demuxer for File module
+ * demux_mp3.c - An MP3 demuxer
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -25,7 +25,7 @@
 #include "config.h"
 #endif
 
-#include "file_private.h"
+#include "demux.h"
 
 unsigned int bitrates[2][3][15] = {
 	{ /* MPEG-1 */
@@ -60,7 +60,14 @@ struct mp3_frame {
 	unsigned int length;
 };
 
-struct mp3_demux {
+struct demux {
+	/* Stream */
+	struct stream_handle *stream;
+	const unsigned char *buffer;
+	unsigned long size;
+	/* Stream length */
+	unsigned long duration;
+	unsigned long length;
 	/* Xing/VBRI specific */
 	unsigned long nb_bytes;
 	unsigned int nb_frame;
@@ -78,8 +85,8 @@ struct mp3_demux {
 	unsigned long offset;
 };
 
-static int file_mp3_parse_header(unsigned char *buffer, unsigned int size,
-				 struct mp3_frame *f)
+static int demux_mp3_parse_header(const unsigned char *buffer,
+				  unsigned int size, struct mp3_frame *f)
 {
 	if(size < 4)
 		return -1;
@@ -145,8 +152,9 @@ static int file_mp3_parse_header(unsigned char *buffer, unsigned int size,
 #define READ32(b) (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]; b += 4;
 #define READ16(b) (b[0] << 8) | b[1]; b += 2;
 
-static int file_mp3_parse_xing(struct mp3_frame *f, unsigned char *buffer,
-			       size_t len, struct mp3_demux *d)
+static int demux_mp3_parse_xing(struct mp3_frame *f,
+				const unsigned char *buffer, size_t len,
+				struct demux *d)
 {
 	unsigned int offset;
 	unsigned char flags;
@@ -204,8 +212,9 @@ static int file_mp3_parse_xing(struct mp3_frame *f, unsigned char *buffer,
 	return 0;
 }
 
-static int file_mp3_parse_vbri(struct mp3_frame *f, unsigned char *buffer,
-			       size_t len, struct mp3_demux *d)
+static int demux_mp3_parse_vbri(struct mp3_frame *f,
+				const unsigned char *buffer, size_t len,
+				struct demux *d)
 {
 	unsigned int size;
 
@@ -277,53 +286,60 @@ static int file_mp3_parse_vbri(struct mp3_frame *f, unsigned char *buffer,
 	return 0;
 }
 
-int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
-		  unsigned char *channels)
+int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
+		   unsigned long *samplerate, unsigned char *channels)
 {
-	struct mp3_frame frame;
-	struct mp3_demux *d;
+	struct demux *d;
+	const unsigned char *buffer;
 	unsigned long id3_size = 0;
+	struct mp3_frame frame;
 	long first = -1;
+	size_t len;
 	int i;
 
+	if(stream == NULL)
+		return -1;
+
+	/* Get stream buffer */
+	buffer = stream_get_buffer(stream);
+
 	/* Read 10 first bytes for ID3 header */
-	if(file_read_input(h, 10) != 10)
+	if(stream_read(stream, 10) != 10)
 		return -1;
 
 	/* Check ID3V2 tag */
-	if(memcmp(h->in_buffer, "ID3", 3) == 0)
+	if(memcmp(buffer, "ID3", 3) == 0)
 	{
 		/* Get ID3 size */
-		id3_size = (h->in_buffer[6] << 21) | (h->in_buffer[7] << 14) |
-		       (h->in_buffer[8] << 7) | h->in_buffer[9];
+		id3_size = (buffer[6] << 21) | (buffer[7] << 14) |
+		       (buffer[8] << 7) | buffer[9];
 		id3_size += 10;
 
 		/* Add footer size */
-		if(h->in_buffer[5] & 0x20)
+		if(buffer[5] & 0x20)
 			id3_size += 10;
 
 		/* Skip ID3 in file */
-		file_seek_input(h, id3_size, SEEK_CUR);
+		stream_seek(stream, id3_size, SEEK_CUR);
 	}
 
 	/* Complete input buffer */
-	file_complete_input(h, 0);
+	len = stream_complete(stream, 0);
 
 	/* Sync to first frame */
-	for(i = 0; i < h->in_size-3; i++)
+	for(i = 0; i < len - 3; i++)
 	{
-		if(h->in_buffer[i] == 0xFF &&
-		   (h->in_buffer[i+1] & 0xE0) == 0xE0)
+		if(buffer[i] == 0xFF && (buffer[i+1] & 0xE0) == 0xE0)
 		{
 			/* Check header */
-			if(file_mp3_parse_header(&h->in_buffer[i], 4, &frame)
+			if(demux_mp3_parse_header(&buffer[i], 4, &frame)
 			   != 0)
 				continue;
 
 			/* Check next frame */
-			if(i + frame.length + 2 > h->in_size ||
-			   h->in_buffer[i+frame.length] != 0xFF ||
-			   (h->in_buffer[i+frame.length+1] & 0xE0) != 0xE0)
+			if(i + frame.length + 2 > len ||
+			   buffer[i+frame.length] != 0xFF ||
+			   (buffer[i+frame.length+1] & 0xE0) != 0xE0)
 				continue;
 
 			first = i;
@@ -333,24 +349,31 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 	if(first < 0)
 		return -1;
 
-	/* Allocate demux data structure */
-	h->demux_data = malloc(sizeof(struct mp3_demux));
-	if(h->demux_data == NULL)
+	/* Allocate structure */
+	*demux = malloc(sizeof(struct demux));
+	if(*demux == NULL)
 		return -1;
-	d = h->demux_data;
-	memset(d, 0, sizeof(struct mp3_demux));
+	d = *demux;
+
+	/* Init structure */
+	memset(d, 0, sizeof(struct demux));
+	d->stream = stream;
+	d->buffer = buffer;
+	d->size = stream_get_size(stream);
+	d->duration = (stream_get_format(stream))->length;
+	d->length = stream_get_size(stream);
 
 	/* Move to first frame */
-	file_seek_input(h, first, SEEK_CUR);
-	file_complete_input(h, 0);
+	stream_seek(stream, first, SEEK_CUR);
+	len = stream_complete(stream, 0);
 
 	/* Parse Xing/Lame/VBRI header */
-	if(file_mp3_parse_xing(&frame, h->in_buffer, h->in_size, d) == 0 ||
-	   file_mp3_parse_vbri(&frame, h->in_buffer, h->in_size, d) == 0)
+	if(demux_mp3_parse_xing(&frame, buffer, len, d) == 0 ||
+	   demux_mp3_parse_vbri(&frame, buffer, len, d) == 0)
 	{
 		/* Move to next frame */
 		first += frame.length;
-		file_seek_input(h, first, SEEK_CUR);
+		stream_seek(stream, first, SEEK_CUR);
 	}
 
 	/* Update position of stream */
@@ -363,21 +386,36 @@ int file_mp3_init(struct file_handle *h, unsigned long *samplerate,
 	else
 		*channels = 2;
 
-	/* Update decoder config */
-	h->decoder_config = NULL;
-	h->decoder_config_size = 0;
-
 	return 0;
 }
 
-int file_mp3_get_next_frame(struct file_handle *h)
+struct file_format *demux_mp3_get_format(struct demux *d)
 {
-	return file_complete_input(h, 0);
+	return stream_get_format(d->stream);
 }
 
-int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
+int demux_mp3_get_dec_config(struct demux *d, int *codec,
+			     const unsigned char **config, size_t *size)
 {
-	struct mp3_demux *d = h->demux_data;
+	*codec = CODEC_MP3;
+	*config = NULL;
+	*size = 0;
+	return 0;
+}
+
+ssize_t demux_mp3_next_frame(struct demux *d)
+{
+	return stream_complete(d->stream, 0);
+}
+
+void demux_mp3_set_used(struct demux *d, size_t len)
+{
+	if(len <= stream_get_len(d->stream))
+		stream_seek(d->stream, len, SEEK_CUR);
+}
+
+unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
+{
 	unsigned long f_pos;
 	unsigned long f_size;
 	float p, fa, fb, fx;
@@ -388,9 +426,9 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 	if(d->vbri_toc != NULL)
 	{
 		/* Use TOC from VBRI header */
-		i = pos * (d->toc_count - 1) / h->length;
+		i = pos * (d->toc_count - 1) / d->duration;
 		i = i > d->toc_count - 1 ? d->toc_count - 1 : i;
-		a = i * h->length * d->toc_count * 1.0;
+		a = i * d->duration * d->toc_count * 1.0;
 
 		fa = 0.0;
 		for(j = i; j >= 0; j--)
@@ -398,12 +436,12 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 
 		if (i + 1 < d->toc_count)
 		{
-			b = (i + 1) * h->length / d->toc_count;
+			b = (i + 1) * d->duration / d->toc_count;
 			fb = fa + (d->vbri_toc[i+1] * d->toc_scale);
 		}
 		else
 		{
-			b = h->length;
+			b = d->duration;
 			fb = d->nb_bytes;
 		}
 
@@ -412,7 +450,7 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 	else if(d->toc != NULL)
 	{
 		/* Use TOC from Xing header */
-		p = pos * 100.0 / h->length;
+		p = pos * 100.0 / d->duration;
 		if(p > 100.0)
 			p = 100.0;
 		i = (int) p > 99 ? 99 : (int) p;
@@ -423,14 +461,14 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 
 		/* Get position */
 		f_size = d->nb_bytes > 0 ? d->nb_bytes :
-					   h->file_size - d->offset;
+					   d->length - d->offset;
 		f_pos = (1.0 / 256.0) * fx * f_size;
 	}
 	else
 	{
 		/* Compute aprox position */
-		f_pos = (h->file_size - d->offset) * pos / h->length;
-		if(f_pos > h->file_size)
+		f_pos = (d->length - d->offset) * pos / d->duration;
+		if(f_pos > d->length)
 			return -1;
 	}
 
@@ -438,37 +476,35 @@ int file_mp3_set_pos(struct file_handle *h, unsigned long pos)
 	f_pos += d->offset;
 
 	/* Seek in file */
-	if(file_seek_input(h, f_pos, SEEK_SET) != 0)
+	if(stream_seek(d->stream, f_pos, SEEK_SET) != 0)
 		return -1;
 
-	/* Update position */
-	h->pos = pos * h->samplerate * h->channels;
-
-	return 0;
+	return pos;
 }
 
-void file_mp3_free(struct file_handle *h)
+void demux_mp3_close(struct demux *d)
 {
-	struct mp3_demux *d;
-
-	if(h == NULL || h->demux_data == NULL)
+	if(d == NULL)
 		return;
 
-	d = h->demux_data;
-
+	/* Free TOC */
 	if(d->toc != NULL)
 		free(d->toc);
 	if(d->vbri_toc != NULL)
 		free(d->vbri_toc);
 
-	free(h->demux_data);
-	h->demux_data = NULL;
+	/* Free handle */
+	free(d);
 }
 
-struct file_demux file_mp3_demux = {
-	.init = &file_mp3_init,
-	.get_next_frame = &file_mp3_get_next_frame,
-	.set_pos = &file_mp3_set_pos,
-	.free = &file_mp3_free,
+struct demux_handle demux_mp3 = {
+	.demux = NULL,
+	.open = &demux_mp3_open,
+	.get_format = &demux_mp3_get_format,
+	.get_dec_config = &demux_mp3_get_dec_config,
+	.next_frame = &demux_mp3_next_frame,
+	.set_used = &demux_mp3_set_used,
+	.set_pos = &demux_mp3_set_pos,
+	.close = &demux_mp3_close,
 };
 

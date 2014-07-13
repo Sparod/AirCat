@@ -25,33 +25,49 @@
 #include <pthread.h>
 
 #include "decoder.h"
+#include "stream.h"
+#include "demux.h"
 #include "file.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
-#include "file_private.h"
+#define BUFFER_SIZE 8192
 
-int file_open(struct file_handle **handle, const char *name)
+struct file_handle {
+	/* Stream */
+	struct stream_handle *stream;
+	/* Demuxer */
+	struct demux_handle *demux;
+	/* Audio decoder */
+	struct decoder_handle *dec;
+	/* Input buffer used for stream/demux/decoder */
+	unsigned char in_buffer[BUFFER_SIZE];
+	unsigned long in_size;
+	/* Stream status */
+	unsigned long pcm_pos;
+	unsigned long pcm_remaining;
+	/* File properties */
+	unsigned long samplerate;
+	unsigned long channels;
+	unsigned int bitrate;
+	unsigned long length;
+	/* Mutex for thread safe status */
+	pthread_mutex_t mutex;
+};
+
+int file_open(struct file_handle **handle, const char *uri)
 {
 	struct file_handle *h;
-	struct stat st;
-	struct file_type {
-		int type;
-		struct file_demux *demux;
-		int codec;
-	} file_tab[3] = {
-		{FILE_FORMAT_MPEG, &file_mp3_demux, CODEC_MP3},
-		{FILE_FORMAT_AAC, &file_mp4_demux, CODEC_AAC},
-		{0, NULL, 0}
-	};
+	struct file_format *format;
+	const unsigned char *dec_config;
+	unsigned long dec_config_size;
 	unsigned long dec_samplerate;
 	unsigned char dec_channels;
 	unsigned long samplerate;
 	unsigned char channels;
 	int codec = -1;
-	int i;
 
 	/* Alloc structure */
 	*handle = malloc(sizeof(struct file_handle));
@@ -60,63 +76,39 @@ int file_open(struct file_handle **handle, const char *name)
 	h = *handle;
 
 	/* Init structure */
-	h->fd = -1;
-	h->file_pos = 0;
-	h->in_size = 0;
-	h->dec = NULL;
+	h->in_size = BUFFER_SIZE;
+	h->stream = NULL;
 	h->demux = NULL;
-	h->demux_data = NULL;
-	h->format = NULL;
-	h->pos = 0;
+	h->dec = NULL;
+	h->pcm_pos = 0;
 	h->pcm_remaining = 0;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
-	pthread_mutex_init(&h->flush_mutex, NULL);
 
-	/* Check file */
-	if(stat(name, &st) != 0 || !S_ISREG(st.st_mode))
+	/* Open stream */
+	if(stream_open(&h->stream, uri, h->in_buffer, h->in_size) != 0)
 		return -1;
 
-	/* Get its size */
-	h->file_size = st.st_size;
-
-	/* Get file format infos */
-	h->format = file_format_parse(name, TAG_ALL);
-	if(h->format == NULL || h->format->type == FILE_FORMAT_UNKNOWN)
-		/* Unsupported file */
+	/* Open demuxer */
+	if(demux_open(&h->demux, h->stream, &samplerate, &channels) != 0)
 		return -1;
 
-	/* Find good decoder from file type */
-	for(i = 0; file_tab[i].demux != NULL; i++)
-	{
-		if(file_tab[i].type == h->format->type)
-		{
-			h->demux = file_tab[i].demux;
-			codec = file_tab[i].codec;
-			break;
-		}
-	}
-	if(codec == -1 && h->demux == NULL)
+	/* Get format from demuxer */
+	format = demux_get_format(h->demux);
+	if(format == NULL)
 		return -1;
 
-	/* Open audio file */
-	h->fd = open(name, O_RDONLY);
-	if(h->fd < 0)
-		return -1;
-
-	/* Init demuxer */
-	if(h->demux->init(h, &samplerate, &channels) != 0)
-		return -1;
+	/* Get decoder configuration from demuxer (useful for MP4) */
+	demux_get_dec_config(h->demux, &codec, &dec_config, &dec_config_size);
 
 	/* Open decoder */
-	if(decoder_open(&h->dec, codec, h->decoder_config,
-			h->decoder_config_size, &dec_samplerate, &dec_channels)
-	    != 0)
+	if(decoder_open(&h->dec, codec, dec_config, dec_config_size,
+			&dec_samplerate, &dec_channels) != 0)
 		return -1;
 
 	/* Get file properties */
-	if(h->format->samplerate == 0 || h->format->channels == 0)
+	if(format->samplerate == 0 || format->channels == 0)
 	{
 		/* Get information from decoder */
 		h->samplerate = samplerate;
@@ -127,112 +119,20 @@ int file_open(struct file_handle **handle, const char *name)
 	}
 	else
 	{
-		h->samplerate = h->format->samplerate;
-		h->channels = h->format->channels;
-		h->length = h->format->length;
-		h->bitrate = h->format->bitrate * 1000;
+		h->samplerate = format->samplerate;
+		h->channels = format->channels;
+		h->length = format->length;
+		h->bitrate = format->bitrate * 1000;
 	}
 
 	/* Samplerate fix: bad samplerate and/or channels in mp4 header */
-	if(h->format->type == FILE_FORMAT_AAC &&
+	if(format->type == FILE_FORMAT_AAC &&
 	   ((dec_samplerate != 0 && dec_samplerate != h->samplerate) ||
 	   (dec_channels != 0 && dec_channels != h->channels)))
 	{
 		h->samplerate = dec_samplerate;
 		h->channels = dec_channels;
 	}
-
-	return 0;
-}
-
-/*
- * Read len bytes in file and fill input buffer with it.
- * If len equal to 0, all allocated buffer is filled.
- */
-ssize_t file_read_input(struct file_handle *h, size_t len)
-{
-	ssize_t size;
-
-	if(h == NULL || h->fd < 0)
-		return -1;
-
-	/* Fill all buffer */
-	if(len == 0)
-		len = BUFFER_SIZE;
-
-	/* Read and fill beginning of input buffer */
-	size = read(h->fd, h->in_buffer, len);
-	if(size < 0)
-		return -1;
-
-	/* Update input buffer size and file position */
-	h->file_pos += h->in_size;
-	h->in_size = size;
-
-	return size;
-}
-
-/*
- * Read len bytes more in file and append to end of input buffer.
- * If len equal to 0, all allocated buffer is filled.
- */
-ssize_t file_complete_input(struct file_handle *h, size_t len)
-{
-	ssize_t size;
-
-	if(h == NULL || h->fd < 0)
-		return -1;
-
-	/* Fill all buffer */
-	if(len == 0 || len + h->in_size > BUFFER_SIZE)
-		len = BUFFER_SIZE - h->in_size;
-
-	/* Read and append to input buffer */
-	size = read(h->fd, &h->in_buffer[h->in_size], len);
-	if(size <= 0)
-		return -1;
-
-	/* Update input buffer size */
-	h->in_size += len;
-
-	return size;
-}
-
-/*
- * Move input buffer to fit with file position passed. Input buffer position is
- * the moved and file position is updated.
- * /!\ Input buffer is not filled with any data. A call to file_read_input() or
- *     to file_complete_input() must be done is more data is needed.
- */
-int file_seek_input(struct file_handle *h, unsigned long pos, int whence)
-{
-	unsigned long p;
-	size_t size = 0;
-
-	if(h == NULL || h->fd < 0)
-		return -1;
-
-		/* Move pos bytes from current file position */
-	if(whence == SEEK_CUR)
-		pos += h->file_pos;
-
-	if(pos >= h->file_pos && pos < h->file_pos + h->in_size)
-	{
-		/* Just move input buffer data */
-		p = pos - h->file_pos;
-		size = h->in_size - p;
-		memmove(h->in_buffer, &h->in_buffer[p], size);
-	}
-	else if(pos != h->file_pos + h->in_size)
-	{
-		/* Seek in file */
-		if(lseek(h->fd, pos, SEEK_SET) != pos)
-			return -1;
-	}
-
-	/* Update input buffer size and file position */
-	h->file_pos = pos;
-	h->in_size = size;
 
 	return 0;
 }
@@ -253,41 +153,44 @@ unsigned char file_get_channels(struct file_handle *h)
 	return h->channels;
 }
 
-int file_set_pos(struct file_handle *h, int pos)
+unsigned long file_set_pos(struct file_handle *h, unsigned long pos)
 {
 	if(h == NULL)
 		return -1;
 
-	/* Lock file access */
+	/* Lock stream access */
 	pthread_mutex_lock(&h->mutex);
 
-	h->demux->set_pos(h, pos);
+	/* Set output position */
+	pos = demux_set_pos(h->demux, pos);
+	h->pcm_pos = pos * 1000;
 
-	/* Unlock file access */
+	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
 
-	return 0;
+	return pos;
 }
 
-int file_get_pos(struct file_handle *h)
+unsigned long file_get_pos(struct file_handle *h)
 {
 	unsigned long pos;
 
 	if(h == NULL)
 		return -1;
 
-	/* Lock position access */
+	/* Lock stream access */
 	pthread_mutex_lock(&h->mutex);
 
-	pos = h->pos;
+	/* Get output position */
+	pos = h->pcm_pos / 1000;
 
-	/* Unlock position access */
+	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
 
-	return pos / (h->samplerate * h->channels);
+	return pos;
 }
 
-int file_get_length(struct file_handle *h)
+long file_get_length(struct file_handle *h)
 {
 	if(h == NULL)
 		return -1;
@@ -300,7 +203,7 @@ int file_get_status(struct file_handle *h)
 	if(h == NULL)
 		return FILE_NULL;
 
-	if(h->fd < 0)
+	if(h->stream == NULL)
 		return FILE_CLOSED;
 
 /*	if(feof(h->fp))
@@ -321,8 +224,8 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	if(h == NULL)
 		return -1;
 
-	/* Lock decoder access */
-	pthread_mutex_lock(&h->flush_mutex);
+	/* Lock stream access */
+	pthread_mutex_lock(&h->mutex);
 
 	/* Process remaining pcm data */
 	if(h->pcm_remaining > 0)
@@ -331,8 +234,9 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		samples = decoder_decode(h->dec, NULL, 0, buffer, size, &info);
 		if(samples < 0)
 		{
-			/* Unlock decoder access */
-			pthread_mutex_unlock(&h->flush_mutex);
+		
+			/* Unlock stream access */
+			pthread_mutex_unlock(&h->mutex);
 
 			return -1;
 		}
@@ -353,26 +257,17 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	while(total_samples < size)
 	{
 		/* Get next frame */
-		len = h->demux->get_next_frame(h);
+		len = demux_next_frame(h->demux);
 
 		/* Decode next frame */
-		samples = decoder_decode(h->dec, h->in_buffer, h->in_size,
+		samples = decoder_decode(h->dec, h->in_buffer, len,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
 			break;
 
-		/* Move input buffer to next frame */
-		if(info.used < h->in_size)
-		{
-			memmove(h->in_buffer, &h->in_buffer[info.used],
-				h->in_size - info.used);
-			h->in_size -=  info.used;
-		}
-		else
-		{
-			h->in_size = 0;
-		}
+		/* Update used data in frame */
+		demux_set_used(h->demux, info.used);
 
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
@@ -391,10 +286,10 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		total_samples += samples;
 	}
 
-	h->pos += total_samples;
+	h->pcm_pos += total_samples * 1000 / (h->samplerate * h->channels);
 
-	/* Unlock decoder access */
-	pthread_mutex_unlock(&h->flush_mutex);
+	/* Unlock stream access */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* End of stream */
 	if(len < 0 && total_samples == 0)
@@ -410,28 +305,23 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	return total_samples;
 }
 
-int file_close(struct file_handle *h)
+void file_close(struct file_handle *h)
 {
 	if(h == NULL)
-		return 0;
+		return;
 
 	/* Close decoder */
 	if(h->dec != NULL)
 		decoder_close(h->dec);
 
-	/* Free demuxer */
+	/* Close demuxer */
 	if(h->demux != NULL)
-		h->demux->free(h);
+		demux_close(h->demux);
 
-	/* Close file */
-	if(h->fd >= 0)
-		close(h->fd);
+	/* Close stream */
+	if(h->stream != NULL)
+		stream_close(h->stream);
 
-	/* Free format */
-	if(h->format != NULL)
-		file_format_free(h->format);
-
+	/* Free handle */
 	free(h);
-
-	return 0;
 }

@@ -6,9 +6,11 @@ aircat_SOURCES = main.c \
 		 httpd.c \
 		 avahi.c \
 		 http.c \
+		 stream.c \
+		 demux.c \
+		 demux_mp3.c \
+		 demux_mp4.c \
 		 file.c \
-		 file_mp3.c \
-		 file_mp4.c \
 		 file_format.c \
 		 shoutcast.c \
 		 rtsp.c \
@@ -52,10 +54,11 @@ aircat_CPPFLAGS = -I$(top_srcdir)/include \
 		  $(libtag_CFLAGS)
 aircat_SOURCES += file_format_taglib.cpp
 
-EXTRA_DIST = file_private.h \
-	     modules.h \
+EXTRA_DIST = modules.h \
 	     outputs.h \
 	     output_alsa.h \
+	     demux_mp3.h \
+	     demux_mp4.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
 	     decoder_alac.h
