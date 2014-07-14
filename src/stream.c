@@ -248,6 +248,10 @@ void stream_close(struct stream_handle *h)
 		free(h->content_type);
 	free(h->uri);
 
+	/* Free format */
+	if(h->format != NULL)
+		file_format_free(h->format);
+
 	/* Free handle */
 	free(h);
 }
