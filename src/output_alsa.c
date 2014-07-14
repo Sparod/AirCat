@@ -53,7 +53,7 @@ struct output_stream {
 	/* Stream status */
 	int is_playing;
 	int end_of_stream;
-	unsigned long played;
+	uint64_t played;
 	/* Stream volume */
 	unsigned int volume;
 	/* Stream cache */
@@ -319,7 +319,7 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 				ret = STREAM_PAUSED;
 			break;
 		case OUTPUT_STREAM_PLAYED:
-			ret = s->played;
+			ret = s->played * 1000 / h->samplerate / h->nb_channel;
 			break;
 		case OUTPUT_STREAM_CACHE_STATUS:
 			if(s->cache != NULL && cache_is_ready(s->cache) == 0)
@@ -484,7 +484,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 		}
 
 		/* Update played value (in ms) */
-		s->played += in_size * 1000 / h->samplerate / h->nb_channel;
+		s->played += in_size;
 
 		/* Add it to output buffer */
 		if(first)
