@@ -400,7 +400,11 @@ flush:
 
 		/* End of stream and all remaining data has been consumed */
 		if(len < 0 && out_samples == 0)
+		{
+			if(total_size > 0)
+				break;
 			return -1;
+		}
 
 		/* Up-mixing channels: inspired from remix effect from sox */
 		if(out_samples > 0 && h->in_channels < h->out_channels)
