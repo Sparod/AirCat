@@ -467,7 +467,19 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 		if(in_size <= 0)
 		{
 			if(in_size < 0)
+			{
 				s->end_of_stream = 1;
+
+				/* Close cache filter */
+				if(s->cache != NULL)
+					cache_close(s->cache);
+				s->cache = NULL;
+
+				/* Close resample filter */
+				if(s->res != NULL)
+					resample_close(s->res);
+				s->res = NULL;
+			}
 			continue;
 		}
 
