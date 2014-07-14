@@ -24,11 +24,14 @@
 struct cache_handle;
 
 int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
-	       a_read_cb input_callback, void *user_data);
+	       a_read_cb input_callback, void *input_user,
+	       a_write_cb output_callback, void *output_user);
 int cache_is_ready(struct cache_handle *h);
 unsigned char cache_get_filling(struct cache_handle *h);
 int cache_read(void *h, unsigned char *buffer, size_t size,
 	       struct a_format *fmt);
+ssize_t cache_write(void *h, const unsigned char *buffer, size_t size,
+		    struct a_format *fmt);
 void cache_flush(struct cache_handle *h);
 void cache_lock(struct cache_handle *h);
 void cache_unlock(struct cache_handle *h);

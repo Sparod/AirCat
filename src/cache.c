@@ -41,7 +41,9 @@ struct cache_handle {
 	int use_thread;
 	/* Input callback */
 	a_read_cb input_callback;
-	void *user_data;
+	a_write_cb output_callback;
+	void *input_user;
+	void *output_user;
 	/* Buffer handling */
 	unsigned char *buffer;
 	unsigned long size;
@@ -63,11 +65,15 @@ struct cache_handle {
 static void *cache_read_thread(void *user_data);
 
 int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
-	       a_read_cb input_callback, void *user_data)
+	       a_read_cb input_callback, void *input_user,
+	       a_write_cb output_callback, void *output_user)
 {
 	struct cache_handle *h;
 
-	if(size == 0 || input_callback == NULL)
+	if(size == 0 ||
+	   (input_callback == NULL && use_thread == 1) ||
+	   (input_callback != NULL && output_callback != NULL &&
+	    use_thread == 0))
 		return -1;
 
 	/* Alloc structure */
@@ -83,7 +89,9 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	h->pos = 0;
 	h->is_ready = 0;
 	h->input_callback = input_callback;
-	h->user_data = user_data;
+	h->output_callback = output_callback;
+	h->input_user = input_user;
+	h->output_user = output_user;
 	h->use_thread = use_thread;
 	h->stop = 0;
 	h->fmt_first = NULL;
@@ -186,6 +194,74 @@ static void cache_get_format(struct cache_handle *h)
 	free(cf);
 }
 
+static void cache_update_format(struct cache_handle *h, size_t size,
+				struct a_format *fmt)
+{
+	if(h->fmt_last == NULL ||
+	   ((fmt->samplerate != 0 || fmt->channels != 0) &&
+	    format_cmp(fmt, &h->fmt_last->fmt) != 0))
+		cache_put_format(h, fmt);
+	h->fmt_len += size;
+}
+
+static void cache_next_format(struct cache_handle *h, size_t *size,
+			      struct a_format *fmt)
+{
+	struct cache_format *next_fmt;
+
+	/* Check format list */
+	if(h->fmt_first != NULL)
+	{
+		/* Copy current format */
+		format_cpy(fmt, &h->fmt_first->fmt);
+
+		/* Check next format */
+		next_fmt = h->fmt_first->next;
+		if(next_fmt != NULL)
+		{
+			if(next_fmt->len < *size)
+			{
+				/* Limit size to format switching byte
+				 * and free current format
+				 */
+				*size = next_fmt->len;
+				cache_get_format(h);
+			}
+			next_fmt->len -= *size;
+		}
+		else
+			h->fmt_len -= *size;
+	}
+}
+
+static void cache_output(struct cache_handle *h)
+{
+	struct a_format out_fmt = A_FORMAT_INIT;
+	size_t size;
+
+	if(h->output_callback != NULL && h->is_ready)
+	{
+		/* Set size to buffer size */
+		size = h->len;
+
+		/* Check format list */
+		cache_next_format(h, &size, &out_fmt);
+
+		/* Send data */
+		size = h->output_callback(h->output_user, h->buffer, size,
+					  &out_fmt);
+		if(size > 0)
+		{
+			h->len -= size;
+			memmove(h->buffer, &h->buffer[size*4], h->size*4);
+		}
+
+		/* No more data is available */
+		if(h->len == 0)
+			h->is_ready = 0;
+	}
+}
+
 static void *cache_read_thread(void *user_data)
 {
 	struct cache_handle *h = (struct cache_handle *) user_data;
@@ -212,7 +288,7 @@ static void *cache_read_thread(void *user_data)
 		if(len < BUFFER_SIZE / 4)
 		{
 			/* Read next packet from input callback */
-			ret = h->input_callback(h->user_data, &buffer[len*4],
+			ret = h->input_callback(h->input_user, &buffer[len*4],
 						(BUFFER_SIZE / 4) - len,
 						&in_fmt);
 			if(ret < 0)
@@ -232,15 +308,14 @@ static void *cache_read_thread(void *user_data)
 		len -= in_size;
 
 		/* Update format list */
-		if(h->fmt_last == NULL ||
-		   ((in_fmt.samplerate != 0 || in_fmt.channels != 0) &&
-		    format_cmp(&in_fmt, &h->fmt_last->fmt) != 0))
-			cache_put_format(h, &in_fmt);
-		h->fmt_len += in_size;
+		cache_update_format(h, in_size, &in_fmt);
 
 		/* Cache is full */
 		if(h->len == h->size)
 			h->is_ready = 1;
+
+		/* Send data if output callback is available */
+		cache_output(h);
 
 		/* Unlock cache access */
 		pthread_mutex_unlock(&h->mutex);
@@ -265,11 +340,10 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 {
 	struct cache_handle *h = (struct cache_handle *) user_data;
 	struct a_format in_fmt = A_FORMAT_INIT;
-	struct cache_format *next_fmt;
 	unsigned long in_size;
 	long len;
 
-	if(h == NULL || h->buffer == NULL)
+	if(h == NULL || h->buffer == NULL || h->output_callback != NULL)
 		return -1;
 
 	/* Lock cache access */
@@ -283,28 +357,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 			size = h->len;
 
 		/* Check format list */
-		if(h->fmt_first != NULL)
-		{
-			/* Copy current format */
-			format_cpy(fmt, &h->fmt_first->fmt);
-
-			/* Check next format */
-			next_fmt = h->fmt_first->next;
-			if(next_fmt != NULL)
-			{
-				if(next_fmt->len < size)
-				{
-					/* Limit size to format switching byte
-					 * and free current format
-					 */
-					size = next_fmt->len;
-					cache_get_format(h);
-				}
-				next_fmt->len -= size;
-			}
-			else
-				h->fmt_len -= size;
-		}
+		cache_next_format(h, &size, fmt);
 
 		/* Read in cache */
 		memcpy(buffer, h->buffer, size*4);
@@ -322,7 +375,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 	pthread_mutex_unlock(&h->mutex);
 
 	/* Check cache status */
-	if(!h->use_thread && h->len < h->size)
+	if(h->input_callback != NULL && !h->use_thread && h->len < h->size)
 	{
 		/* Check input callback access */
 		if(pthread_mutex_trylock(&h->input_lock) != 0)
@@ -330,7 +383,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 
 		/* Fill cache with some samples */
 		in_size = h->size - h->len;
-		len = h->input_callback(h->user_data, &h->buffer[h->len*4],
+		len = h->input_callback(h->input_user, &h->buffer[h->len*4],
 					in_size, &in_fmt);
 		if(len < 0)
 		{
@@ -341,11 +394,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		h->len += len;
 
 		/* Update format list */
-		if(h->fmt_last == NULL ||
-		   ((in_fmt.samplerate != 0 || in_fmt.channels != 0) &&
-		    format_cmp(&in_fmt, &h->fmt_last->fmt) != 0))
-			cache_put_format(h, &in_fmt);
-		h->fmt_len += len;
+		cache_update_format(h, len, &in_fmt);
 
 		/* Cache is full */
 		if(h->len == h->size)
@@ -354,6 +403,46 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Unlock input callback access */
 		cache_unlock(h);
 	}
+
+	return size;
+}
+
+ssize_t cache_write(void *user_data, const unsigned char *buffer, size_t size,
+		    struct a_format *fmt)
+{
+	struct cache_handle *h = (struct cache_handle *) user_data;
+	unsigned long in_size = 0;
+
+	if(h->input_callback != NULL)
+		return -1;
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Calculate size to write in cache */
+	in_size = h->size - h->len;
+	if(size > in_size)
+		size = in_size;
+	if(size == 0)
+		goto end;
+
+	/* Copy data to buffer */
+	memcpy(&h->buffer[h->len*4], buffer, size * 4);
+	h->len += size;
+
+	/* Update format list */
+	cache_update_format(h, size, fmt);
+
+	/* Cache is full */
+	if(h->len == h->size)
+		h->is_ready = 1;
+
+end:
+	/* Send data if output callback is available */
+	cache_output(h);
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return size;
 }

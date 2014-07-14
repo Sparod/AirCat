@@ -35,6 +35,8 @@ struct a_format {
 
 typedef int (*a_read_cb) (void *user_data, unsigned char *buffer,
 			  size_t size, struct a_format *fmt);
+typedef ssize_t (*a_write_cb)(void *user_data, const unsigned char *buffer,
+			      size_t size, struct a_format *fmt);
 
 static inline void format_cpy(struct a_format *f1, struct a_format *f2)
 {

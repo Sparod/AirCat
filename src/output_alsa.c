@@ -181,7 +181,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 		/* Open a new cache */
 		size = h->samplerate * s->nb_channel * cache / 1000;
 		if(cache_open(&s->cache, size, use_cache_thread,
-			      s->input_callback, s->user_data) != 0)
+			      s->input_callback, s->user_data, NULL, NULL) != 0)
 			goto error;
 
 		/* replace callback with cache */
