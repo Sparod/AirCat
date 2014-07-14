@@ -99,7 +99,7 @@ struct decoder {
 static const int host_bigendian = 0;
 
 static int decoder_alac_init(struct alac_decoder *alac,
-			     unsigned char *in_buffer, size_t in_size);
+			     const unsigned char *in_buffer, size_t in_size);
 static void decoder_alac_decode_frame(struct alac_decoder *alac,
 				      unsigned char *in_buffer,
 				      void *out_buffer, int *output_size);
@@ -245,7 +245,7 @@ struct decoder_handle decoder_alac = {
 };
 
 static int decoder_alac_init(struct alac_decoder *alac,
-			     unsigned char *in_buffer, size_t in_size)
+			     const unsigned char *in_buffer, size_t in_size)
 {
 	unsigned char *ptr = in_buffer;
 	int i;
