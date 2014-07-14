@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #include <soxr.h>
 
@@ -46,6 +47,7 @@ struct resample_handle {
 	size_t fmt_has_changed;
 	/* Input callback */
 	a_read_cb input_callback;
+	a_write_cb output_callback;
 	void *user_data;
 	/* Input buffer */
 	unsigned char *in_buffer;
@@ -54,6 +56,12 @@ struct resample_handle {
 	/* Output buffer (mono -> stereo) */
 	unsigned char *out_buffer;
 	size_t out_size;
+	/* Temporary buffer for write() purpose */
+	unsigned char *tmp_buffer;
+	size_t tmp_size;
+	size_t tmp_len;
+	/* Mutex for read()/write() calls */
+	pthread_mutex_t mutex;
 	/* Mixing table: inspired from remix effect from sox */
 	struct {
 		unsigned num_in_channels;
@@ -69,9 +77,13 @@ static int resample_init(struct resample_handle *h);
 int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 		  unsigned char in_channels, unsigned long out_samplerate,
 		  unsigned char out_channels, a_read_cb input_callback,
-		  void *user_data)
+		  a_write_cb output_callback, void *user_data)
 {
 	struct resample_handle *h;
+
+	/* Both callbacks are not allowed */
+	if(input_callback != NULL && output_callback != NULL)
+		return -1;
 
 	/* Allocate handle */
 	*handle = malloc(sizeof(struct resample_handle));
@@ -84,6 +96,7 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 
 	/* Set callback function */
 	h->input_callback = input_callback;
+	h->output_callback = output_callback;
 	h->user_data = user_data;
 
 	/* Set samplerate and channel values */
@@ -99,6 +112,18 @@ int resample_open(struct resample_handle **handle, unsigned long in_samplerate,
 	h->in_buffer = malloc(h->in_size * 4); //32-bit wide sample
 	if(h->in_buffer == NULL)
 		return -1;
+
+	/* Allocate temp buffer */
+	if(input_callback == NULL)
+	{
+		h->tmp_size = BUFFER_SIZE * h->out_channels;
+		h->tmp_buffer = malloc(h->tmp_size * 4);
+		if(h->tmp_buffer == NULL)
+			return -1;
+	}
+
+	/* Init mutex */
+	pthread_mutex_init(&h->mutex, NULL);
 
 	/* Init resample engine */
 	return resample_init(h);
@@ -270,27 +295,27 @@ static int resample_up_mix(struct resample_handle *h, unsigned char *in_buffer,
 	return len *out_channels / in_channels;
 }
 
-int resample_read(void *user_data, unsigned char *buffer, size_t size,
-		  struct a_format *fmt)
+static int resample_process(struct resample_handle *h, unsigned char *buffer,
+			    size_t size, struct a_format *fmt)
 {
-	struct resample_handle *h = (struct resample_handle *) user_data;
 	size_t in_consumed, out_samples;
 	unsigned char *p_in, *p_out;
 	unsigned long total_size = 0;
-	struct a_format in_fmt;
+	struct a_format in_fmt = A_FORMAT_INIT;
 	size_t in_scale; // samples * _scale => bytes * channels */
 	ssize_t len = 0; // => samples * channels
 	size_t out_len;
 
 	while(total_size < size)
 	{
-		/* Check if format has changed */
-		if(h->fmt_has_changed > 0)
+		/* Check if format has changed or skip input callback */
+		if(h->fmt_has_changed > 0 || h->input_callback == NULL)
 			goto flush;
 
 		/* Fill as possible input buffer */
-		len = h->input_callback(h->user_data, &h->in_buffer[h->in_len],
-					(h->in_size - h->in_len) / 4, &in_fmt);
+		len = h->input_callback(h->user_data,
+					&h->in_buffer[h->in_len*4],
+					(h->in_size - h->in_len), &in_fmt);
 		if(len == 0)
 			break;
 
@@ -320,19 +345,19 @@ done:
 			if(h->in_channels > h->out_channels)
 			{
 				len = resample_down_mix(h,
-						       &h->in_buffer[h->in_len],
-						       len, h->in_channels,
-						       h->out_channels);
+						     &h->in_buffer[h->in_len*4],
+						     len, h->in_channels,
+						     h->out_channels);
 			}
-			h->in_len += len * 4;
+			h->in_len += len;
 		}
 
 flush:
 		/* End of stream handling */
 		p_in = len < 0 && h->in_len == 0 ? NULL : h->in_buffer;
 		in_scale = h->in_channels > h->out_channels ?
-							h->out_channels * 4 :
-							h->in_channels * 4;
+							   h->out_channels * 4 :
+							   h->in_channels * 4;
 		p_out = h->in_channels < h->out_channels ? h->out_buffer :
 							&buffer[total_size * 4];
 		out_len = (size - total_size) / h->out_channels;
@@ -340,16 +365,17 @@ flush:
 			out_len *= h->in_channels;
 
 		/* Process data */
-		soxr_process(h->soxr, p_in, h->in_len / in_scale, &in_consumed,
-			     p_out, out_len, &out_samples);
+		soxr_process(h->soxr, p_in, h->in_len * 4 / in_scale,
+			     &in_consumed, p_out, out_len, &out_samples);
 
 		/* Update input buffer position */
-		h->in_len -= in_consumed * in_scale;
+		h->in_len -= in_consumed * in_scale / 4;
 		if(h->in_len > 0)
 		{
 			/* Move remaining data in input buffer */
 			memmove(h->in_buffer,
-				&h->in_buffer[in_consumed*in_scale], h->in_len);
+				&h->in_buffer[in_consumed*in_scale],
+				h->in_len * 4);
 		}
 
 		/* Audio format has changed and engine is flushed */
@@ -366,6 +392,11 @@ flush:
 			h->fmt_has_changed = 0;
 			goto done;
 		}
+
+		/* No more input data */
+		if(h->input_callback == NULL && h->in_len == 0 &&
+		   out_samples == 0)
+			break;
 
 		/* End of stream and all remaining data has been consumed */
 		if(len < 0 && out_samples == 0)
@@ -384,7 +415,119 @@ flush:
 		total_size += out_samples * h->out_channels;
 	}
 
+	/* Fill format */
+	fmt->samplerate = h->out_samplerate;
+	fmt->channels = h->out_channels;
+
 	return total_size;
+}
+
+int resample_read(void *user_data, unsigned char *buffer, size_t size,
+		  struct a_format *fmt)
+{
+	struct resample_handle *h = (struct resample_handle *) user_data;
+
+	/* read() cannot be used with an output callback */
+	if(h->output_callback != NULL)
+		return -1;
+
+	/* Input data are provided by input_callback */
+	if(h->input_callback != NULL)
+		return resample_process(h, buffer, size, fmt);
+
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Copy output data */
+	if(size > h->tmp_len)
+		size = h->tmp_len;
+	memcpy(buffer, h->tmp_buffer, size * 4);
+
+	/* Update temp buffer */
+	h->tmp_len -= size;
+	memmove(h->tmp_buffer, &h->tmp_buffer[size*4], h->tmp_len * 4);
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return size;
+}
+
+ssize_t resample_write(void *user_data, const unsigned char *buffer,
+		       size_t size, struct a_format *fmt)
+{
+	struct resample_handle *h = (struct resample_handle *) user_data;
+	struct a_format in_fmt = A_FORMAT_INIT;
+	size_t in_size;
+	size_t len;
+
+	/* write() cannot be used with an input callback */
+	if(h->input_callback != NULL)
+		return -1;
+
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Flush previous input data before changing filter config */
+	if(h->fmt_has_changed > 0)
+		goto flush;
+
+	/* Copy input data */
+	in_size = (h->in_size - h->in_len);
+	if(size > in_size)
+		size = in_size;
+	memcpy(&h->in_buffer[h->in_len*4], buffer, size*4);
+
+	/* Check format change */
+	if(h->fmt_has_changed == 0 && ((fmt->samplerate != 0 &&
+	    fmt->samplerate != h->in_samplerate) ||
+	   (fmt->channels != 0 && fmt->channels != h->in_channels)))
+	{
+		h->fmt_has_changed = size;
+		h->new_samplerate = fmt->samplerate;
+		h->new_channels = fmt->channels;
+		goto flush;
+	}
+
+	/* Down-mixing channels */
+	if(size > 0)
+	{
+		len = size;
+		if(h->in_channels > h->out_channels)
+		{
+			len = resample_down_mix(h,
+					       &h->in_buffer[h->in_len*4],
+					       len, h->in_channels,
+					       h->out_channels);
+		}
+		h->in_len += len;
+	}
+
+flush:
+	/* Process data */
+	len = resample_process(h, &h->tmp_buffer[h->tmp_len*4],
+			       h->tmp_size - h->tmp_len, &in_fmt);
+	h->tmp_len += len;
+
+	/* Write to output callback */
+	if(h->output_callback != NULL)
+	{
+		len = h->output_callback(h->user_data, h->tmp_buffer,
+					 h->tmp_len, &in_fmt);
+
+		/* Update temp buffer */
+		if(len > 0)
+		{
+			h->tmp_len -= len;
+			memmove(h->tmp_buffer, &h->tmp_buffer[len*4],
+				h->tmp_len*4);
+		}
+	}
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return size;
 }
 
 int resample_close(struct resample_handle *h)
@@ -394,6 +537,10 @@ int resample_close(struct resample_handle *h)
 
 	/* Free resample engine */
 	resample_free(h);
+
+	/* Free temp buffer */
+	if(h->tmp_buffer != NULL)
+		free(h->tmp_buffer);
 
 	/* Free input buffer */
 	if(h->in_buffer != NULL)

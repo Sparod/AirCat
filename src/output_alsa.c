@@ -170,7 +170,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 
 	/* Open resample/mixer filter */
 	if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
-		      h->nb_channel, input_callback, user_data) != 0)
+			 h->nb_channel, input_callback, NULL, user_data) != 0)
 		goto error;
 	s->input_callback = &resample_read;
 	s->user_data = s->res;
