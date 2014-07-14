@@ -164,6 +164,7 @@ unsigned long file_set_pos(struct file_handle *h, unsigned long pos)
 	/* Set output position */
 	pos = demux_set_pos(h->demux, pos);
 	h->pcm_pos = pos * 1000;
+	h->pcm_remaining = 0;
 
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);

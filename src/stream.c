@@ -147,7 +147,7 @@ ssize_t stream_read(struct stream_handle *h, size_t len)
 
 	/* Read and fill input buffer */
 	size = read(h->fd, h->buffer, len);
-	if(size < 0)
+	if(size <= 0)
 		return -1;
 
 	/* Update input buffer size and stream position */
