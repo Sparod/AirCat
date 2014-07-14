@@ -50,6 +50,7 @@ struct cache_handle {
 	unsigned long len;
 	unsigned long pos;
 	int is_ready;
+	int end_of_stream;
 	/* Associated format to buffer */
 	struct cache_format *fmt_first;
 	struct cache_format *fmt_last;
@@ -88,6 +89,7 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	h->len = 0;
 	h->pos = 0;
 	h->is_ready = 0;
+	h->end_of_stream = 0;
 	h->input_callback = input_callback;
 	h->output_callback = output_callback;
 	h->input_user = input_user;
@@ -292,12 +294,23 @@ static void *cache_read_thread(void *user_data)
 						(BUFFER_SIZE / 4) - len,
 						&in_fmt);
 			if(ret < 0)
-				break;
+			{
+				h->is_ready = 1;
+				h->end_of_stream = 1;
+				usleep(10000);
+				goto copy;
+			}
+			h->end_of_stream = 0;
 			len += ret;
 		}
 
+copy:
 		/* Lock cache access */
 		pthread_mutex_lock(&h->mutex);
+
+		/* No data to copy: jump to flush */
+		if(len == 0)
+			goto flush;
 
 		/* Copy data to cache */
 		in_size = h->size - h->len;
@@ -314,6 +327,7 @@ static void *cache_read_thread(void *user_data)
 		if(h->len == h->size)
 			h->is_ready = 1;
 
+flush:
 		/* Send data if output callback is available */
 		cache_output(h);
 
@@ -368,8 +382,16 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		if(h->len == 0)
 			h->is_ready = 0;
 	}
+	else if(h->end_of_stream && h->len == 0)
+	{
+		/* End of stream */
+		size = -1;
+	}
 	else
+	{
+		/* No data */
 		size = 0;
+	}
 
 	/* Unlock cache access */
 	pthread_mutex_unlock(&h->mutex);
@@ -387,8 +409,16 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 					in_size, &in_fmt);
 		if(len < 0)
 		{
+			/* End of stream */
+			h->is_ready = 1;
+
+			/* No more data available */
 			if(h->len == 0)
-				return -1;
+				size = -1;
+
+			/* Unlock input callback access */
+			cache_unlock(h);
+
 			return size;
 		}
 		h->len += len;
@@ -458,6 +488,7 @@ void cache_flush(struct cache_handle *h)
 	pthread_mutex_lock(&h->mutex);
 
 	/* Flush the cache */
+	h->end_of_stream = 0;
 	h->is_ready = 0;
 	h->len = 0;
 
