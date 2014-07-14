@@ -42,6 +42,7 @@ struct files_handle {
 	/* Current file player */
 	struct file_handle *file;
 	struct output_stream_handle *stream;
+	unsigned long pos;
 	/* Previous file player */
 	struct file_handle *prev_file;
 	struct output_stream_handle *prev_stream;
@@ -118,6 +119,9 @@ static int files_new_player(struct files_handle *h)
 		h->stream = NULL;
 		return -1;
 	}
+
+	/* Set current position to 0 */
+	h->pos = 0;
 
 	/* Get samplerate and channels */
 	samplerate = file_get_samplerate(h->file);
@@ -198,6 +202,7 @@ static void files_play_prev(struct files_handle *h)
 static void *files_thread(void *user_data)
 {
 	struct files_handle *h = (struct files_handle *) user_data;
+	unsigned long played;
 
 	while(!h->stop)
 	{
@@ -207,8 +212,13 @@ static void *files_thread(void *user_data)
 		if(h->playlist_cur != -1 &&
 		   h->playlist_cur+1 <= h->playlist_len)
 		{
+			/* Get current played from stream */
+			played = output_get_status_stream(h->output, h->stream,
+						  OUTPUT_STREAM_PLAYED) / 1000;
+
+			/* Check position */
 			if(h->file != NULL && 
-			   (file_get_pos(h->file) >= file_get_length(h->file)-1
+			   (played + h->pos >= file_get_length(h->file)-1
 			   || file_get_status(h->file) == FILE_EOF))
 			{
 				files_play_next(h);
@@ -501,17 +511,25 @@ static int files_next(struct files_handle *h)
 
 static int files_seek(struct files_handle *h, unsigned long pos)
 {
-	int ret;
-
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
 
-	ret = file_set_pos(h->file, pos);
+	/* Pause stream */
+	output_pause_stream(h->output, h->stream);
+
+	/* Flush stream */
+	output_flush_stream(h->output, h->stream);
+
+	/* Seek and get new exact position */
+	h->pos = file_set_pos(h->file, pos);
+
+	/* Play stream */
+	output_play_stream(h->output, h->stream);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
-	return ret;
+	return 0;
 }
 
 static struct json *files_get_file_json_object(const char *filename,
@@ -561,6 +579,7 @@ static struct json *files_get_file_json_object(const char *filename,
 
 static char *files_get_json_status(struct files_handle *h, int add_pic)
 {
+	unsigned long played;
 	struct json *tmp;
 	char *str = NULL;
 	int idx;
@@ -583,7 +602,9 @@ static char *files_get_json_status(struct files_handle *h, int add_pic)
 	if(tmp != NULL)
 	{
 		/* Add curent postion and audio file length */
-		json_set_int(tmp, "pos", file_get_pos(h->file));
+		played = output_get_status_stream(h->output, h->stream,
+						  OUTPUT_STREAM_PLAYED) / 1000;
+		json_set_int(tmp, "pos", played + h->pos);
 		json_set_int(tmp, "length", file_get_length(h->file));
 	}
 

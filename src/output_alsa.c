@@ -256,6 +256,7 @@ void output_alsa_flush_stream(struct output *h, struct output_stream *s)
 		if(s->is_playing)
 			cache_unlock(s->cache);
 	}
+	s->played = 0;
 
 	pthread_mutex_unlock(&h->mutex);
 }
