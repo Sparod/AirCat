@@ -152,6 +152,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 {
 	struct output_stream *s;
 	unsigned long size;
+	a_write_cb out = NULL;
 
 	/* Alloc the stream handler */
 	s = malloc(sizeof(struct output_stream));
@@ -168,23 +169,37 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
 
+	/* Add cache */
+	if(input_callback == NULL && cache > 0)
+	{
+		/* Open a new cache */
+		size = h->samplerate * s->nb_channel * cache / 1000;
+		if(cache_open(&s->cache, size, 0, NULL, NULL, NULL, NULL) != 0)
+			goto error;
+		out = &cache_write;
+		user_data = s->cache;
+	}
+
 	/* Open resample/mixer filter */
 	if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
-			 h->nb_channel, input_callback, NULL, user_data) != 0)
+			 h->nb_channel, input_callback, out, user_data) != 0)
 		goto error;
 	s->input_callback = &resample_read;
 	s->user_data = s->res;
 
 	/* Add cache */
-	if(cache > 0)
+	if(input_callback != NULL && cache > 0)
 	{
 		/* Open a new cache */
 		size = h->samplerate * s->nb_channel * cache / 1000;
 		if(cache_open(&s->cache, size, use_cache_thread,
 			      s->input_callback, s->user_data, NULL, NULL) != 0)
 			goto error;
+	}
 
-		/* replace callback with cache */
+	/* Replace callback with cache */
+	if(s->cache != NULL)
+	{
 		s->input_callback = &cache_read;
 		s->user_data = s->cache;
 	}
@@ -243,6 +258,22 @@ void output_alsa_flush_stream(struct output *h, struct output_stream *s)
 	}
 
 	pthread_mutex_unlock(&h->mutex);
+}
+
+ssize_t output_alsa_write_stream(struct output *h, struct output_stream *s,
+				 const unsigned char *buffer, size_t size,
+				 struct a_format *fmt)
+{
+	ssize_t ret;
+
+	pthread_mutex_lock(&h->mutex);
+
+	/* Write data to SR/Mixer filter */
+	ret = resample_write(s->res, buffer, size, fmt);
+
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
 }
 
 int output_alsa_set_volume_stream(struct output *h, struct output_stream *s,
@@ -572,6 +603,7 @@ struct output_module output_alsa = {
 	.play_stream = (void*) &output_alsa_play_stream,
 	.pause_stream = (void*) &output_alsa_pause_stream,
 	.flush_stream = (void*) &output_alsa_flush_stream,
+	.write_stream = (void*) &output_alsa_write_stream,
 	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
 	.get_status_stream = (void*) &output_alsa_get_status_stream,

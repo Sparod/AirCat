@@ -71,6 +71,12 @@ int output_pause_stream(struct output_handle *h,
 void output_flush_stream(struct output_handle *h,
 			 struct output_stream_handle *s);
 
+/* Write to stream */
+ssize_t output_write_stream(struct output_handle *h, 
+			    struct output_stream_handle *s,
+			    const unsigned char *buffer, size_t size,
+			    struct a_format *fmt);
+
 /* Volume output stream control */
 int output_set_volume_stream(struct output_handle *h,
 			     struct output_stream_handle *s,

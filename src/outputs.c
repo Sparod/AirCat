@@ -682,12 +682,40 @@ void output_flush_stream(struct output_handle *h,
 	   h->outputs->handle != NULL && s->stream != NULL)
 	{
 		/* Flush stream */
-		h->outputs->mod->flush_stream(h->outputs->handle,
-						    s->stream);
+		h->outputs->mod->flush_stream(h->outputs->handle, s->stream);
 	}
 
 	/* Unlock output access */
 	pthread_mutex_unlock(h->mutex);
+}
+
+ssize_t output_write_stream(struct output_handle *h, 
+			    struct output_stream_handle *s,
+			    const unsigned char *buffer, size_t size,
+			    struct a_format *fmt)
+{
+	ssize_t ret = -1;
+
+	if(h == NULL || s == NULL)
+		return -1;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Flush stream */
+		ret = h->outputs->mod->write_stream(h->outputs->handle,
+						    s->stream, buffer, size,
+						    fmt);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
 }
 
 static int output_reset_volume_stream(struct outputs_handle *h,
