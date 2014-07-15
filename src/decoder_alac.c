@@ -247,7 +247,7 @@ struct decoder_handle decoder_alac = {
 static int decoder_alac_init(struct alac_decoder *alac,
 			     const unsigned char *in_buffer, size_t in_size)
 {
-	unsigned char *ptr = in_buffer;
+	const unsigned char *ptr = in_buffer;
 	int i;
 
 	if(in_size < 55)
