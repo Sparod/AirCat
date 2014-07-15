@@ -37,7 +37,7 @@
 #endif
 
 #define BUFFER_SIZE 512
-#define MAX_VOLUME 65536
+#define MAX_VOLUME OUTPUT_VOLUME_MAX
 
 #define AIRPORT_PRIVATE_KEY \
 "-----BEGIN RSA PRIVATE KEY-----\n" \
@@ -828,6 +828,11 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 								  MAX_VOLUME /
 								  30.0;
 
+					/* Set stream volume */
+					output_set_volume_stream(h->output,
+							  cdata->stream,
+							  cdata->infos->volume);
+
 					/* Unlock mutex */
 					pthread_mutex_unlock(&h->mutex);
 				}
@@ -849,7 +854,7 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 					cdata->infos->position = (cur - start) /
 							      cdata->samplerate;
 
-					/* Get played samples from output stream */
+					/* Get played samples */
 					start = output_get_status_stream(
 							  h->output,
 							  cdata->stream,
