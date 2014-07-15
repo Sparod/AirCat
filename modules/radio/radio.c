@@ -35,6 +35,7 @@ struct radio_handle {
 	struct radio_list_handle *list;
 	/* Config part */
 	char *list_file;
+	unsigned long cache;
 };
 
 static int radio_stop(struct radio_handle *h);
@@ -57,6 +58,7 @@ static int radio_open(struct radio_handle **handle, struct module_attr *attr)
 	h->stream = NULL;
 	h->radio = NULL;
 	h->list_file = NULL;
+	h->cache = 0;
 
 	/* Load configuration */
 	radio_set_config(h, attr->config);
@@ -94,7 +96,7 @@ static int radio_play(struct radio_handle *h, const char *id)
 
 	/* Open new Audio stream output and play */
 	h->stream = output_add_stream(h->output, NULL, samplerate, channels,
-				      1000, 1, &shoutcast_read, h->shout);
+				      h->cache, 1, &shoutcast_read, h->shout);
 	output_play_stream(h->output, h->stream);
 
 	return 0;
@@ -236,6 +238,7 @@ static int radio_set_config(struct radio_handle *h, const struct json *c)
 	if(h->list_file != NULL)
 		free(h->list_file);
 	h->list_file = NULL;
+	h->cache = 0;
 
 	/* Parse config */
 	if(c != NULL)
@@ -244,11 +247,16 @@ static int radio_set_config(struct radio_handle *h, const struct json *c)
 		file = json_get_string(c, "list_file");
 		if(file != NULL)
 			h->list_file = strdup(file);
+
+		/* Get cache size (in ms) */
+		h->cache = json_get_int(c, "cache");
 	}
 
 	/* Set default values */
 	if(h->list_file == NULL)
 		h->list_file = strdup("/var/aircat/radio_list.json");
+	if(h->cache == 0)
+		h->cache = 5000;
 
 	return 0;
 }
