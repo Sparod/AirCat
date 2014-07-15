@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -46,7 +47,8 @@ struct file_handle {
 	unsigned char in_buffer[BUFFER_SIZE];
 	unsigned long in_size;
 	/* Stream status */
-	unsigned long pcm_pos;
+	uint64_t pcm_pos;
+	unsigned long pcm_pos_off;
 	unsigned long pcm_remaining;
 	/* File properties */
 	unsigned long samplerate;
@@ -81,6 +83,7 @@ int file_open(struct file_handle **handle, const char *uri)
 	h->demux = NULL;
 	h->dec = NULL;
 	h->pcm_pos = 0;
+	h->pcm_pos_off = 0;
 	h->pcm_remaining = 0;
 
 	/* Init mutex */
@@ -163,7 +166,8 @@ unsigned long file_set_pos(struct file_handle *h, unsigned long pos)
 
 	/* Set output position */
 	pos = demux_set_pos(h->demux, pos);
-	h->pcm_pos = pos * 1000;
+	h->pcm_pos = 0;
+	h->pcm_pos_off = pos * 1000;
 	h->pcm_remaining = 0;
 
 	/* Unlock stream access */
@@ -174,7 +178,7 @@ unsigned long file_set_pos(struct file_handle *h, unsigned long pos)
 
 unsigned long file_get_pos(struct file_handle *h)
 {
-	unsigned long pos;
+	uint64_t pos;
 
 	if(h == NULL)
 		return -1;
@@ -183,12 +187,13 @@ unsigned long file_get_pos(struct file_handle *h)
 	pthread_mutex_lock(&h->mutex);
 
 	/* Get output position */
-	pos = h->pcm_pos / 1000;
+	pos = h->pcm_pos / h->samplerate / h->channels;
+	pos += h->pcm_pos_off / 1000;
 
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
 
-	return pos;
+	return (unsigned long) pos;
 }
 
 long file_get_length(struct file_handle *h)
@@ -246,6 +251,9 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		if(info.samplerate != h->samplerate ||
 		   info.channels != h->channels)
 		{
+			h->pcm_pos_off = h->pcm_pos * 1000 / h->samplerate /
+					 h->channels;
+			h->pcm_pos = 0;
 			h->samplerate = info.samplerate;
 			h->channels = info.channels;
 		}
@@ -261,7 +269,8 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		len = demux_next_frame(h->demux);
 
 		/* Decode next frame */
-		samples = decoder_decode(h->dec, h->in_buffer, len,
+		samples = decoder_decode(h->dec, h->in_buffer,
+					 len > 0 ? len : 0,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
@@ -287,7 +296,7 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		total_samples += samples;
 	}
 
-	h->pcm_pos += total_samples * 1000 / (h->samplerate * h->channels);
+	h->pcm_pos += total_samples;
 
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
