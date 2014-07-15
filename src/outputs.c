@@ -48,6 +48,7 @@ struct output_stream_handle {
 	void *user_data;
 	/* Stream status */
 	int is_playing;
+	unsigned long played;
 	/* Next stream in list */
 	struct output_stream_handle *next;
 	/* Output stream module handle */
@@ -180,6 +181,21 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 	/* Close previous output module */
 	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
 	{
+		/* Abort all streams */
+		for(handle = h->handles; handle != NULL;
+		    handle = handle->next)
+		{
+			for(stream = handle->streams; stream != NULL;
+			    stream = stream->next)
+			{
+				/* Abort stream and save played status */
+				if(h->mod->abort_stream != NULL)
+					stream->played = h->mod->abort_stream(
+							        h->handle,
+							        stream->stream);
+			}
+		}
+
 		/* Close output */
 		h->mod->close(h->handle);
 		h->handle = NULL;
@@ -220,6 +236,12 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 
 				/* Reset volume */
 				output_reset_volume_stream(h, handle, stream);
+
+				/* Restore played status */
+				if(h->mod->restore_stream != NULL)
+					h->mod->restore_stream(h->handle,
+							       stream->stream,
+							       stream->played);
 
 				/* Play stream */
 				if(stream->stream != NULL && stream->is_playing)
@@ -474,6 +496,7 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 	s->user_data = user_data;
 	s->stream = stream;
 	s->is_playing = 0;
+	s->played = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 
 	/* Reset volume */

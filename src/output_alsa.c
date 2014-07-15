@@ -54,6 +54,7 @@ struct output_stream {
 	int is_playing;
 	int end_of_stream;
 	uint64_t played;
+	int abort;
 	/* Stream volume */
 	unsigned int volume;
 	/* Stream cache */
@@ -165,6 +166,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->is_playing = 0;
 	s->end_of_stream = 0;
 	s->played = 0;
+	s->abort = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
 
@@ -264,12 +266,13 @@ ssize_t output_alsa_write_stream(struct output *h, struct output_stream *s,
 				 const unsigned char *buffer, size_t size,
 				 struct a_format *fmt)
 {
-	ssize_t ret;
+	ssize_t ret = 0;
 
 	pthread_mutex_lock(&h->mutex);
 
 	/* Write data to SR/Mixer filter */
-	ret = resample_write(s->res, buffer, size, fmt);
+	if(!s->abort)
+		ret = resample_write(s->res, buffer, size, fmt);
 
 	pthread_mutex_unlock(&h->mutex);
 
@@ -344,6 +347,48 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 	pthread_mutex_unlock(&h->mutex);
 
 	return ret;
+}
+
+unsigned long output_alsa_abort_stream(struct output *h,
+				       struct output_stream *s)
+{
+	unsigned long played;
+
+	/* Lock stream access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Pause stream */
+	s->is_playing = 0;
+	s->abort = 1;
+
+	/* Lock cache */
+	if(s->cache != NULL)
+		cache_lock(s->cache);
+
+	/* Calculate played status */
+	played = s->played * 1000 / h->samplerate / h->nb_channel;
+
+	/* Add not played samples */
+	if(s->cache != NULL)
+		played += cache_delay(s->cache);
+
+	/* Unlock stream access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return played;
+}
+
+void output_alsa_restore_stream(struct output *h, struct output_stream *s,
+				unsigned long value)
+{
+	/* Lock stream access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Restore played status */
+	s->played = ((uint64_t)value) * h->samplerate * h->nb_channel / 1000;
+
+	/* Unlock stream access */
+	pthread_mutex_unlock(&h->mutex);
 }
 
 static void output_alsa_free_stream(struct output_stream *s)
@@ -623,6 +668,8 @@ struct output_module output_alsa = {
 	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
 	.get_status_stream = (void*) &output_alsa_get_status_stream,
+	.abort_stream = (void*) &output_alsa_abort_stream,
+	.restore_stream = (void*) &output_alsa_restore_stream,
 	.remove_stream = (void*) &output_alsa_remove_stream,
 	.close = (void*) &output_alsa_close,
 };

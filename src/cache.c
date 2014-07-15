@@ -287,6 +287,14 @@ static void *cache_read_thread(void *user_data)
 		/* Lock input callback */
 		cache_lock(h);
 
+		/* Check stop */
+		if(h->stop)
+		{
+			/* Unlock cache */
+			cache_unlock(h);
+			break;
+		}
+
 		/* Flush this buffer */
 		if(h->flush)
 		{
@@ -578,18 +586,15 @@ int cache_close(struct cache_handle *h)
 	if(h == NULL)
 		return 0;
 
+	/* Stop thread */
+	h->stop = 1;
+
 	/* Unlock input callback */
 	cache_unlock(h);
 
-	/* Stop thread */
+	/* Wait end of the thread */
 	if(h->use_thread)
-	{
-		/* Send stop signal */
-		h->stop = 1;
-
-		/* Wait end of the thread */
 		pthread_join(h->thread, NULL);
-	}
 
 	/* Free format list */
 	while(h->fmt_first != NULL)

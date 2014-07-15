@@ -38,6 +38,8 @@ struct output_module {
 					   enum output_stream_key);
 	ssize_t (*write_stream)(void *, void *, const unsigned char *, size_t,
 				struct a_format *);
+	unsigned long (*abort_stream)(void *, void *);
+	void (*restore_stream)(void *, void *, unsigned long);
 	int (*remove_stream)(void *, void *);
 	int (*close)(void *);
 };
