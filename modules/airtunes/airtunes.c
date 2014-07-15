@@ -72,9 +72,12 @@ enum {
 };
 
 struct airtunes_stream {
+	/* Output stream */
+	struct output_stream_handle *stream;
 	/* Stream name */
 	char *name;
 	/* Stream status */
+	unsigned long played;
 	unsigned long position;
 	unsigned long duration;
 	/* Stream volume */
@@ -649,6 +652,9 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 							  &raop_read,
 							  cdata->raop);
 
+			/* Copy output stream handle in stream structure */
+			cdata->infos->stream = cdata->stream;
+
 			/* Send answer */
 			RESPONSE_BEGIN(c, h->hw_addr);
 			rtsp_add_response(c, "Audio-Jack-Status",
@@ -671,12 +677,17 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			RESPONSE_BEGIN(c, h->hw_addr);
 			break;
 		case RTSP_FLUSH:
+			output_pause_stream(h->output, cdata->stream);
+			output_flush_stream(h->output, cdata->stream);
 			raop_flush(cdata->raop, 0);
+			cdata->infos->played = 0;
+			output_play_stream(h->output, cdata->stream);
 			RESPONSE_BEGIN(c, h->hw_addr);
 			break;
 		case RTSP_TEARDOWN:
 			/* Stop stream */
 			output_remove_stream(h->output, cdata->stream);
+			cdata->infos->stream = NULL;
 			cdata->stream = NULL;
 
 			/* Close raop */
@@ -838,6 +849,13 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 					cdata->infos->position = (cur - start) /
 							      cdata->samplerate;
 
+					/* Get played samples from output stream */
+					start = output_get_status_stream(
+							  h->output,
+							  cdata->stream,
+							  OUTPUT_STREAM_PLAYED);
+					cdata->infos->played = start / 1000;
+
 					/* Unlock mutex */
 					pthread_mutex_unlock(&h->mutex);
 				}
@@ -865,6 +883,7 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 	{
 		/* Stop stream */
 		output_remove_stream(h->output, cdata->stream);
+		cdata->infos->stream = NULL;
 		raop_close(cdata->raop);
 
 		/* Remove info stream */
@@ -888,6 +907,7 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 {
 	struct airtunes_stream *s;
 	json_object *root, *tmp;
+	unsigned long played;
 	char *str;
 
 	/* Create JSON array */
@@ -906,12 +926,16 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 		if(tmp == NULL)
 			continue;
 
+		/* Get played samples from output stream */
+		played = output_get_status_stream(h->output, s->stream,
+						  OUTPUT_STREAM_PLAYED) / 1000;
+
 		/* Add values to it */
 		ADD_STRING(tmp, "name", s->name);
 		ADD_STRING(tmp, "title", s->title);
 		ADD_STRING(tmp, "artist", s->artist);
 		ADD_STRING(tmp, "album", s->album);
-		ADD_INT(tmp, "pos", s->position);
+		ADD_INT(tmp, "pos", s->position + played - s->played);
 		ADD_INT(tmp, "length", s->duration);
 		ADD_INT(tmp, "volume", s->volume);
 
