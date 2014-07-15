@@ -31,6 +31,7 @@ int resample_read(void *h, unsigned char *buffer, size_t size,
 		  struct a_format *fmt);
 ssize_t resample_write(void *h, const unsigned char *buffer, size_t size,
 		       struct a_format *fmt);
+unsigned long resample_delay(struct resample_handle *h);
 int resample_close(struct resample_handle *h);
 
 #endif

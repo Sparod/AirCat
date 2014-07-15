@@ -435,21 +435,25 @@ int resample_read(void *user_data, unsigned char *buffer, size_t size,
 	if(h->output_callback != NULL)
 		return -1;
 
-	/* Input data are provided by input_callback */
-	if(h->input_callback != NULL)
-		return resample_process(h, buffer, size, fmt);
-
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
-	/* Copy output data */
-	if(size > h->tmp_len)
-		size = h->tmp_len;
-	memcpy(buffer, h->tmp_buffer, size * 4);
+	/* Input data are provided by input_callback */
+	if(h->input_callback != NULL)
+	{
+		size = resample_process(h, buffer, size, fmt);
+	}
+	else
+	{
+		/* Copy output data */
+		if(size > h->tmp_len)
+			size = h->tmp_len;
+		memcpy(buffer, h->tmp_buffer, size * 4);
 
-	/* Update temp buffer */
-	h->tmp_len -= size;
-	memmove(h->tmp_buffer, &h->tmp_buffer[size*4], h->tmp_len * 4);
+		/* Update temp buffer */
+		h->tmp_len -= size;
+		memmove(h->tmp_buffer, &h->tmp_buffer[size*4], h->tmp_len * 4);
+	}
 
 	/* Unlock buffer access */
 	pthread_mutex_unlock(&h->mutex);
@@ -532,6 +536,29 @@ flush:
 	pthread_mutex_unlock(&h->mutex);
 
 	return size;
+}
+
+unsigned long resample_delay(struct resample_handle *h)
+{
+	double delay;
+
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get delay from Soxr */
+	delay = soxr_delay(h->soxr) * 1000 / h->out_samplerate;
+
+	/* Add delayed buffer if format changed */
+	if(h->fmt_has_changed > 0)
+	{
+		delay += h->fmt_has_changed * 1000 / h->new_samplerate /
+			 h->new_channels;
+	}
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return (unsigned long) delay;
 }
 
 int resample_close(struct resample_handle *h)

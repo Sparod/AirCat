@@ -371,6 +371,7 @@ unsigned long output_alsa_abort_stream(struct output *h,
 	/* Add not played samples */
 	if(s->cache != NULL)
 		played += cache_delay(s->cache);
+	played += resample_delay(s->res);
 
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
