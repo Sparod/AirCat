@@ -23,7 +23,8 @@
 
 struct cache_handle;
 
-int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
+int cache_open(struct cache_handle **handle, unsigned long time,
+	       unsigned long samplerate, unsigned char channels, int use_thread,
 	       a_read_cb input_callback, void *input_user,
 	       a_write_cb output_callback, void *output_user);
 int cache_is_ready(struct cache_handle *h);
@@ -35,6 +36,7 @@ ssize_t cache_write(void *h, const unsigned char *buffer, size_t size,
 void cache_flush(struct cache_handle *h);
 void cache_lock(struct cache_handle *h);
 void cache_unlock(struct cache_handle *h);
+unsigned long cache_delay(struct cache_handle *h);
 int cache_close(struct cache_handle *h);
 
 #endif

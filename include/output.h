@@ -31,7 +31,9 @@ enum output_stream_key {
 	/* Stream cache status (see enum stream_cache_status) */
 	OUTPUT_STREAM_CACHE_STATUS,
 	/* Stream cache fill (in %) */
-	OUTPUT_STREAM_CACHE_FILLING
+	OUTPUT_STREAM_CACHE_FILLING,
+	/* Stream cache current delay (in ms) */
+	OUTPUT_STREAM_CACHE_DELAY
 };
 
 enum stream_status {

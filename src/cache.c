@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <pthread.h>
 
@@ -38,6 +39,9 @@ struct cache_format {
 
 struct cache_handle {
 	/* Cache properties */
+	unsigned long samplerate;
+	unsigned char channels;
+	unsigned long time;
 	int use_thread;
 	/* Input callback */
 	a_read_cb input_callback;
@@ -65,13 +69,14 @@ struct cache_handle {
 
 static void *cache_read_thread(void *user_data);
 
-int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
+int cache_open(struct cache_handle **handle, unsigned long time,
+	       unsigned long samplerate, unsigned char channels, int use_thread,
 	       a_read_cb input_callback, void *input_user,
 	       a_write_cb output_callback, void *output_user)
 {
 	struct cache_handle *h;
 
-	if(size == 0 ||
+	if(time == 0 || samplerate == 0 || channels == 0 ||
 	   (input_callback == NULL && use_thread == 1) ||
 	   (input_callback != NULL && output_callback != NULL &&
 	    use_thread == 0))
@@ -84,8 +89,11 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	h = *handle;
 
 	/* Init structure */
+	h->time = time;
+	h->samplerate = samplerate;
+	h->channels = channels;
 	h->buffer = NULL;
-	h->size = size;
+	h->size = time * samplerate * channels / 1000;
 	h->len = 0;
 	h->pos = 0;
 	h->is_ready = 0;
@@ -101,7 +109,7 @@ int cache_open(struct cache_handle **handle, unsigned long size, int use_thread,
 	h->fmt_len = 0;
 
 	/* Allocate buffer */
-	h->buffer = malloc(size * 4);
+	h->buffer = malloc(h->size * 4);
 	if(h->buffer == NULL)
 		return -1;
 
@@ -519,6 +527,48 @@ void cache_unlock(struct cache_handle *h)
 {
 	/* Unlock input callback access */
 	pthread_mutex_unlock(&h->input_lock);
+}
+
+unsigned long cache_delay(struct cache_handle *h)
+{
+	struct cache_format *fmt;
+	unsigned long samplerate;
+	unsigned char channels;
+	uint64_t delay = 0;
+
+	if(h == NULL)
+		return 0;
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Check format list */
+	if(h->fmt_first != NULL)
+	{
+		samplerate = h->samplerate;
+		channels = h->channels;
+		/* Parse all format list */
+		fmt = h->fmt_first->next;
+		while(fmt != NULL)
+		{
+			delay += ((uint64_t)fmt->len) * 1000 / samplerate /
+				 channels;
+			if(fmt->fmt.samplerate != 0)
+				samplerate = fmt->fmt.samplerate;
+			if(fmt->fmt.channels != 0)
+				channels = fmt->fmt.channels;
+			fmt = fmt->next;
+		}
+		delay += ((uint64_t)h->fmt_len) * 1000 / samplerate / channels;
+	}
+	else
+		delay = ((uint64_t)h->len) * 1000 / h->samplerate /
+			h->channels;
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return delay;
 }
 
 int cache_close(struct cache_handle *h)

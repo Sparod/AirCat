@@ -151,7 +151,6 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 					     void *user_data)
 {
 	struct output_stream *s;
-	unsigned long size;
 	a_write_cb out = NULL;
 
 	/* Alloc the stream handler */
@@ -173,8 +172,8 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	if(input_callback == NULL && cache > 0)
 	{
 		/* Open a new cache */
-		size = h->samplerate * s->nb_channel * cache / 1000;
-		if(cache_open(&s->cache, size, 0, NULL, NULL, NULL, NULL) != 0)
+		if(cache_open(&s->cache, cache, h->samplerate, h->nb_channel, 0,
+			      NULL, NULL, NULL, NULL) != 0)
 			goto error;
 		out = &cache_write;
 		user_data = s->cache;
@@ -191,9 +190,9 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	if(input_callback != NULL && cache > 0)
 	{
 		/* Open a new cache */
-		size = h->samplerate * s->nb_channel * cache / 1000;
-		if(cache_open(&s->cache, size, use_cache_thread,
-			      s->input_callback, s->user_data, NULL, NULL) != 0)
+		if(cache_open(&s->cache, cache, h->samplerate, h->nb_channel,
+			      use_cache_thread, s->input_callback, s->user_data,
+			      NULL, NULL) != 0)
 			goto error;
 	}
 
@@ -303,7 +302,7 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 					    struct output_stream *s,
 					    enum output_stream_key key)
 {
-	unsigned long ret;
+	unsigned long ret = 0;
 
 	/* Lock stream access */
 	pthread_mutex_lock(&h->mutex);
@@ -332,6 +331,10 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 				ret = cache_get_filling(s->cache);
 			else
 				ret = 100;
+			break;
+		case OUTPUT_STREAM_CACHE_DELAY:
+			if(s->cache != NULL)
+				ret = cache_delay(s->cache);
 			break;
 		default:
 			ret = 0;
