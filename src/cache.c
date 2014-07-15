@@ -55,6 +55,7 @@ struct cache_handle {
 	unsigned long pos;
 	int is_ready;
 	int end_of_stream;
+	int new_size;
 	/* Associated format to buffer */
 	struct cache_format *fmt_first;
 	struct cache_format *fmt_last;
@@ -76,7 +77,7 @@ int cache_open(struct cache_handle **handle, unsigned long time,
 {
 	struct cache_handle *h;
 
-	if(time == 0 || samplerate == 0 || channels == 0 ||
+	if(samplerate == 0 || channels == 0 ||
 	   (input_callback == NULL && use_thread == 1) ||
 	   (input_callback != NULL && output_callback != NULL &&
 	    use_thread == 0))
@@ -98,6 +99,7 @@ int cache_open(struct cache_handle **handle, unsigned long time,
 	h->pos = 0;
 	h->is_ready = 0;
 	h->end_of_stream = 0;
+	h->new_size = 0;
 	h->input_callback = input_callback;
 	h->output_callback = output_callback;
 	h->input_user = input_user;
@@ -108,10 +110,19 @@ int cache_open(struct cache_handle **handle, unsigned long time,
 	h->fmt_last = NULL;
 	h->fmt_len = 0;
 
+	/* Buffer must be allocated with a thread using input callback and no
+	 * output callback */
+	if(time == 0 && ((input_callback == NULL && output_callback == NULL) ||
+	   ((input_callback == NULL || output_callback == NULL) && use_thread)))
+		h->size = BUFFER_SIZE;
+
 	/* Allocate buffer */
-	h->buffer = malloc(h->size * 4);
-	if(h->buffer == NULL)
-		return -1;
+	if(h->size != 0)
+	{
+		h->buffer = malloc(h->size * 4);
+		if(h->buffer == NULL)
+			return -1;
+	}
 
 	/* Init thread mutex */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -123,6 +134,85 @@ int cache_open(struct cache_handle **handle, unsigned long time,
 		if(pthread_create(&h->thread, NULL, cache_read_thread, h) != 0)
 			return -1;
 	}
+
+	return 0;
+}
+
+unsigned long cache_get_time(struct cache_handle *h)
+{
+	unsigned long time;
+
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get time */
+	time = h->time;
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return time;
+}
+
+static void cache_resize(struct cache_handle *h, int unset_is_ready)
+{
+	unsigned long size;
+	unsigned char *p;
+
+	/* Calculate new cache size */
+	size = h->time * h->samplerate * h->channels / 1000;
+	if(size == h->size)
+		return;
+
+	/* Check new size */
+	if(size > h->size)
+	{
+		/* Reallocate bigger buffer */
+		p = realloc(h->buffer, size*4);
+		if(p == NULL)
+			return;
+		h->buffer = p;
+
+		/* Unset is_ready */
+		if(unset_is_ready || h->size == 0)
+			h->is_ready = 0;
+
+		/* Unset new lower size signal */
+		h->new_size = 0;
+	}
+	else
+	{
+		/* Zero sized buffer not allowed with both callback = NULL or 
+		 * Thread with input callback and no output callback */
+		if(size == 0 &&
+		   ((h->input_callback == NULL && h->output_callback == NULL) ||
+		   ((h->input_callback == NULL || h->output_callback == NULL) &&
+		     h->use_thread)))
+			size = BUFFER_SIZE;
+
+		/* Signal new lower size */
+		h->new_size = 1;
+	}
+
+	/* Update size */
+	h->size = size;
+}
+
+int cache_set_time(struct cache_handle *h, unsigned long time)
+{
+	/* Lock cache access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Check time */
+	if(time != h->time)
+	{
+		/* Change size */
+		h->time = time;
+		cache_resize(h, 1);
+	}
+
+	/* Unlock cache access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
@@ -236,6 +326,16 @@ static void cache_next_format(struct cache_handle *h, size_t *size,
 				 */
 				*size = next_fmt->len;
 				cache_get_format(h);
+
+				/* Update format */
+				if(next_fmt->fmt.samplerate != 0)
+					h->samplerate =
+						       next_fmt->fmt.samplerate;
+				if(next_fmt->fmt.channels != 0)
+					h->channels = next_fmt->fmt.channels;
+
+				/* Update cache size */
+				cache_resize(h, 0);
 			}
 			next_fmt->len -= *size;
 		}
@@ -244,12 +344,39 @@ static void cache_next_format(struct cache_handle *h, size_t *size,
 	}
 }
 
+static void cache_reduce(struct cache_handle *h)
+{
+	unsigned char *p;
+
+	/* Reduce buffer */
+	if(h->len <= h->size)
+	{
+		/* Zero size case */
+		if(h->size == 0)
+		{
+			/* Free buffer */
+			if(h->buffer != NULL)
+				free(h->buffer);
+			h->buffer = NULL;
+		}
+		else
+		{
+			/* Rallocate buffer */
+			p = realloc(h->buffer, h->size*4);
+			if(p == NULL)
+				return;
+			h->buffer = p;
+		}
+		h->new_size = 0;
+	}
+}
+
 static void cache_output(struct cache_handle *h)
 {
 	struct a_format out_fmt = A_FORMAT_INIT;
 	size_t size;
 
-	if(h->output_callback != NULL && h->is_ready)
+	if(h->buffer != NULL && h->output_callback != NULL && h->is_ready)
 	{
 		/* Set size to buffer size */
 		size = h->len;
@@ -264,6 +391,10 @@ static void cache_output(struct cache_handle *h)
 		{
 			h->len -= size;
 			memmove(h->buffer, &h->buffer[size*4], h->size*4);
+
+			/* Reduce buffer to new size */
+			if(h->new_size)
+				cache_reduce(h);
 		}
 
 		/* No more data is available */
@@ -276,10 +407,19 @@ static void *cache_read_thread(void *user_data)
 {
 	struct cache_handle *h = (struct cache_handle *) user_data;
 	struct a_format in_fmt = A_FORMAT_INIT;
-	unsigned char buffer[BUFFER_SIZE];
+	unsigned char *buffer = NULL;
 	unsigned long in_size = 0;
 	unsigned long len = 0;
+	ssize_t size;
 	int ret = 0;
+
+	/* Allocate buffer */
+	if(h->input_callback != NULL)
+	{
+		buffer = malloc(BUFFER_SIZE);
+		if(buffer == NULL)
+			return NULL;
+	}
 
 	/* Read indefinitively the input callback */
 	while(!h->stop)
@@ -294,6 +434,41 @@ static void *cache_read_thread(void *user_data)
 			cache_unlock(h);
 			break;
 		}
+
+		/* No cache */
+		if(h->buffer == NULL)
+		{
+			if(h->input_callback == NULL ||
+			   h->output_callback == NULL)
+				return NULL;
+
+			/* Get data */
+			if(len == 0)
+			{
+				len = h->input_callback(h->input_user, buffer,
+							BUFFER_SIZE / 4,
+							&in_fmt);
+			}
+
+			/* Copy data */
+			if(len > 0)
+			{
+				size = h->output_callback(h->output_user,
+							  buffer, len, &in_fmt);
+
+				/* Move unused data */
+				len -= size;
+				memmove(buffer, &buffer[size*4], len * 4);
+			}
+
+			/* Unlock cache */
+			cache_unlock(h);
+
+			continue;
+		}
+
+		if(h->input_callback == NULL)
+			goto flush;
 
 		/* Flush this buffer */
 		if(h->flush)
@@ -325,7 +500,7 @@ copy:
 		pthread_mutex_lock(&h->mutex);
 
 		/* No data to copy: jump to flush */
-		if(len == 0)
+		if(len == 0 || h->len > h->size)
 			goto flush;
 
 		/* Copy data to cache */
@@ -362,6 +537,10 @@ flush:
 			usleep(1000);
 	}
 
+	/* Free buffer */
+	if(buffer != NULL)
+		free(buffer);
+
 	return NULL;
 }
 
@@ -373,8 +552,18 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 	unsigned long in_size;
 	long len;
 
-	if(h == NULL || h->buffer == NULL || h->output_callback != NULL)
+	if(h == NULL || h->output_callback != NULL)
 		return -1;
+
+	/* No cache */
+	if(h->buffer == NULL)
+	{
+		if(h->input_callback == NULL)
+			return -1;
+
+		/* Copy data */
+		return h->input_callback(h->input_user, buffer, size, fmt);
+	}
 
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
@@ -393,6 +582,10 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		memcpy(buffer, h->buffer, size*4);
 		h->len -= size;
 		memmove(h->buffer, &h->buffer[size*4], h->len*4);
+
+		/* Reduce buffer to new size */
+		if(h->new_size)
+			cache_reduce(h);
 
 		/* No more data is available */
 		if(h->len == 0)
@@ -443,7 +636,7 @@ int cache_read(void *user_data, unsigned char *buffer, size_t size,
 		cache_update_format(h, len, &in_fmt);
 
 		/* Cache is full */
-		if(h->len == h->size)
+		if(h->len >= h->size)
 			h->is_ready = 1;
 
 		/* Unlock input callback access */
@@ -461,6 +654,16 @@ ssize_t cache_write(void *user_data, const unsigned char *buffer, size_t size,
 
 	if(h->input_callback != NULL)
 		return -1;
+
+	/* No cache */
+	if(h->buffer == NULL)
+	{
+		if(h->output_callback == NULL)
+			return -1;
+
+		/* Copy data */
+		return h->output_callback(h->output_user, buffer, size, fmt);
+	}
 
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
@@ -485,7 +688,8 @@ ssize_t cache_write(void *user_data, const unsigned char *buffer, size_t size,
 
 end:
 	/* Send data if output callback is available */
-	cache_output(h);
+	if(!h->use_thread)
+		cache_output(h);
 
 	/* Unlock cache access */
 	pthread_mutex_unlock(&h->mutex);
