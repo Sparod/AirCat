@@ -35,6 +35,9 @@
 
 #define BUFFER_SIZE 8192/2
 
+/* Minimum latency is 10ms */
+#define MIN_LATENCY 10
+
 #ifdef USE_FLOAT
  	#define ALSA_FORMAT SND_PCM_FORMAT_FLOAT
 #else
@@ -49,7 +52,7 @@ struct output_stream {
 	void *user_data;
 	/* Format */
 	unsigned long samplerate;
-	unsigned char nb_channel;
+	unsigned char channels;
 	/* Stream status */
 	int is_playing;
 	int end_of_stream;
@@ -68,7 +71,7 @@ struct output {
 	snd_pcm_t *alsa;
 	/* Format */
 	unsigned long samplerate;
-	unsigned char nb_channel;
+	unsigned char channels;
 	/* General volume */
 	unsigned int volume;
 	/* Thread objects */
@@ -81,13 +84,13 @@ struct output {
 
 static void *output_alsa_thread(void *user_data);
 
-int output_alsa_open(struct output **handle, unsigned int samplerate,
-		     int nb_channel)
+int output_alsa_open(struct output **handle, unsigned long samplerate,
+		     unsigned char channels, unsigned int latency)
 {
 	struct output *h;
-	int latency = 100;
 	int ret;
 
+	/* Allocate handle */
 	*handle = malloc(sizeof(struct output));
 	if(*handle == NULL)
 		return -1;
@@ -99,16 +102,20 @@ int output_alsa_open(struct output **handle, unsigned int samplerate,
 
 	/* Copy input and output format */
 	h->samplerate = samplerate;
-	h->nb_channel = nb_channel;
+	h->channels = channels;
 	h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Open alsa device */
 	if(snd_pcm_open(&h->alsa, "default", SND_PCM_STREAM_PLAYBACK, 0) < 0)
 		return -1;
 
+	/* Set latency to default */
+	if(latency < MIN_LATENCY)
+		latency = MIN_LATENCY;
+
 	/* Set parameters for output */
 	ret = snd_pcm_set_params(h->alsa, ALSA_FORMAT,
-				 SND_PCM_ACCESS_RW_INTERLEAVED, h->nb_channel,
+				 SND_PCM_ACCESS_RW_INTERLEAVED, h->channels,
 				 h->samplerate, 1, latency*1000);
 	if(ret < 0)
 		return -1;
@@ -145,7 +152,7 @@ unsigned int output_alsa_get_volume(struct output *h)
 
 struct output_stream *output_alsa_add_stream(struct output *h,
 					     unsigned long samplerate,
-					     unsigned char nb_channel,
+					     unsigned char channels,
 					     unsigned long cache,
 					     int use_cache_thread,
 					     a_read_cb input_callback,
@@ -161,7 +168,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 
 	/* Fill the handler */
 	s->samplerate = samplerate;
-	s->nb_channel = nb_channel;
+	s->channels = channels;
 	s->res = NULL;
 	s->is_playing = 0;
 	s->end_of_stream = 0;
@@ -174,7 +181,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	if(input_callback == NULL && cache > 0)
 	{
 		/* Open a new cache */
-		if(cache_open(&s->cache, cache, h->samplerate, h->nb_channel, 0,
+		if(cache_open(&s->cache, cache, h->samplerate, h->channels, 0,
 			      NULL, NULL, NULL, NULL) != 0)
 			goto error;
 		out = &cache_write;
@@ -182,8 +189,8 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	}
 
 	/* Open resample/mixer filter */
-	if(resample_open(&s->res, samplerate, nb_channel, h->samplerate,
-			 h->nb_channel, input_callback, out, user_data) != 0)
+	if(resample_open(&s->res, samplerate, channels, h->samplerate,
+			 h->channels, input_callback, out, user_data) != 0)
 		goto error;
 	s->input_callback = &resample_read;
 	s->user_data = s->res;
@@ -192,7 +199,7 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	if(input_callback != NULL && cache > 0)
 	{
 		/* Open a new cache */
-		if(cache_open(&s->cache, cache, h->samplerate, h->nb_channel,
+		if(cache_open(&s->cache, cache, h->samplerate, h->channels,
 			      use_cache_thread, s->input_callback, s->user_data,
 			      NULL, NULL) != 0)
 			goto error;
@@ -321,7 +328,7 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 				ret = STREAM_PAUSED;
 			break;
 		case OUTPUT_STREAM_PLAYED:
-			ret = s->played * 1000 / h->samplerate / h->nb_channel;
+			ret = s->played * 1000 / h->samplerate / h->channels;
 			break;
 		case OUTPUT_STREAM_CACHE_STATUS:
 			if(s->cache != NULL && cache_is_ready(s->cache) == 0)
@@ -366,7 +373,7 @@ unsigned long output_alsa_abort_stream(struct output *h,
 		cache_lock(s->cache);
 
 	/* Calculate played status */
-	played = s->played * 1000 / h->samplerate / h->nb_channel;
+	played = s->played * 1000 / h->samplerate / h->channels;
 
 	/* Add not played samples */
 	if(s->cache != NULL)
@@ -386,7 +393,7 @@ void output_alsa_restore_stream(struct output *h, struct output_stream *s,
 	pthread_mutex_lock(&h->mutex);
 
 	/* Restore played status */
-	s->played = ((uint64_t)value) * h->samplerate * h->nb_channel / 1000;
+	s->played = ((uint64_t)value) * h->samplerate * h->channels / 1000;
 
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
@@ -586,12 +593,12 @@ static void *output_alsa_thread(void *user_data)
 	while(!h->stop)
 	{
 		out_size = output_alsa_mix_streams(h, in_buffer, out_buffer,
-						   in_size) / h->nb_channel;
+						   in_size) / h->channels;
 		if(out_size == 0)
 		{
 			/* Fill with zero */
 			memset(out_buffer, 0, in_size * 4);
-			out_size = in_size / h->nb_channel;
+			out_size = in_size / h->channels;
 		}
 
 		/* Play pcm sample */

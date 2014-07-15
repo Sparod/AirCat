@@ -35,6 +35,12 @@
 #define NO_NAME "No output"
 #define NO_DESCRIPTION ""
 
+/* Max and default latency.
+ * Max is 10s and default is 100ms.
+ */
+#define MAX_LATENCY 10000
+#define DEFAULT_LATENCY 100
+
 struct output_stream_handle {
 	/* Stream properties */
 	char *id;
@@ -93,6 +99,7 @@ struct outputs_handle {
 	/* Configuration */
 	unsigned long samplerate;
 	unsigned char channels;
+	unsigned int latency;
 	unsigned int volume;
 	/* Mutex for thread-safe */
 	pthread_mutex_t mutex;
@@ -124,6 +131,9 @@ int outputs_open(struct outputs_handle **handle, struct json *config)
 	h->current = NULL;
 	h->handle = NULL;
 	h->handles = NULL;
+	h->samplerate = 0;
+	h->channels = 0;
+	h->latency = 0;
 
 	/* Create output list */
 	for(i = 0; i < sizeof(list)/sizeof(struct output_list); i++)
@@ -169,7 +179,8 @@ static struct output_list *outputs_find_module(struct outputs_handle *h,
 }
 
 static void outputs_reload(struct outputs_handle *h, struct output_list *new,
-			   unsigned long samplerate, unsigned char channels)
+			   unsigned long samplerate, unsigned char channels,
+			   unsigned int latency)
 {
 	struct output_stream_handle *stream;
 	struct output_handle *handle;
@@ -177,6 +188,7 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 	/* Update value */
 	h->samplerate = samplerate;
 	h->channels = channels;
+	h->latency = latency;
 
 	/* Close previous output module */
 	if(h->current != NULL && h->mod != NULL && h->handle != NULL)
@@ -210,8 +222,8 @@ static void outputs_reload(struct outputs_handle *h, struct output_list *new,
 		h->mod = h->current->mod;
 
 		/* Open output module */
-		if(h->mod->open(&h->handle, h->samplerate, h->channels)
-		   != 0)
+		if(h->mod->open(&h->handle, h->samplerate, h->channels,
+				h->latency) != 0)
 		{
 			h->mod->close(h->handle);
 			h->handle = NULL;
@@ -257,6 +269,7 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	struct output_list *current = NULL;
 	unsigned long samplerate = 0;
 	unsigned char channels = 0;
+	unsigned int latency = 0;
 	const char *id;
 
 	if(h == NULL)
@@ -269,6 +282,7 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 	current = NULL;
 	samplerate = 0;
 	channels = 0;
+	latency = 0;
 	h->volume = OUTPUT_VOLUME_MAX;
 
 	/* Get configuration */
@@ -278,6 +292,7 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		current = outputs_find_module(h, id);
 		samplerate = json_get_int(cfg, "samplerate");
 		channels = json_get_int(cfg, "channels");
+		latency = json_get_int(cfg, "latency");
 		h->volume = json_has_key(cfg, "volume") ?
 						   json_get_int(cfg, "volume") :
 						   OUTPUT_VOLUME_MAX;
@@ -295,11 +310,13 @@ int outputs_set_config(struct outputs_handle *h, struct json *cfg)
 		channels = 2;
 	if(h->volume > OUTPUT_VOLUME_MAX)
 		h->volume = OUTPUT_VOLUME_MAX;
+	if(latency == 0 || latency > MAX_LATENCY)
+		latency = DEFAULT_LATENCY;
 
 	/* Reload output */
 	if(current != h->current || samplerate != h->samplerate ||
-	   channels != h->channels)
-		outputs_reload(h, current, samplerate, channels);
+	   channels != h->channels || latency != h->latency)
+		outputs_reload(h, current, samplerate, channels, latency);
 
 	/* Unlock output access */
 	pthread_mutex_unlock(&h->mutex);

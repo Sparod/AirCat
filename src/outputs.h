@@ -24,7 +24,7 @@
 #include "json.h"
 
 struct output_module {
-	int (*open)(void **, unsigned int, int);
+	int (*open)(void **, unsigned long, unsigned char, unsigned int);
 	int (*set_volume)(void *, unsigned int);
 	unsigned int (*get_volume)(void *);
 	void *(*add_stream)(void *, unsigned long, unsigned char, unsigned long,
