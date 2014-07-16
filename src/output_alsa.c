@@ -38,6 +38,9 @@
 /* Minimum latency is 10ms */
 #define MIN_LATENCY 10
 
+/* Maximum time before stopping PCM output (default: 5s) */
+#define MAX_SILENCE 5
+
 #ifdef USE_FLOAT
  	#define ALSA_FORMAT SND_PCM_FORMAT_FLOAT
 #else
@@ -578,6 +581,8 @@ static void *output_alsa_thread(void *user_data)
 	unsigned char *in_buffer, *out_buffer;
 	int in_size = BUFFER_SIZE;
 	int out_size = 0;
+	time_t start = 0;
+	int stopped = 1;
 
 	/* Allocate buffer */
 	in_buffer = malloc(in_size * 4);
@@ -590,15 +595,45 @@ static void *output_alsa_thread(void *user_data)
 		return NULL;
 	}
 
+	/* Wait end signal */
 	while(!h->stop)
 	{
 		out_size = output_alsa_mix_streams(h, in_buffer, out_buffer,
 						   in_size) / h->channels;
 		if(out_size == 0)
 		{
+			/* ALSA PCM is stopped */
+			if(stopped)
+			{
+				/* Wait 10ms and continue */
+				usleep(MIN_LATENCY * 1000);
+				continue;
+			}
+			else if(start == 0)
+			{
+				/* Start time counter */
+				start = time(NULL);
+			}
+
+			/* Maximum silence time elapsed */
+			if(time(NULL) - start > MAX_SILENCE)
+			{
+				/* Stop ALSA PCM output */
+				snd_pcm_drain(h->alsa);
+				stopped = 1;
+				continue;
+			}
+
 			/* Fill with zero */
 			memset(out_buffer, 0, in_size * 4);
 			out_size = in_size / h->channels;
+		}
+		else if(stopped)
+		{
+			/* Restart ALSA PCM output */
+			snd_pcm_prepare(h->alsa);
+			stopped = 0;
+			start = 0;
 		}
 
 		/* Play pcm sample */
