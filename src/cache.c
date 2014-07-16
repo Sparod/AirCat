@@ -725,6 +725,10 @@ void cache_flush(struct cache_handle *h)
 	if(h->use_thread)
 		h->flush = 1;
 
+	/* Reduce buffer */
+	if(h->new_size)
+		cache_reduce(h);
+
 	/* Unlock cache access */
 	pthread_mutex_unlock(&h->mutex);
 }
