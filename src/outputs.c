@@ -841,6 +841,32 @@ unsigned int output_get_volume_stream(struct output_handle *h,
 	return ret;
 }
 
+int output_set_cache_stream(struct output_handle *h,
+			    struct output_stream_handle *s, unsigned long cache)
+{
+	int ret = -1;
+
+	if(h == NULL || s == NULL)
+		return -1;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Set new cache volume */
+		ret = h->outputs->mod->set_cache_stream(h->outputs->handle,
+							s->stream, cache);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
+}
+
 unsigned long output_get_status_stream(struct output_handle *h,
 				       struct output_stream_handle *s,
 				       enum output_stream_key key)

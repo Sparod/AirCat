@@ -86,6 +86,11 @@ int output_set_volume_stream(struct output_handle *h,
 unsigned int output_get_volume_stream(struct output_handle *h,
 				      struct output_stream_handle *s);
 
+/* Cache stream control */
+int output_set_cache_stream(struct output_handle *h,
+			    struct output_stream_handle *s,
+			    unsigned long cache);
+
 /* Output stream status */
 unsigned long output_get_status_stream(struct output_handle *h,
 				       struct output_stream_handle *s,

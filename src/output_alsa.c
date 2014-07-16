@@ -47,9 +47,6 @@
 struct output_stream {
 	/* Resample object */
 	struct resample_handle *res;
-	/* Input callback */
-	a_read_cb input_callback;
-	void *user_data;
 	/* Format */
 	unsigned long samplerate;
 	unsigned char channels;
@@ -62,6 +59,7 @@ struct output_stream {
 	unsigned int volume;
 	/* Stream cache */
 	struct cache_handle *cache;
+	unsigned long delay;
 	/* Next output stream in list */
 	struct output_stream *next;
 };
@@ -176,9 +174,10 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->abort = 0;
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
+	s->delay = cache;
 
-	/* Add cache */
-	if(input_callback == NULL && cache > 0)
+	/* Add cache for write() */
+	if(input_callback == NULL)
 	{
 		/* Open a new cache */
 		if(cache_open(&s->cache, cache, h->samplerate, h->channels, 0,
@@ -192,24 +191,15 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	if(resample_open(&s->res, samplerate, channels, h->samplerate,
 			 h->channels, input_callback, out, user_data) != 0)
 		goto error;
-	s->input_callback = &resample_read;
-	s->user_data = s->res;
 
-	/* Add cache */
-	if(input_callback != NULL && cache > 0)
+	/* Add cache for read() */
+	if(input_callback != NULL)
 	{
 		/* Open a new cache */
 		if(cache_open(&s->cache, cache, h->samplerate, h->channels,
-			      use_cache_thread, s->input_callback, s->user_data,
+			      use_cache_thread, &resample_read, s->res,
 			      NULL, NULL) != 0)
 			goto error;
-	}
-
-	/* Replace callback with cache */
-	if(s->cache != NULL)
-	{
-		s->input_callback = &cache_read;
-		s->user_data = s->cache;
 	}
 
 	/* Add stream to stream list */
@@ -231,8 +221,7 @@ int output_alsa_play_stream(struct output *h, struct output_stream *s)
 	s->is_playing = 1;
 
 	/* Unlock cache after a flush */
-	if(s->cache != NULL)
-		cache_unlock(s->cache);
+	cache_unlock(s->cache);
 
 	pthread_mutex_unlock(&h->mutex);
 
@@ -255,15 +244,12 @@ void output_alsa_flush_stream(struct output *h, struct output_stream *s)
 {
 	pthread_mutex_lock(&h->mutex);
 
-	if(s->cache != NULL)
-	{
-		/* Flush the cache */
-		cache_flush(s->cache);
+	/* Flush the cache */
+	cache_flush(s->cache);
 
-		/* Must unlock input callback in cache after a flush */
-		if(s->is_playing)
-			cache_unlock(s->cache);
-	}
+	/* Must unlock input callback in cache after a flush */
+	if(s->is_playing)
+		cache_unlock(s->cache);
 	s->played = 0;
 
 	pthread_mutex_unlock(&h->mutex);
@@ -308,6 +294,23 @@ unsigned int output_alsa_get_volume_stream(struct output *h,
 	return volume;
 }
 
+int output_alsa_set_cache_stream(struct output *h, struct output_stream *s,
+				 unsigned long cache)
+{
+	int ret;
+
+	pthread_mutex_lock(&h->mutex);
+
+	/* Set new cache */
+	ret = cache_set_time(s->cache, cache);
+	if(ret == 0)
+		s->delay = cache;
+
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
+}
+
 unsigned long output_alsa_get_status_stream(struct output *h,
 					    struct output_stream *s,
 					    enum output_stream_key key)
@@ -331,20 +334,19 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 			ret = s->played * 1000 / h->samplerate / h->channels;
 			break;
 		case OUTPUT_STREAM_CACHE_STATUS:
-			if(s->cache != NULL && cache_is_ready(s->cache) == 0)
+			if(s->delay > 0 && cache_is_ready(s->cache) == 0)
 				ret = CACHE_BUFFERING;
 			else
 				ret = CACHE_READY;
 			break;
 		case OUTPUT_STREAM_CACHE_FILLING:
-			if(s->cache != NULL)
+			if(s->delay > 0)
 				ret = cache_get_filling(s->cache);
 			else
 				ret = 100;
 			break;
 		case OUTPUT_STREAM_CACHE_DELAY:
-			if(s->cache != NULL)
-				ret = cache_delay(s->cache);
+			ret = cache_delay(s->cache);
 			break;
 		default:
 			ret = 0;
@@ -369,15 +371,13 @@ unsigned long output_alsa_abort_stream(struct output *h,
 	s->abort = 1;
 
 	/* Lock cache */
-	if(s->cache != NULL)
-		cache_lock(s->cache);
+	cache_lock(s->cache);
 
 	/* Calculate played status */
 	played = s->played * 1000 / h->samplerate / h->channels;
 
 	/* Add not played samples */
-	if(s->cache != NULL)
-		played += cache_delay(s->cache);
+	played += cache_delay(s->cache);
 	played += resample_delay(s->res);
 
 	/* Unlock stream access */
@@ -519,7 +519,7 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 			continue;
 
 		/* Get input data */
-		in_size = s->input_callback(s->user_data, in_buffer, len, &fmt);
+		in_size = cache_read(s->cache, in_buffer, len, &fmt);
 		if(in_size <= 0)
 		{
 			if(in_size < 0)
@@ -675,6 +675,7 @@ struct output_module output_alsa = {
 	.write_stream = (void*) &output_alsa_write_stream,
 	.set_volume_stream = (void*) &output_alsa_set_volume_stream,
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
+	.set_cache_stream = (void*) &output_alsa_set_cache_stream,
 	.get_status_stream = (void*) &output_alsa_get_status_stream,
 	.abort_stream = (void*) &output_alsa_abort_stream,
 	.restore_stream = (void*) &output_alsa_restore_stream,
