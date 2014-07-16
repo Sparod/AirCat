@@ -165,7 +165,7 @@ static void cache_resize(struct cache_handle *h, int unset_is_ready)
 		return;
 
 	/* Check new size */
-	if(size > h->size)
+	if(size > h->size && size >= h->len)
 	{
 		/* Reallocate bigger buffer */
 		p = realloc(h->buffer, size*4);
@@ -174,7 +174,7 @@ static void cache_resize(struct cache_handle *h, int unset_is_ready)
 		h->buffer = p;
 
 		/* Unset is_ready */
-		if(unset_is_ready || h->size == 0)
+		if((unset_is_ready && h->len < size) || h->size == 0)
 			h->is_ready = 0;
 
 		/* Unset new lower size signal */
@@ -192,6 +192,7 @@ static void cache_resize(struct cache_handle *h, int unset_is_ready)
 
 		/* Signal new lower size */
 		h->new_size = 1;
+		h->is_ready = 1;
 	}
 
 	/* Update size */
