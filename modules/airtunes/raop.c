@@ -163,22 +163,20 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	else
 	{
 		/* Open RTP server */
+		memset(&r_attr, 0, sizeof(struct rtp_attr));
+		r_attr.ip = attr->ip;
 		r_attr.port = attr->port;
 		r_attr.rtcp_port = attr->control_port;
-		r_attr.ip = attr->ip;
-		r_attr.ssrc = 0;
 		r_attr.payload = 0x60;
-		r_attr.cache_size = RTP_CACHE_SIZE;
-		r_attr.cache_resent = RTP_CACHE_RESENT;
-		r_attr.cache_lost = RTP_CACHE_LOST;
+		r_attr.max_packet_count = 44100/352;
+		r_attr.delay_packet_count = 11025/352;
+		r_attr.resent_ratio = 10;
 		r_attr.cust_cb = &raop_cust_cb;
 		r_attr.cust_data = NULL;
-		r_attr.cust_payload = 0x56;
 		r_attr.rtcp_cb = &raop_rtcp_cb;
 		r_attr.rtcp_data = h;
 		r_attr.resent_cb = &raop_resent_cb;
 		r_attr.resent_data = h;
-		r_attr.timeout = 25;
 
 		while(rtp_open(&h->rtp, &r_attr) != 0)
 		{
@@ -214,7 +212,7 @@ static int raop_get_next_packet(struct raop_handle *h)
 	unsigned char packet[MAX_PACKET_SIZE];
 	unsigned char iv[16];
 	size_t in_size;
-	size_t read_len, aes_len;
+	ssize_t read_len, aes_len;
 
 	in_size = MAX_PACKET_SIZE - h->packet_len;
 	if(in_size == 0)
@@ -229,7 +227,9 @@ static int raop_get_next_packet(struct raop_handle *h)
 	else
 	{
 		/* Read RTP packet */
-		read_len = rtp_read(h->rtp, packet, in_size);
+		do{
+			read_len = rtp_read(h->rtp, packet, in_size);
+		} while (read_len == RTP_DISCARDED_PACKET);
 		h->packet_len = 0;
 	}
 
@@ -325,7 +325,7 @@ unsigned char raop_get_channels(struct raop_handle *h)
 int raop_flush(struct raop_handle *h, unsigned int seq)
 {
 	if(h->transport == RAOP_UDP)
-		rtp_flush(h->rtp, seq);
+		rtp_flush(h->rtp, seq, 0);
 
 	return 0;
 }
@@ -387,7 +387,7 @@ static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len)
 	memmove(buffer, buffer+4, len);
 
 	/* Send packet to RTP module */
-	rtp_add_packet(h->rtp, buffer, len);
+	rtp_put(h->rtp, buffer, len);
 }
 
 static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count)

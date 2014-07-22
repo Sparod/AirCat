@@ -532,6 +532,26 @@ static int airtunes_do_apple_response(struct rtsp_client *c,
 		rtsp_add_response(c, "Server", "AirCat/1.0"); \
 		rtsp_add_response(c, "CSeq", rtsp_get_header(c, "CSeq", 1));
 
+static void airtunes_get_rtp_info(struct rtsp_client *c, uint16_t *seq,
+				  uint32_t *timestamp)
+{
+	const char *header, *str;
+
+	header = rtsp_get_header(c, "RTP-Info", 0);
+	if(header == NULL)
+		return;
+
+	/* Get next sequence number */
+	str = strstr(header, "seq=");
+	if(str != NULL && seq != NULL)
+		*seq = strtoul(str+4, NULL, 10);
+
+	/* Get next timestamp */
+	str = strstr(header, "rtptime=");
+	if(str != NULL && timestamp != NULL)
+		*timestamp = strtoul(str+8, NULL, 10);
+}
+
 static int airtunes_request_callback(struct rtsp_client *c, int request,
 				     const char *url, void *user_data)
 {
@@ -542,6 +562,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 	char buffer[BUFFER_SIZE];
 	char *username;
 	const char *str;
+	uint16_t seq = 0;
 	char *p;
 	int len;
 
@@ -648,7 +669,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			cdata->stream = output_add_stream(h->output,
 							  cdata->infos->name,
 							  cdata->samplerate,
-							  cdata->channels,0, 0,
+							  cdata->channels, 0, 0,
 							  &raop_read,
 							  cdata->raop);
 
@@ -666,6 +687,10 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			rtsp_add_response(c, "Session", "1");
 			break;
 		case RTSP_RECORD:
+			/* Get flush sequence */
+			airtunes_get_rtp_info(c, &seq, NULL);
+			raop_flush(cdata->raop, seq);
+
 			/* Start stream */
 			output_play_stream(h->output, cdata->stream);
 			RESPONSE_BEGIN(c, h->hw_addr);
@@ -677,9 +702,13 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			RESPONSE_BEGIN(c, h->hw_addr);
 			break;
 		case RTSP_FLUSH:
+			/* Get flush sequence number */
+			airtunes_get_rtp_info(c, &seq, NULL);
+
+			/* Flush stream and RAOP */
 			output_pause_stream(h->output, cdata->stream);
 			output_flush_stream(h->output, cdata->stream);
-			raop_flush(cdata->raop, 0);
+			raop_flush(cdata->raop, seq);
 			cdata->infos->played = 0;
 			output_play_stream(h->output, cdata->stream);
 			RESPONSE_BEGIN(c, h->hw_addr);
