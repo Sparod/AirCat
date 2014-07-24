@@ -170,10 +170,12 @@ int decoder_aac_decode(struct decoder *dec, unsigned char *in_buffer,
 	unsigned short size = 0;
 
 	/* Reset position of PCM output buffer */
-	if(in_buffer == NULL && out_buffer == 0 && out_size == 0)
+	if(in_buffer == NULL && out_buffer == NULL)
 	{
-		dec->pcm_remain = dec->pcm_length;
-		return 0;
+		if(out_size > dec->pcm_length)
+			out_size = dec->pcm_length;
+		dec->pcm_remain = dec->pcm_length - out_size;
+		return out_size;
 	}
 
 	/* Empty remaining PCM before decoding another frame */
