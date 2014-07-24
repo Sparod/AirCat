@@ -249,6 +249,7 @@ void output_alsa_flush_stream(struct output *h, struct output_stream *s)
 
 	/* Flush the cache */
 	cache_flush(s->cache);
+	resample_flush(s->res);
 
 	/* Must unlock input callback in cache after a flush */
 	if(s->is_playing)

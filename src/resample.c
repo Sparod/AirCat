@@ -561,6 +561,29 @@ unsigned long resample_delay(struct resample_handle *h)
 	return (unsigned long) delay;
 }
 
+void resample_flush(struct resample_handle *h)
+{
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Reset values */
+	h->in_len = 0;
+	h->tmp_len = 0;
+
+	/* Reset resample/mixer engine */
+	resample_free(h);
+	if(h->fmt_has_changed > 0)
+	{
+		h->in_samplerate = h->new_samplerate;
+		h->in_channels = h->new_channels;
+		h->fmt_has_changed = 0;
+	}
+	resample_init(h);
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
+}
+
 int resample_close(struct resample_handle *h)
 {
 	if(h == NULL)
