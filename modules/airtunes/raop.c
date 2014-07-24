@@ -22,6 +22,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <openssl/aes.h>
 
@@ -36,18 +37,6 @@
 
 #ifndef MAX_PACKET_SIZE
 	#define MAX_PACKET_SIZE 16384
-#endif
-
-#ifndef RTP_CACHE_SIZE
-	#define RTP_CACHE_SIZE 100
-#endif
-
-#ifndef RTP_CACHE_RESENT
-	#define RTP_CACHE_RESENT 4
-#endif
-
-#ifndef RTP_CACHE_LOST
-	#define RTP_CACHE_LOST 80
 #endif
 
 struct raop_handle {
@@ -67,6 +56,8 @@ struct raop_handle {
 	/* Stream properties */
 	unsigned long samplerate;
 	unsigned char channels;
+	/* Mutex for read() calls */
+	pthread_mutex_t mutex;
 };
 
 /* Callbacks for RTP */
@@ -144,6 +135,9 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	h->transport = attr->transport;
 	h->packet_len = 0;
 	h->pcm_remaining = 0;
+
+	/* Init mutex */
+	pthread_mutex_init(&h->mutex, NULL);
 
 	/* Prepare openssl for AES */
 	AES_set_decrypt_key(attr->aes_key, 128, &h->aes);
@@ -261,13 +255,20 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 	if(h == NULL)
 		return -1;
 
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Process remaining pcm data */
 	if(h->pcm_remaining > 0)
 	{
 		/* Get remaining pcm data from decoder */
 		samples = decoder_decode(h->dec, NULL, 0, buffer, size, &info);
 		if(samples < 0)
+		{
+			/* Unlock buffer access */
+			pthread_mutex_unlock(&h->mutex);
 			return -1;
+		}
 
 		h->pcm_remaining -= samples;
 		total_samples += samples;
@@ -284,7 +285,7 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
-			return total_samples;
+			break;
 
 		/* Move input buffer to next frame (ignore RTP errors) */
 		if(h->transport == RAOP_TCP && info.used < h->packet_len)
@@ -302,6 +303,9 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 		h->pcm_remaining = info.remaining;
 		total_samples += samples;
 	}
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return total_samples;
 }
@@ -324,8 +328,22 @@ unsigned char raop_get_channels(struct raop_handle *h)
 
 int raop_flush(struct raop_handle *h, unsigned int seq)
 {
+	/* Lock buffers access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Flush RTP module */
 	if(h->transport == RAOP_UDP)
 		rtp_flush(h->rtp, seq, 0);
+
+	/* Flush decoder */
+	decoder_decode(h->dec, NULL, 0, NULL, ~0L, NULL);
+
+	/* Flush input and output buffer */
+	h->pcm_remaining = 0;
+	h->packet_len = 0;
+
+	/* Unlock buffers access */
+	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
