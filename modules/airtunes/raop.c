@@ -168,7 +168,7 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 		r_attr.port = attr->port;
 		r_attr.rtcp_port = attr->control_port;
 		r_attr.payload = 0x60;
-		r_attr.max_packet_count = 44100/352;
+		r_attr.pool_packet_count = 44100/352;
 		r_attr.delay_packet_count = 11025/352;
 		r_attr.resent_ratio = 10;
 		r_attr.cust_cb = &raop_cust_cb;

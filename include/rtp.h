@@ -41,7 +41,7 @@ struct rtp_attr{
 	unsigned char payload;		// Payload to handle
 	/* Jitter buffer configuration */
 	size_t max_packet_size;		// Maximum packet size to save
-	uint16_t max_packet_count;	// Maximum packets in jitter buffer
+	uint16_t pool_packet_count;	// Pool of allocated packets
 	uint16_t delay_packet_count;	// Delay of jitter buffer (fixed in
 					//  packet count)
 	unsigned char resent_ratio;	// Packet resent threshold event (%)

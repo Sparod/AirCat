@@ -59,6 +59,8 @@ struct rtp_packet {
 	/* Packet buffer (header + data) */
 	unsigned char *buffer;
 	size_t len;
+	/* Next packet in list */
+	struct rtp_packet *next;
 };
 
 struct rtp_handle {
@@ -73,18 +75,17 @@ struct rtp_handle {
 	uint8_t payload;
 	size_t max_packet_size;
 	/* Jitter buffer */
+	struct rtp_packet *pool;
 	struct rtp_packet *packets;
-	uint16_t max_packet_count;
+	uint16_t pool_packet_count;
 	uint16_t delay_packet_count;
 	uint16_t resent_packet_count;
 	/* Current jitter buffer status */
 	int filling;
 	uint16_t packet_count;
-	uint16_t first_packet;
+	uint16_t extra_count;
 	uint16_t first_seq;
 	uint16_t first_ts;
-	uint16_t resent_count;
-	uint32_t discarded_count;
 	uint32_t drop_count;
 	/* RTP module params */
 	uint16_t max_misorder;
@@ -104,14 +105,15 @@ struct rtp_handle {
 
 int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 {
-	struct rtp_handle *h;
 	struct sockaddr_in addr;
+	struct rtp_handle *h;
+	struct rtp_packet *p;
 	int opt, i;
 
 	/* Check attributes */
 	if(attr->max_packet_size > MAX_RTP_PACKET_SIZE || attr->payload == 0 ||
-	   attr->max_packet_count == 0 ||
-	   attr->delay_packet_count > attr->max_packet_count)
+	   attr->pool_packet_count == 0 ||
+	   attr->delay_packet_count > attr->pool_packet_count)
 		return -1;
 
 	/* Allocate structure */
@@ -126,7 +128,7 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	h->ssrc = attr->ssrc;
 	h->payload = attr->payload;
 	h->max_packet_size = attr->max_packet_size;
-	h->max_packet_count = attr->max_packet_count;
+	h->pool_packet_count = attr->pool_packet_count;
 	h->delay_packet_count = attr->delay_packet_count;
 	h->resent_packet_count = attr->resent_ratio > 80 ? 
 			       h->delay_packet_count * 80 / 100 :
@@ -151,25 +153,35 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 		h->max_packet_size = MAX_RTP_PACKET_SIZE;
 
 	/* Init jitter buffer */
+	h->pool = NULL;
 	h->packets = NULL;
 	h->filling = 1;
 	h->packet_count = 0;
-	h->resent_count = 0;
-	h->first_packet = 0;
+	h->extra_count = 0;
 	h->first_seq = attr->seq;
 	h->first_ts = attr->timestamp;
-	h->discarded_count = 0;
 	h->drop_count = 0;
 
-	/* Allocate packet list */
-	h->packets = calloc(h->max_packet_count, sizeof(struct rtp_packet));
-	if(h->packets == NULL)
-		return -1;
-	for(i = 0; i < h->max_packet_count; i++)
+	/* Allocate pool */
+	for(i = 0; i < h->pool_packet_count; i++)
 	{
-		h->packets[i].buffer = malloc(h->max_packet_size);
-		if(h->packets[i].buffer == NULL)
-			return -1;
+		/* Create a new empty packet */
+		p = malloc(sizeof(struct rtp_packet));
+		if(p == NULL)
+			continue;
+
+		/* Allocate buffer */
+		p->buffer = malloc(h->max_packet_size);
+		if(p->buffer == NULL)
+		{
+			free(p);
+			continue;
+		}
+		p->len = 0;
+
+		/* Add packet to pool */
+		p->next = h->pool;
+		h->pool = p;
 	}
 
 	/* Init thread mutex */
@@ -377,70 +389,37 @@ check:
 	return len;
 }
 
-static void rtp_check_resent(struct rtp_handle *h, uint16_t count)
-{
-	uint16_t mis_count = 0;
-	uint16_t mis_seq = 0;
-	uint16_t seq;
-	uint16_t i;
-
-	/* Get first values */
-	i = (h->first_packet + h->resent_count) % h->max_packet_count;
-	seq = h->first_seq + h->resent_count;
-	if(h->resent_count >= count)
-		return;
-	count -= h->resent_count;
-
-	/* Check all packets */
-	while(count > 0)
-	{
-		/* Packet not received */
-		if(h->packets[i].len == 0)
-		{
-			if(mis_count == 0)
-				mis_seq = seq;
-			mis_count++;
-		}
-		else if(mis_count > 0)
-		{
-			/* Call resent function */
-			h->resent_cb(h->resent_data, mis_seq, mis_count);
-			mis_count = 0;
-		}
-
-		/* Go to next packet */
-		seq++;
-		i++;
-		if(i >= h->max_packet_count)
-			i = 0;
-		count--;
-		h->resent_count++;
-	}
-
-	/* Call resent function a last time */
-	if(mis_count > 0)
-		h->resent_cb(h->resent_data, mis_seq, mis_count);
-
-	return;
-}
-
 static void _rtp_flush(struct rtp_handle *h, uint16_t seq, uint32_t timestamp)
 {
-	int i;
+	struct rtp_packet *p;
 
 	if(h == NULL)
 		return;
 
-	/* Reset packet list */
-	for(i = 0; i < h->max_packet_count; i++)
+	/* Reset and move packets to pool */
+	while(h->packets != NULL)
 	{
-		h->packets[i].len = 0;
+		p = h->packets;
+		h->packets = p->next;
+
+		/* Remove packet when more packets have been allocated */
+		if(h->extra_count > 0)
+		{
+			h->extra_count--;
+			free(p->buffer);
+			free(p);
+			continue;
+		}
+
+		/* Reset and move packet */
+		p->len = 0;
+		p->next = h->pool;
+		h->pool = p;
 	}
 
 	/* Reset expected values */
 	h->packet_count = 0;
-	h->resent_count = 0;
-	h->first_packet = 0;
+	h->extra_count = 0;
 	h->filling = 1;
 	h->first_seq = seq;
 	h->first_ts = timestamp;
@@ -452,11 +431,12 @@ static void _rtp_flush(struct rtp_handle *h, uint16_t seq, uint32_t timestamp)
 
 static int _rtp_put(struct rtp_handle *h, unsigned char *buffer, size_t len)
 {
+	struct rtp_packet **root, *p;
+	uint16_t prev_seq;
 	int16_t delta;
 	uint32_t ssrc;
 	uint16_t seq;
 	uint32_t ts;
-	uint16_t i;
 
 	/* Get RTP fields */
 	ssrc = rtp_get_ssrc(buffer);
@@ -500,52 +480,78 @@ static int _rtp_put(struct rtp_handle *h, unsigned char *buffer, size_t len)
 		return -1;
 	}
 
-	/* No space available in packet list */
-	while(delta >= h->max_packet_count)
+	/* Find packet in packets */
+	prev_seq = h->first_seq-1;
+	root = &h->packets;
+	p = *root;
+	while(p != NULL)
 	{
-		/* Drop older packets in list */
-		h->packets[h->first_packet].len = 0;
-		h->first_packet++;
-		if(h->first_packet >= h->max_packet_count)
-			h->first_packet = 0;
-		h->first_seq++;
-		h->discarded_count++;
-		if(h->packet_count > 0)
+		/* Calculate delta position in queue
+		 * Note: no overflow handling is needed
+		 * since delta is a signed short.
+		 */
+		delta = seq - rtp_get_sequence(p->buffer);
+
+		/* Previous packet found */
+		if(delta < 0)
+			break;
+		else if(delta == 0)
 		{
-			h->packet_count--;
-			if(h->packet_count == 0)
-				h->filling = 1;
+			/* Duplicate packet: drop it */
+			return -1;
 		}
-		if(h->resent_count > 0)
-			h->resent_count--;
-		delta--;
+
+		prev_seq = rtp_get_sequence(p->buffer);
+		root = &p->next;
+		p = *root;
 	}
 
-	/* Check packets which need to resent */
-	if(delta >= h->resent_packet_count)
-		rtp_check_resent(h, delta);
-
-	/* Get position to write packet */
-	i = (h->first_packet + delta) % h->max_packet_count;
-
-	/* Duplicate packet */
-	if(h->packets[i].len != 0)
+	/* Discontinuity in sequence: call resent callback */
+	if(h->resent_cb != NULL && ++prev_seq != seq)
 	{
-		/* Drop packet: already in buffer */
-		return -1;
+		delta = seq - prev_seq;
+		if(delta > 0)
+			h->resent_cb(h->resent_data, prev_seq, delta);
+	}
+
+	/* Get a new packet to queue */
+	if(h->pool == NULL)
+	{
+		/* Allocate new packet */
+		p = malloc(sizeof(struct rtp_packet));
+		if(p == NULL)
+			return -1;
+		p->buffer = malloc(h->max_packet_size);
+		if(p->buffer == NULL)
+		{
+			free(p);
+			return -1;
+		}
+		h->extra_count++;
+	}
+	else
+	{
+		p = h->pool;
+		h->pool = p->next;
 	}
 
 	/* Copy packet into list */
 	if(len > h->max_packet_size)
 		len = h->max_packet_size;
-	memcpy(h->packets[i].buffer, buffer, len);
-	h->packets[i].len = len;
+	memcpy(p->buffer, buffer, len);
+	p->len = len;
+
+	/* Add to list */
+	p->next = *root;
+	*root = p;
 
 	/* Update packet count (latest - oldest)
 	 * Note: overflow is handled by the signed type of delta.
 	 */
-	if((uint16_t)(h->first_seq + h->packet_count) <= seq)
+	delta = seq - (uint16_t)(h->first_seq + h->packet_count);
+	if(delta > 0)
 	{
+		delta = seq - h->first_seq;
 		h->packet_count = delta + 1;
 		if(h->packet_count > h->delay_packet_count)
 			h->filling = 0;
@@ -556,28 +562,22 @@ static int _rtp_put(struct rtp_handle *h, unsigned char *buffer, size_t len)
 
 static ssize_t rtp_get(struct rtp_handle *h, unsigned char *buffer, size_t size)
 {
+	struct rtp_packet *packet;
 	unsigned char *p;
 	size_t offset;
 	ssize_t len;
 
 	/* Jitter buffer is not full */
-	if(h->filling)
+	if(h->filling || h->packets == NULL)
 		return RTP_NO_PACKET;
 
-	/* Some packets has been discarded */
-	if(h->discarded_count > 0)
-	{
-		h->discarded_count--;
-		return RTP_DISCARDED_PACKET;
-	}
+	/* Get next packet */
+	p = h->packets->buffer;
+	len = h->packets->len;
 
-	/* Get packet length */
-	len = h->packets[h->first_packet].len;
-	if(len > 0)
+	/* Check sequence number */
+	if(h->first_seq != rtp_get_sequence(p))
 	{
-		/* Get packet */
-		p = h->packets[h->first_packet].buffer;
-
 		/* Get data offset in packet */
 		offset = 12 + ((p[0] &  0x0F) * 4);
 		if(p[0] & 0x10)
@@ -595,6 +595,26 @@ static ssize_t rtp_get(struct rtp_handle *h, unsigned char *buffer, size_t size)
 		if(len > size)
 			len = size;
 		memcpy(buffer, p, len);
+
+		/* Remove packet from list */
+		packet = h->packets;
+		h->packets = packet->next;
+
+		/* Move packet to pool */
+		if(h->extra_count > 0)
+		{
+			/* Free packet */
+			free(packet->buffer);
+			free(packet);
+			h->extra_count--;
+		}
+		else
+		{
+			/* Move packet to pool */
+			packet->len = 0;
+			packet->next = h->pool;
+			h->pool = packet;
+		}
 	}
 	else
 	{
@@ -606,16 +626,10 @@ static ssize_t rtp_get(struct rtp_handle *h, unsigned char *buffer, size_t size)
 	h->packet_count--;
 	if(h->packet_count == 0)
 		h->filling = 1;
-	if(h->resent_count > 0)
-		h->resent_count--;
 
 	/* Update jitter buffer position */
-	h->packets[h->first_packet].len = 0;
 	h->first_seq++;
 	h->first_ts += 0;
-	h->first_packet++;
-	if(h->first_packet >= h->max_packet_count)
-		h->first_packet = 0;
 
 	return len;
 }
@@ -732,20 +746,29 @@ void rtp_flush(struct rtp_handle *h, uint16_t seq, uint32_t timestamp)
 
 int rtp_close(struct rtp_handle *h)
 {
-	int i;
+	struct rtp_packet *p;
 
 	if(h == NULL)
 		return 0;
 
-	/* Free packet list */
-	if(h->packets != NULL)
+	/* Free pool */
+	while(h->pool != NULL)
 	{
-		for(i = 0; i < h->max_packet_count; i++)
-		{
-			if(h->packets[i].buffer != NULL)
-				free(h->packets[i].buffer);
-		}
-		free(h->packets);
+		p = h->pool;
+		h->pool = p->next;
+
+		free(p->buffer);
+		free(p);
+	}
+
+	/* Free packets */
+	while(h->packets != NULL)
+	{
+		p = h->packets;
+		h->packets = p->next;
+
+		free(p->buffer);
+		free(p);
 	}
 
 	/* Close socket */
