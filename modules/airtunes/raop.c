@@ -391,21 +391,39 @@ static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len)
 static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len)
 {
 	struct raop_handle *h = (struct raop_handle *) user_data;
+	unsigned long delay;
 
 	/* Verify payload */
-	if(buffer[1] != 0xD6)
-		return;
+	if(buffer[1] == 0xD4)
+	{
+		/* Payload: 0x54 for "Time sync"
+		 * This packet is 20 bytes length.
+		 */
+		if(len != 20)
+			return;
 
-	/* The minimal size of packet RTP header + 4 */
-	if(len < 16)
-		return;
+		/* Extract delay from packet */
+		delay = ntohl((uint32_t)(*(uint32_t*)(buffer+16))) -
+			ntohl((uint32_t)(*(uint32_t*)(buffer+4)));
 
-	/* Remove first RTP header */
-	len -= 4;
-	memmove(buffer, buffer+4, len);
+		/* Adjust RTP delay module */
+		rtp_set_delay_packet(h->rtp, delay/352);
+	}
+	else if(buffer[1] == 0xD6)
+	{
+		/* Payload: 0x56 for "Retransmit reply
+		 * The minimal size of packet RTP header + 4.
+		 */
+		if(len < 16)
+			return;
 
-	/* Send packet to RTP module */
-	rtp_put(h->rtp, buffer, len);
+		/* Remove first RTP header */
+		len -= 4;
+		memmove(buffer, buffer+4, len);
+
+		/* Send packet to RTP module */
+		rtp_put(h->rtp, buffer, len);
+	}
 }
 
 static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count)
