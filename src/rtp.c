@@ -815,7 +815,7 @@ uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
 				h->pool = p;
 			}
 		}
-		h->packet_count -= h->packet_count > count;
+		h->packet_count -= count;
 		h->first_seq += count;
 
 		/* Update buffer filling */
