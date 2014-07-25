@@ -579,7 +579,7 @@ static ssize_t rtp_get(struct rtp_handle *h, unsigned char *buffer, size_t size)
 	len = h->packets->len;
 
 	/* Check sequence number */
-	if(h->first_seq != rtp_get_sequence(p))
+	if(h->first_seq == rtp_get_sequence(p))
 	{
 		/* Get data offset in packet */
 		offset = 12 + ((p[0] &  0x0F) * 4);
