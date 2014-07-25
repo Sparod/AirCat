@@ -782,7 +782,7 @@ uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
 		}
 		delay -= MIN_POOL_MARGIN;
 	}
-	else if(delay < h->delay_packet_count)
+	else if(delay < h->delay_packet_count && h->packet_count > delay)
 	{
 		/* Lower delay: drop some packets */
 		count = h->delay_packet_count - delay;
@@ -815,12 +815,11 @@ uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
 				h->pool = p;
 			}
 		}
-		h->packet_count -= count;
+		h->packet_count -= h->packet_count > count;
 		h->first_seq += count;
 
 		/* Update buffer filling */
-		if(h->packet_count > delay)
-			h->filling = 0;
+		h->filling = 0;
 	}
 	h->delay_packet_count = delay;
 
