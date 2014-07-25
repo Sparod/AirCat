@@ -52,6 +52,9 @@
 /* Maximum RTP packets to receive in one rtp_read() call */
 #define MAX_RTP_RCV 50
 
+/* Margin of delay on pool when set delay: pool = delay + margin */
+#define MIN_POOL_MARGIN 10
+
 /**
  * RTP Header structure
  */
@@ -726,6 +729,105 @@ int rtp_put(struct rtp_handle *h, unsigned char *buffer, size_t len)
 	pthread_mutex_unlock(&h->mutex);
 
 	return ret;
+}
+
+uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
+{
+	struct rtp_packet *p;
+	int16_t delta;
+	long count;
+	int i;
+
+	/* Lock buffer access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Update delay */
+	if(delay > h->delay_packet_count)
+	{
+		/* Bigger delay: switch to filling state */
+		h->filling = 1;
+
+		/* Pool is not enough big */
+		delay += MIN_POOL_MARGIN;
+		if(h->pool_packet_count < delay)
+		{
+			/* Convert all available extra packet */
+			count = h->extra_count > delay ? delay : h->extra_count;
+			h->extra_count -= count;
+			h->pool_packet_count += count;
+
+			/* Increase pool */
+			count = delay - h->pool_packet_count;
+			if(count < 0)
+				count = 0;
+			for(i = 0; i < count; i++)
+			{
+				/* Allocate packet */
+				p = malloc(sizeof(struct rtp_packet));
+				if(p == NULL)
+					continue;
+				/* Allocate its buffer */
+				p->buffer = malloc(h->max_packet_size);
+				if(p->buffer == NULL)
+				{
+					free(p);
+					continue;
+				}
+				/* Add to pool */
+				p->len = 0;
+				p->next = h->pool;
+				h->pool = p;
+			}
+			h->pool_packet_count = delay;
+		}
+		delay -= MIN_POOL_MARGIN;
+	}
+	else if(delay < h->delay_packet_count)
+	{
+		/* Lower delay: drop some packets */
+		count = h->delay_packet_count - delay;
+		for(i = 0; i < count && h->packets != NULL; i++)
+		{
+			/* Get packet */
+			p = h->packets;
+
+			/* Check its sequence number */
+			delta = rtp_get_sequence(p->buffer) - h->first_seq;
+			if(delta > count)
+				break;
+
+			/* Remove packet from list */
+			h->packets = p->next;
+
+			/* Move packet */
+			if(h->extra_count > 0)
+			{
+				/* Free extra packets */
+				h->extra_count--;
+				free(p->buffer);
+				free(p);
+			}
+			else
+			{
+				/* Move packet to pool */
+				p->len = 0;
+				p->next = h->pool;
+				h->pool = p;
+			}
+		}
+		h->packet_count -= count;
+		h->first_seq += count;
+
+		/* Update buffer filling */
+		if(h->packet_count > delay)
+			h->filling = 0;
+	}
+	h->delay_packet_count = delay;
+
+	/* Unlock buffer access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
 }
 
 void rtp_flush(struct rtp_handle *h, uint16_t seq, uint32_t timestamp)
