@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "decoder.h"
+#include "decoder_pcm.h"
 #include "decoder_alac.h"
 #include "decoder_aac.h"
 #include "decoder_mp3.h"
@@ -37,22 +38,23 @@ int decoder_open(struct decoder_handle **handle, enum a_codec codec,
 		return -1;
 	h = *handle;
 
-	if(codec == CODEC_ALAC)
+	switch(codec)
 	{
-		memcpy(h, &decoder_alac, sizeof(struct decoder_handle));
-	}
-	else if(codec == CODEC_MP3)
-	{
-		memcpy(h, &decoder_mp3, sizeof(struct decoder_handle));
-	}
-	else if(codec == CODEC_AAC)
-	{
-		memcpy(h, &decoder_aac, sizeof(struct decoder_handle));
-	}
-	else
-	{
-		h->dec = NULL;
-		return -1;
+		case CODEC_PCM:
+			memcpy(h, &decoder_pcm, sizeof(struct decoder_handle));
+			break;
+		case CODEC_ALAC:
+			memcpy(h, &decoder_alac, sizeof(struct decoder_handle));
+			break;
+		case CODEC_MP3:
+			memcpy(h, &decoder_mp3, sizeof(struct decoder_handle));
+			break;
+		case CODEC_AAC:
+			memcpy(h, &decoder_aac, sizeof(struct decoder_handle));
+			break;
+		default: 
+			h->dec = NULL;
+			return -1;
 	}
 
 	return h->open(&h->dec, buffer, len, samplerate, channels);

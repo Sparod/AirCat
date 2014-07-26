@@ -23,9 +23,10 @@
 
 enum a_codec {
 	CODEC_NO,
+	CODEC_PCM,
+	CODEC_AAC,
 	CODEC_ALAC,
-	CODEC_MP3,
-	CODEC_AAC
+	CODEC_MP3
 };
 
 struct a_format {

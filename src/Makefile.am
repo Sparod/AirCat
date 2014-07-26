@@ -17,6 +17,7 @@ aircat_SOURCES = main.c \
 		 rtp.c \
 		 sdp.c \
 		 decoder.c \
+		 decoder_pcm.c \
 	 	 decoder_aac.c \
 		 decoder_mp3.c \
 		 decoder_alac.c \
@@ -59,6 +60,7 @@ EXTRA_DIST = modules.h \
 	     output_alsa.h \
 	     demux_mp3.h \
 	     demux_mp4.h \
+	     decoder_pcm.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
 	     decoder_alac.h
