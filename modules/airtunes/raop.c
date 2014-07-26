@@ -39,6 +39,13 @@
 	#define MAX_PACKET_SIZE 16384
 #endif
 
+/* Default values for RTP module:
+ *  RAOP_DEFAULT_POOL:  time allocated in memory (in ms),
+ *  RAOP_DEFAULT_DELAY: delay of RTP output (in ms).
+ */
+#define RAOP_DEFAULT_POOL  1000
+#define RAOP_DEFAULT_DELAY 100
+
 struct raop_handle {
 	/* Protocol handler */
 	int transport;			// Type of socket (TCP or UDP (=RTP))
@@ -56,6 +63,7 @@ struct raop_handle {
 	/* Stream properties */
 	unsigned long samplerate;
 	unsigned char channels;
+	unsigned long samples;
 	/* Mutex for read() calls */
 	pthread_mutex_t mutex;
 };
@@ -65,7 +73,9 @@ static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len);
 static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len);
 static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count);
 
-static void raop_prepare_pcm(unsigned char *header, char *format)
+static void raop_prepare_pcm(unsigned char *header, char *format,
+			     unsigned long *sr, unsigned char *c,
+			     unsigned long *s)
 {
 	unsigned long samplerate = 0;
 	unsigned char channels = 0;
@@ -104,9 +114,19 @@ static void raop_prepare_pcm(unsigned char *header, char *format)
 	header[26] = samplerate >> 8;
 	header[27] = samplerate;
 	header[35] = bits;
+
+	/* Copy values */
+	if(sr != NULL)
+		*sr = samplerate;
+	if(c != NULL)
+		*c = channels;
+	if(s != NULL)
+		*s = 352; /* FIXME: we suppose that it is same samples count */
 }
 
-static void raop_prepare_alac(unsigned char *header, char *format)
+static void raop_prepare_alac(unsigned char *header, char *format,
+			      unsigned long *samplerate,
+			      unsigned char *channels, unsigned long *samples)
 {
 	char *fmt[12];
 	char *f, *f2;
@@ -132,6 +152,8 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 	header += 24;
 	/* Max samples per frame (4 bytes) */
 	*((uint32_t*)header) = htonl(atol(fmt[1]));
+	if(samples != NULL)
+		*samples = atol(fmt[1]);
 	header += 4;
 	/* 7a: ? (1 byte) */
 	*header++ = atoi(fmt[2]);
@@ -143,8 +165,10 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 	*header++ = atoi(fmt[5]);
 	/* Rice kmodifier (1 byte) */
 	*header++ = atoi(fmt[6]);
-	/* 7f: ? (1 byte) */
+	/* Channel count (1 byte) */
 	*header++ = atoi(fmt[7]);
+	if(channels != NULL)
+		*channels = atoi(fmt[7]);
 	/* 80: ? (2 bytes) */
 	*((uint16_t*)header) = htons(atoi(fmt[8]));
 	header += 2;
@@ -156,6 +180,8 @@ static void raop_prepare_alac(unsigned char *header, char *format)
 	header += 4;
 	/* Sample rate (4 bytes) */
 	*((uint32_t*)header) = htonl(atol(fmt[11]));
+	if(samplerate != NULL)
+		*samplerate = atol(fmt[11]);
 }
 
 int raop_open(struct raop_handle **handle, struct raop_attr *attr)
@@ -174,8 +200,12 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 
 	/* Init structure */
 	h->transport = attr->transport;
+	h->tcp = NULL;
+	h->rtp = NULL;
+	h->dec = NULL;
 	h->packet_len = 0;
 	h->pcm_remaining = 0;
+	h->samples = 352;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -189,12 +219,14 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	{
 		case RAOP_PCM:
 			codec = CODEC_PCM;
-			raop_prepare_pcm(config, attr->format);
+			raop_prepare_pcm(config, attr->format, &h->samplerate,
+					 &h->channels, &h->samples);
 			config_size = 44;
 			break;
 		case RAOP_ALAC:
 			codec = CODEC_ALAC;
-			raop_prepare_alac(config, attr->format);
+			raop_prepare_alac(config, attr->format, &h->samplerate,
+					  &h->channels, &h->samples);
 			config_size = 55;
 			break;
 		case RAOP_AAC:
@@ -224,8 +256,10 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 		r_attr.port = attr->port;
 		r_attr.rtcp_port = attr->control_port;
 		r_attr.payload = 0x60;
-		r_attr.pool_packet_count = 44100/352;
-		r_attr.delay_packet_count = 11025/352;
+		r_attr.pool_packet_count = RAOP_DEFAULT_POOL * h->samplerate /
+					    h->samples / 1000;
+		r_attr.delay_packet_count = RAOP_DEFAULT_DELAY * h->samplerate /
+					    h->samples / 1000;
 		r_attr.resent_ratio = 10;
 		r_attr.cust_cb = &raop_cust_cb;
 		r_attr.cust_data = NULL;
@@ -457,7 +491,7 @@ static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len)
 			ntohl((uint32_t)(*(uint32_t*)(buffer+4)));
 
 		/* Adjust RTP delay module */
-		rtp_set_delay_packet(h->rtp, delay/352);
+		rtp_set_delay_packet(h->rtp, delay / h->samples);
 	}
 	else if(buffer[1] == 0xD6)
 	{
