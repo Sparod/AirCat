@@ -646,6 +646,9 @@ ssize_t rtp_read(struct rtp_handle *h, unsigned char *buffer, size_t size)
 	ssize_t len;
 	int i;
 
+	if(h == NULL)
+		return -1;
+
 	/* Empty UDP queue and fill RTP packet queue */
 	max_sock = h->sock > h->rtcp_sock ? h->sock + 1 : h->rtcp_sock + 1;
 	for(i = 0; i < MAX_RTP_RCV; i++)
@@ -693,6 +696,10 @@ next:
 		pthread_mutex_unlock(&h->mutex);
 	}
 
+	/* Just receive packets */
+	if(buffer == NULL || size == 0)
+		return 0;
+
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -719,6 +726,9 @@ int rtp_put(struct rtp_handle *h, unsigned char *buffer, size_t len)
 {
 	int ret;
 
+	if(h == NULL)
+		return -1;
+
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -737,6 +747,9 @@ uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
 	int16_t delta;
 	long count;
 	int i;
+
+	if(h == NULL)
+		return 0;
 
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
@@ -831,6 +844,9 @@ uint16_t rtp_set_delay_packet(struct rtp_handle *h, uint16_t delay)
 
 void rtp_flush(struct rtp_handle *h, uint16_t seq, uint32_t timestamp)
 {
+	if(h == NULL)
+		return;
+
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
