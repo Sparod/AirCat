@@ -65,6 +65,47 @@ static size_t raop_cust_cb(void *user_data, unsigned char *buffer, size_t len);
 static void raop_rtcp_cb(void *user_data, unsigned char *buffer, size_t len);
 static void raop_resent_cb(void *user_data, unsigned int seq, unsigned count);
 
+static void raop_prepare_pcm(unsigned char *header, char *format)
+{
+	unsigned long samplerate = 0;
+	unsigned char channels = 0;
+	unsigned char bits = 0;
+	char *str;
+
+	/* Prepare header */
+	memcpy(header, "RIFF", 4);
+	memcpy(header+12, "fmt", 4);
+	header[21] = 1; /* For PCM */
+
+	/* Get Get expected values */
+	str = strchr(format, ' ');
+	if(str != NULL)
+	{
+		str += 2;
+		bits = strtol(str, &str, 10);
+		str++;
+		samplerate = strtol(str, &str, 10);
+		str++;
+		channels = strtol(str, NULL, 10);
+	}
+
+	/* Check values */
+	if(samplerate == 0)
+		samplerate = 44100;
+	if(channels == 0)
+		channels = 2;
+	if(bits == 0)
+		bits = 16;
+
+	/* Set values in header */
+	header[23] = channels;
+	header[24] = samplerate >> 24;
+	header[25] = samplerate >> 16;
+	header[26] = samplerate >> 8;
+	header[27] = samplerate;
+	header[35] = bits;
+}
+
 static void raop_prepare_alac(unsigned char *header, char *format)
 {
 	char *fmt[12];
@@ -143,7 +184,28 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	AES_set_decrypt_key(attr->aes_key, 128, &h->aes);
 	memcpy(h->aes_iv, attr->aes_iv, sizeof(h->aes_iv));
 
-	/* Socket */
+	/* Prepare configuration */
+	switch(attr->codec)
+	{
+		case RAOP_PCM:
+			codec = CODEC_PCM;
+			raop_prepare_pcm(config, attr->format);
+			config_size = 44;
+			break;
+		case RAOP_ALAC:
+			codec = CODEC_ALAC;
+			raop_prepare_alac(config, attr->format);
+			config_size = 55;
+			break;
+		case RAOP_AAC:
+			codec = CODEC_AAC;
+			config_size = 0;
+			break;
+		default:
+			return -1;
+	}
+
+	/* Create socket */
 	if(attr->transport == RAOP_TCP)
 	{
 		/* Open TCP server */
@@ -179,18 +241,6 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 				return -1;
 		}
 		attr->port = r_attr.port;
-	}
-
-	if(attr->codec == RAOP_ALAC)
-	{
-		codec = CODEC_ALAC;
-		raop_prepare_alac(config, attr->format);
-		config_size = 55;
-	}
-	else if(attr->codec == RAOP_AAC)
-	{
-		codec = CODEC_AAC;
-		config_size = 0;
 	}
 
 	/* Open decoder */

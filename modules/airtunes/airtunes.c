@@ -221,7 +221,7 @@ static void *airtunes_thread(void *user_data)
 		 h->hw_addr[1], h->hw_addr[2], h->hw_addr[3], h->hw_addr[4],
 		 h->hw_addr[5], h->name);
 	avahi_add_service(h->avahi, name, "_raop._tcp", h->port, "tp=TCP,UDP",
-			  "sm=false", "sv=false", "ek=1", "et=0,1", "cn=1",
+			  "sm=false", "sv=false", "ek=1", "et=0,1", "cn=0,1",
 			  "ch=2", "ss=16", "sr=44100", "pw=false", "vn=3",
 			  "md=0,1,2", "txtvers=1", NULL);
 
@@ -653,7 +653,7 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 			attr.timing_port = cdata->timing_port;
 			attr.aes_key = cdata->aes_key;
 			attr.aes_iv = cdata->aes_iv;
-			attr.codec = cdata->codec = RAOP_ALAC;
+			attr.codec = cdata->codec;
 			attr.format = cdata->format;
 			attr.ip = rtsp_get_ip(c);
 
@@ -732,6 +732,200 @@ static int airtunes_request_callback(struct rtsp_client *c, int request,
 	return 0;
 }
 
+static int airtunes_read_announce(struct airtunes_handle *h,
+				  struct rtsp_client *c,
+				  struct airtunes_client_data *cdata,
+				  unsigned char *buffer, size_t size,
+				  int end_of_stream)
+{
+	struct sdp_media *m = NULL;
+	struct sdp *s = NULL;
+	const char *rtpmap = NULL;
+	char *p;
+	int ret;
+	int len;
+	int i;
+
+	/* Parse packet and get format and AES keys */
+	s = sdp_parse((char*)buffer, size);
+	if(s == NULL)
+		return -1;
+
+	/* Search "m=audio" line */
+	for(i = 0; i < s->nb_medias; i++)
+	{
+		if(strncmp(s->medias[i].media, "audio", 5) == 0)
+		{
+			m = &s->medias[i];
+			break;
+		}
+	}
+	if(m == NULL)
+	{
+		sdp_free(s);
+		return -1;
+	}
+
+	/* Get rtpmap, fmtp, rsaaeskey and aesiv */
+	for(i = 0; i < m->nb_attr; i++)
+	{
+		if(strncmp(m->attr[i], "rtpmap", 6) == 0)
+		{
+			/* Get codec */
+			rtpmap = m->attr[i] + 7;
+			p = m->attr[i] + 10;
+
+			/* Find codec */
+			if(strncmp(p, "L16", 3) == 0)
+			{
+				/* 'rtpmap:96 L16/44100/2' for PCM */
+				/* FIXME: On an Ipod Touch 2G with iOS 4.2.1,
+				 * L16 mode act exactly as AppleLossless...
+				 */
+				cdata->codec = RAOP_PCM;
+			}
+			else if(strncmp(p, "AppleLossless", 13) == 0)
+			{
+				/* 'rtpmap:96 AppleLossless' for ALAC */
+				cdata->codec = RAOP_ALAC;
+			}
+			else if(strncmp(p, "mpeg4-generic", 13) == 0)
+			{
+				/* 'rtpmap:96 mpeg4-generic/44100/2' for AAC */
+				cdata->codec = RAOP_AAC;
+			}
+			else
+			{
+				/* Unknown codec: abort */
+				sdp_free(s);
+				return -1;
+			}
+		}
+		else if(strncmp(m->attr[i], "fmtp", 4) == 0)
+		{
+			/* Get format string */
+			cdata->format = strdup(m->attr[i] + 5);
+		}
+		else if(strncmp(m->attr[i], "rsaaeskey", 9) == 0)
+		{
+			/* Get AES key: first decode base64 */
+			p = strdup(m->attr[i] + 10);
+			rtsp_decode_base64(p);
+			len = RSA_size(h->rsa);
+			cdata->aes_key = malloc(len * sizeof(char));
+
+			/* Decrypt AES key */
+			ret = RSA_private_decrypt(len, (unsigned char*) p,
+						(unsigned char*) cdata->aes_key,
+						h->rsa, RSA_PKCS1_OAEP_PADDING);
+			if(ret < 0)
+			{
+				free(p);
+				sdp_free(s);
+				return -1;
+			}
+			free(p);
+		}
+		else if(strncmp(m->attr[i], "aesiv", 5) == 0)
+		{
+			/* Get AES IV */
+			p = strdup(m->attr[i] + 6);
+			rtsp_decode_base64(p);
+			memcpy(cdata->aes_iv, p, 16);
+			free(p);
+		}
+	}
+
+	/* Add a pseudo format for PCM */
+	if(cdata->codec == RAOP_PCM && cdata->format == NULL && rtpmap != NULL)
+		cdata->format = strdup(rtpmap);
+
+	/* Free SDP parser */
+	sdp_free(s);
+
+	return 0;
+}
+
+static int airtunes_read_set_param(struct airtunes_handle *h,
+				   struct rtsp_client *c,
+				   struct airtunes_client_data *cdata,
+				   unsigned char *buffer, size_t size,
+				   int end_of_stream)
+{
+	unsigned long start, cur, end;
+	const char *str;
+	float vol;
+	char *p;
+	int ret;
+
+	/* Get Ccontent-type */
+	str = rtsp_get_header(c, "content-type", 0);
+	if(str == NULL)
+		return -1;
+
+	/* Check content-type */
+	if(strcmp(str, "text/parameters") == 0)
+	{
+		/* Progression or volume */
+		if(size > 8 && strncmp(buffer, "volume: ", 8) == 0)
+		{
+			/* Get volume */
+			vol = strtof(buffer + 8, NULL);
+
+			/* Lock mutex */
+			pthread_mutex_lock(&h->mutex);
+
+			/* Convert float volume to int */
+			if(vol == -144.0)
+				cdata->infos->volume = 0;
+			else
+				cdata->infos->volume = (vol + 30.0) *
+						       MAX_VOLUME / 30.0;
+
+			/* Set stream volume */
+			output_set_volume_stream(h->output, cdata->stream,
+						 cdata->infos->volume);
+
+			/* Unlock mutex */
+			pthread_mutex_unlock(&h->mutex);
+		}
+		else if(size > 10 && strncmp(buffer, "progress: ", 10) == 0)
+		{
+			/* Get RTP time values */
+			p = buffer + 10;
+			start = strtoul(p, &p, 10);
+			cur = strtoul(p+1, &p, 10);
+			end = strtoul(p+1, NULL, 10);
+
+			/* Lock mutex */
+			pthread_mutex_lock(&h->mutex);
+
+			/* Convert values in seconds */
+			cdata->infos->duration = (end - start) /
+						 cdata->samplerate;
+			cdata->infos->position = (cur - start) /
+						 cdata->samplerate;
+
+			/* Get played samples */
+			start = output_get_status_stream(h->output,
+							 cdata->stream,
+							 OUTPUT_STREAM_PLAYED);
+			cdata->infos->played = start / 1000;
+
+			/* Unlock mutex */
+			pthread_mutex_unlock(&h->mutex);
+		}
+	}
+	else if(strcmp(str, "application/x-dmap-tagged") == 0)
+	{
+		/* DMAP metadata */
+
+	}
+
+	return 0;
+}
+
+
 static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  size_t size, int end_of_stream,
 				  void *user_data)
@@ -739,14 +933,8 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 	struct airtunes_handle *h = (struct airtunes_handle *) user_data;
 	struct airtunes_client_data *cdata = (struct airtunes_client_data*)
 							  rtsp_get_user_data(c);
-	struct sdp_media *m = NULL;
-	struct sdp *s;
-	unsigned long start, cur, end;
-	const char *str;
-	char *p;
-	float vol;
-	int len;
-	int i;
+
+	int ret;
 
 	if(cdata == NULL)
 		return 0;
@@ -754,157 +942,20 @@ static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 	switch(rtsp_get_request(c))
 	{
 		case RTSP_ANNOUNCE:
-			/* Parse packet and get format and AES keys */
-			s = sdp_parse((char*)buffer, size);
-
-			if(s != NULL && s->nb_medias > 0)
-			{
-				/* Search "m=audio" line */
-				for(i = 0; i < s->nb_medias; i++)
-				{
-					if(strncmp(s->medias[i].media, "audio",
-						   5) == 0)
-					{
-						m = &s->medias[i];
-						break;
-					}
-				}
-
-				/* Get fmtp */
-				for(i = 0; i < m->nb_attr; i++)
-				{
-					if(strncmp(m->attr[i], "fmtp", 4) == 0)
-					{
-						cdata->format = strdup(
-								  m->attr[i]+5);
-						break;
-					}
-				}
-
-				/* Get AES key */
-				for(i = 0; i < m->nb_attr; i++)
-				{
-					if(strncmp(m->attr[i], "rsaaeskey", 9)
-					    == 0)
-					{
-						/* Decode Base64 */
-						p = strdup(m->attr[i]+10);
-						rtsp_decode_base64(p);
-						len = RSA_size(h->rsa);
-						cdata->aes_key = malloc(len *
-								  sizeof(char));
-
-						/* Decrypt AES key */
-						if(RSA_private_decrypt(len,
-						(unsigned char*) p,
-						(unsigned char*) cdata->aes_key,
-						h->rsa,
-						RSA_PKCS1_OAEP_PADDING) < 0)
-						{
-							free(p);
-							return -1;
-						}
-
-						free(p);
-						break;
-					}
-				}
-
-				/* Get aesiv */
-				for(i = 0; i < m->nb_attr; i++)
-				{
-					if(strncmp(m->attr[i], "aesiv", 5) == 0)
-					{
-						/* Decode AES IV */
-						p = strdup(m->attr[i]+6);
-						rtsp_decode_base64(p);
-						memcpy(cdata->aes_iv, p, 16);
-
-						free(p);
-						break;
-					}
-				}
-
-				/* Free SDP parser */
-				sdp_free(s);
-			}
+			/* Parse SDP configuration */
+			ret = airtunes_read_announce(h, c, cdata, buffer, size,
+						     end_of_stream);
 			break;
 		case RTSP_SET_PARAMETER:
-			/* Get Ccontent-type */
-			str = rtsp_get_header(c, "content-type", 0);
-			if(str == NULL)
-				break;
-
-			/* Check content-type */
-			if(strcmp(str, "text/parameters") == 0)
-			{
-				/* Progression or volume */
-				if(size > 8 &&
-				   strncmp(buffer, "volume: ", 8) == 0)
-				{
-					/* Get volume */
-					vol = strtof(buffer + 8, NULL);
-
-					/* Lock mutex */
-					pthread_mutex_lock(&h->mutex);
-
-					/* Convert float volume to int */
-					if(vol == -144.0)
-						cdata->infos->volume = 0;
-					else
-						cdata->infos->volume =
-								  (vol + 30.0) *
-								  MAX_VOLUME /
-								  30.0;
-
-					/* Set stream volume */
-					output_set_volume_stream(h->output,
-							  cdata->stream,
-							  cdata->infos->volume);
-
-					/* Unlock mutex */
-					pthread_mutex_unlock(&h->mutex);
-				}
-				else if(size > 10 &&
-					strncmp(buffer, "progress: ", 10) == 0)
-				{
-					/* Get RTP time values */
-					p = buffer + 10;
-					start = strtoul(p, &p, 10);
-					cur = strtoul(p+1, &p, 10);
-					end = strtoul(p+1, NULL, 10);
-
-					/* Lock mutex */
-					pthread_mutex_lock(&h->mutex);
-
-					/* Convert values in seconds */
-					cdata->infos->duration = (end - start) /
-							      cdata->samplerate;
-					cdata->infos->position = (cur - start) /
-							      cdata->samplerate;
-
-					/* Get played samples */
-					start = output_get_status_stream(
-							  h->output,
-							  cdata->stream,
-							  OUTPUT_STREAM_PLAYED);
-					cdata->infos->played = start / 1000;
-
-					/* Unlock mutex */
-					pthread_mutex_unlock(&h->mutex);
-				}
-			}
-			else if(strcmp(str, "application/x-dmap-tagged") == 0)
-			{
-				/* DMAP metadata */
-			}
-
+			/* Set stream parameter */
+			ret = airtunes_read_set_param(h, c, cdata, buffer, size,
+						      end_of_stream);
 			break;
 		default:
 			;
 	}
 
-	return 0;
+	return ret;
 }
 
 static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
