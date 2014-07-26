@@ -60,6 +60,7 @@ struct raop_handle {
 	unsigned char packet[MAX_PACKET_SIZE];
 	unsigned long packet_len;
 	unsigned long pcm_remaining;
+	unsigned long silence_remaining;
 	/* Stream properties */
 	unsigned long samplerate;
 	unsigned char channels;
@@ -205,6 +206,7 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 	h->dec = NULL;
 	h->packet_len = 0;
 	h->pcm_remaining = 0;
+	h->silence_remaining = 0;
 	h->samples = 352;
 
 	/* Init mutex */
@@ -309,6 +311,12 @@ static int raop_get_next_packet(struct raop_handle *h)
 			read_len = rtp_read(h->rtp, packet, in_size);
 		} while (read_len == RTP_DISCARDED_PACKET);
 		h->packet_len = 0;
+
+		/* When packet is lost or RTP is buffering, add a silence of
+		 * packet duration
+		 */
+		 if(read_len == RTP_LOST_PACKET || read_len == RTP_NO_PACKET)
+			h->silence_remaining += h->samples * h->channels;
 	}
 
 	/* If a packet has been received: decrypt it */
@@ -342,6 +350,19 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
+silence:
+	/* Play silence */
+	if(h->silence_remaining > 0)
+	{
+		samples = h->silence_remaining > size ? size :
+							h->silence_remaining;
+		memset(buffer, 0, samples * 4);
+		h->silence_remaining -= samples;
+		total_samples += samples;
+		buffer += samples * 4;
+		size -= samples;
+	}
+
 	/* Process remaining pcm data */
 	if(h->pcm_remaining > 0)
 	{
@@ -356,18 +377,23 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 
 		h->pcm_remaining -= samples;
 		total_samples += samples;
+		buffer += samples * 4;
+		size -= samples;
 	}
 
 	/* Fill output buffer */
-	while(total_samples < size)
+	while(size > 0)
 	{
 		/* Get next packet */
 		raop_get_next_packet(h);
 
+		/* Play silence */
+		if(h->silence_remaining > 0)
+			goto silence;
+
 		/* Decode next frame */
 		samples = decoder_decode(h->dec, h->packet, h->packet_len,
-					 &buffer[total_samples * 4],
-					 size - total_samples, &info);
+					 buffer, size, &info);
 		if(samples <= 0)
 			break;
 
@@ -386,6 +412,8 @@ int raop_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
 		total_samples += samples;
+		buffer += samples * 4;
+		size -= samples;
 	}
 
 	/* Unlock buffer access */
@@ -423,6 +451,7 @@ int raop_flush(struct raop_handle *h, unsigned int seq)
 	decoder_decode(h->dec, NULL, 0, NULL, ~0L, NULL);
 
 	/* Flush input and output buffer */
+	h->silence_remaining = 0;
 	h->pcm_remaining = 0;
 	h->packet_len = 0;
 
