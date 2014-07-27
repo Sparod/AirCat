@@ -31,6 +31,7 @@
 #include "raop.h"
 #include "sdp.h"
 #include "output.h"
+#include "utils.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -74,6 +75,8 @@ enum {
 struct airtunes_stream {
 	/* Output stream */
 	struct output_stream_handle *stream;
+	/* Stream id */
+	char *id;
 	/* Stream name */
 	char *name;
 	/* Stream status */
@@ -86,6 +89,11 @@ struct airtunes_stream {
 	char *title;
 	char *artist;
 	char *album;
+	/* Cover art */
+	unsigned char *img;
+	unsigned long img_size;
+	unsigned long img_len;
+	char *img_type;
 	/* Next stream */
 	struct airtunes_stream *next;
 };
@@ -359,6 +367,9 @@ static struct airtunes_stream *airtunes_add_stream(struct airtunes_handle *h)
 		/* Init stream */
 		memset(s, 0, sizeof(struct airtunes_stream));
 
+		/* Add an id to stream */
+		s->id = random_string(10);
+
 		/* Lock mutex */
 		pthread_mutex_lock(&h->mutex);
 
@@ -378,6 +389,8 @@ static void airtunes_free_stream(struct airtunes_stream *s)
 	if(s == NULL)
 		return;
 
+	if(s->id != NULL)
+		free(s->id);
 	if(s->name != NULL)
 		free(s->name);
 	if(s->title != NULL)
@@ -386,6 +399,10 @@ static void airtunes_free_stream(struct airtunes_stream *s)
 		free(s->artist);
 	if(s->album != NULL)
 		free(s->album);
+	if(s->img != NULL)
+		free(s->img);
+	if(s->img_type != NULL)
+		free(s->img_type);
 
 	free(s);
 }
@@ -852,8 +869,8 @@ static int airtunes_read_set_param(struct airtunes_handle *h,
 				   unsigned char *buffer, size_t size,
 				   int end_of_stream)
 {
-	unsigned long start, cur, end;
-	const char *str;
+	unsigned long start, cur, end, len;
+	const char *str, *slen;
 	float vol;
 	char *p;
 	int ret;
@@ -920,11 +937,78 @@ static int airtunes_read_set_param(struct airtunes_handle *h,
 	{
 		/* DMAP metadata */
 
+		/* Free previous image */
+		if(cdata->infos->img != NULL)
+		{
+			free(cdata->infos->img);
+			cdata->infos->img = NULL;
+		}
+		if(cdata->infos->img_type != NULL)
+		{
+			free(cdata->infos->img_type);
+			cdata->infos->img_type = NULL;
+		}
+		cdata->infos->img_size = 0;
+		cdata->infos->img_len = 0;
+	}
+	else if(strncmp(str, "image/", 6) == 0)
+	{
+		/* Remove previous image if none */
+		if(strncmp(str+6, "none", 4) == 0)
+		{
+			if(cdata->infos->img != NULL)
+			{
+				free(cdata->infos->img);
+				cdata->infos->img = NULL;
+			}
+			if(cdata->infos->img_type != NULL)
+			{
+				free(cdata->infos->img_type);
+				cdata->infos->img_type = NULL;
+			}
+			cdata->infos->img_size = 0;
+			cdata->infos->img_len = 0;
+			return 0;
+		}
+
+		/* Create new image */
+		if(cdata->infos->img_len == 0)
+		{
+			/* Get image length */
+			slen = rtsp_get_header(c, "content-length", 0);
+			if(slen == NULL || (len = strtol(slen, NULL, 10)) == 0)
+				return 0;
+
+				/* Free previous image */
+			if(cdata->infos->img != NULL)
+				free(cdata->infos->img);
+			if(cdata->infos->img_type != NULL)
+			{
+				free(cdata->infos->img_type);
+				cdata->infos->img_type = NULL;
+			}
+
+			/* Allocate new image */
+			cdata->infos->img = malloc(len);
+			if(cdata->infos->img == NULL)
+				return -1;
+			cdata->infos->img_size = len;
+			cdata->infos->img_len = 0;
+
+			/* Copy content-type */
+			cdata->infos->img_type = strdup(str);
+		}
+
+		/* Copy content */
+		len = cdata->infos->img_size - cdata->infos->img_len;
+		if(len > size)
+			len = size;
+		memcpy(&cdata->infos->img[cdata->infos->img_len], buffer, len);
+		cdata->infos->img_len += len;
 	}
 
 	return 0;
 }
-
 
 static int airtunes_read_callback(struct rtsp_client *c, unsigned char *buffer,
 				  size_t size, int end_of_stream,
@@ -1016,6 +1100,7 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 						  OUTPUT_STREAM_PLAYED) / 1000;
 
 		/* Add values to it */
+		ADD_STRING(tmp, "id", s->id);
 		ADD_STRING(tmp, "name", s->name);
 		ADD_STRING(tmp, "title", s->title);
 		ADD_STRING(tmp, "artist", s->artist);
@@ -1046,6 +1131,53 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 static int airtunes_httpd_img(struct airtunes_handle *h, struct httpd_req *req,
 			      unsigned char **buffer, size_t *size)
 {
+	struct airtunes_stream *s;
+
+	/* Check id from URL */
+	if(req->resource == NULL)
+	{
+		*buffer = strdup("Bad index");
+		*size = 10;
+		return 400;
+	}
+
+	/* Lock mutex */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Find stream */
+	for(s = h->streams; s != NULL; s = s->next)
+	{
+		if(strcmp(s->id, req->resource) == 0)
+			break;
+	}
+	if(s == NULL)
+	{
+		/* Unlock mutex */
+		pthread_mutex_unlock(&h->mutex);
+
+		*buffer = strdup("Stream not found");
+		*size = 17;
+		return 400;
+	}
+
+	/* Get image from stream */
+	if(s->img != NULL && s->img_type != NULL && s->img_len == s->img_size)
+	{
+		*buffer = malloc(s->img_len);
+		if(*buffer == NULL)
+		{
+			/* Unlock mutex */
+			pthread_mutex_unlock(&h->mutex);
+			return 500;
+		}
+		memcpy(*buffer, s->img, s->img_len);
+		*size = s->img_len;
+		req->content_type = strdup(s->img_type);
+	}
+
+	/* Unlock mutex */
+	pthread_mutex_unlock(&h->mutex);
+
 	return 200;
 }
 
@@ -1059,7 +1191,7 @@ static int airtunes_httpd_restart(struct airtunes_handle *h,
 static struct url_table airtunes_url[] = {
 	{"/status",  HTTPD_STRICT_URL, HTTPD_GET, 0,
 						(void*) &airtunes_httpd_status},
-	{"/img",     HTTPD_STRICT_URL, HTTPD_GET, 0,
+	{"/img",     HTTPD_EXT_URL,    HTTPD_GET, 0,
 						   (void*) &airtunes_httpd_img},
 	{"/restart", HTTPD_STRICT_URL, HTTPD_PUT, 0,
 					       (void*) &airtunes_httpd_restart},
