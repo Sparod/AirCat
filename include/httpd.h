@@ -59,6 +59,8 @@ struct httpd_req {
 	struct json *json;
 	unsigned char *data;
 	size_t len;
+	/* Returned values */
+	char *content_type;
 	/* Private data: do not edit! */
 	void *priv_data;
 };

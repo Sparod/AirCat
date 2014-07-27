@@ -1235,6 +1235,7 @@ static struct MHD_Response *httpd_process_url(const char *url, int method,
 	req.method = method;
 	req.resource = resource;
 	req.priv_data = r_data;
+	req.content_type = NULL;
 
 	/* Process URL */
 	*code = u->process(user_data, &req, &resp, &resp_len);
@@ -1248,6 +1249,14 @@ static struct MHD_Response *httpd_process_url(const char *url, int method,
 
 	/* Add session in cookie header */
 	httpd_add_session_header(response, r_data->session);
+
+	/* Add content-type */
+	if(req.content_type != NULL)
+	{
+		MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE,
+					req.content_type);
+		free(req.content_type);
+	}
 
 	return response;
 }
