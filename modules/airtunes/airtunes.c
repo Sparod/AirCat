@@ -28,6 +28,7 @@
 #include "module.h"
 #include "avahi.h"
 #include "rtsp.h"
+#include "dmap.h"
 #include "raop.h"
 #include "sdp.h"
 #include "output.h"
@@ -117,6 +118,8 @@ struct airtunes_client_data {
 	/* RTCP ports */
 	unsigned int control_port;
 	unsigned int timing_port;
+	/* DMAP Parser */
+	struct dmap *dmap;
 	/* Stream infortmations */
 	struct airtunes_stream *infos;
 };
@@ -863,6 +866,39 @@ static int airtunes_read_announce(struct airtunes_handle *h,
 	return 0;
 }
 
+static void airtunes_dmap_parse(void *user_data, enum dmap_type type,
+				const char *tag, const char *full_tag,
+				const char *str, uint64_t value,
+				const unsigned char *data, size_t len)
+{
+	struct airtunes_stream *s = user_data;
+	char **p = NULL;
+
+	/* Not a string */
+	if(type != DMAP_STR || str == NULL)
+		return;
+
+	/* Get meta */
+	if(strcmp(tag, "minm") == 0)
+		/* dmap.itmename: title */
+		p = &s->title;
+	else if(strcmp(tag, "asar") == 0)
+		/* daap.songartist: artist */
+		p = &s->artist;
+	else if(strcmp(tag, "asal") == 0)
+		/* daap.songalbum: album */
+		p = &s->album;
+
+	/* Not found */
+	if(p == NULL)
+		return;
+
+	/* Copy string */
+	if(*p != NULL)
+		free(*p);
+	*p = strdup(str);
+}
+
 static int airtunes_read_set_param(struct airtunes_handle *h,
 				   struct rtsp_client *c,
 				   struct airtunes_client_data *cdata,
@@ -935,7 +971,41 @@ static int airtunes_read_set_param(struct airtunes_handle *h,
 	}
 	else if(strcmp(str, "application/x-dmap-tagged") == 0)
 	{
-		/* DMAP metadata */
+		/* Create a new parser */
+		if(cdata->dmap == NULL)
+		{
+			/* Free previous meta */
+			if(cdata->infos->title != NULL)
+			{
+				free(cdata->infos->title);
+				cdata->infos->title = NULL;
+			}
+			if(cdata->infos->artist != NULL)
+			{
+				free(cdata->infos->artist);
+				cdata->infos->artist = NULL;
+			}
+			if(cdata->infos->album != NULL)
+			{
+				free(cdata->infos->album);
+				cdata->infos->album = NULL;
+			}
+			/* Init DMAP parser */
+			cdata->dmap = dmap_init(&airtunes_dmap_parse, NULL,
+						NULL, cdata->infos);
+			if(cdata->dmap == NULL)
+				return -1;
+		}
+
+		/* Parse new entry */
+		dmap_parse(cdata->dmap, buffer, size);
+
+		/* Free parser */
+		if(end_of_stream && cdata->dmap != NULL)
+		{
+			dmap_free(cdata->dmap);
+			cdata->dmap = NULL;
+		}
 
 		/* Free previous image */
 		if(cdata->infos->img != NULL)
@@ -1050,6 +1120,10 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 
 	if(cdata != NULL)
 	{
+		/* Free DMAP parser */
+		if(cdata->dmap != NULL)
+			dmap_free(cdata->dmap);
+
 		/* Stop stream */
 		output_remove_stream(h->output, cdata->stream);
 		cdata->infos->stream = NULL;
