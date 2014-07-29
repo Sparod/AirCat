@@ -97,6 +97,9 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	/* Set to zero radio_info structure */
 	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
 
+	/* Init thread mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
 	/* Init http client */
 	if(http_open(&h->http) != 0)
 	{
@@ -182,9 +185,6 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	if(decoder_open(&h->dec, type, h->in_buffer, h->in_len, &h->samplerate,
 			&h->channels) != 0)
 		return -1;
-
-	/* Init thread mutex */
-	pthread_mutex_init(&h->mutex, NULL);
 
 	return 0;
 }

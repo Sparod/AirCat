@@ -105,6 +105,7 @@ int cache_open(struct cache_handle **handle, unsigned long time,
 	h->input_user = input_user;
 	h->output_user = output_user;
 	h->use_thread = use_thread;
+	h->flush = 0;
 	h->stop = 0;
 	h->fmt_first = NULL;
 	h->fmt_last = NULL;
