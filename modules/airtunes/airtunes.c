@@ -824,6 +824,8 @@ static int airtunes_read_announce(struct airtunes_handle *h,
 		else if(strncmp(m->attr[i], "fmtp", 4) == 0)
 		{
 			/* Get format string */
+			if(cdata->format != NULL)
+				free(cdata->format);
 			cdata->format = strdup(m->attr[i] + 5);
 		}
 		else if(strncmp(m->attr[i], "rsaaeskey", 9) == 0)
@@ -832,7 +834,11 @@ static int airtunes_read_announce(struct airtunes_handle *h,
 			p = strdup(m->attr[i] + 10);
 			rtsp_decode_base64(p);
 			len = RSA_size(h->rsa);
+			if(cdata->aes_key != NULL)
+				free(cdata->aes_key);
 			cdata->aes_key = malloc(len * sizeof(char));
+			if(cdata->aes_key == NULL)
+				return -1;
 
 			/* Decrypt AES key */
 			ret = RSA_private_decrypt(len, (unsigned char*) p,
@@ -1120,6 +1126,14 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 
 	if(cdata != NULL)
 	{
+		/* Free AES key */
+		if(cdata->aes_key != NULL)
+			free(cdata->aes_key);
+
+		/* Free format */
+		if(cdata->format != NULL)
+			free(cdata->format);
+
 		/* Free DMAP parser */
 		if(cdata->dmap != NULL)
 			dmap_free(cdata->dmap);

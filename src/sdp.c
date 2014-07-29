@@ -254,7 +254,7 @@ static void sdp_free_times(struct sdp *s)
 {
 	int i, j;
 
-	if(s->nb_times == 0 || s->times != NULL)
+	if(s->nb_times == 0 || s->times == NULL)
 		return;
 
 	for(i = 0; i < s->nb_times; i++)
@@ -280,7 +280,7 @@ static void sdp_free_medias(struct sdp *s)
 {
 	int i, j;
 
-	if(s->nb_medias == 0 || s->medias != NULL)
+	if(s->nb_medias == 0 || s->medias == NULL)
 		return;
 
 	for(i = 0; i < s->nb_medias; i++)

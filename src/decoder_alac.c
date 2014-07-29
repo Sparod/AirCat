@@ -230,8 +230,21 @@ int decoder_alac_decode(struct decoder *dec, unsigned char *in_buffer,
 
 int decoder_alac_close(struct decoder *dec)
 {
+	int i;
+
 	if(dec == NULL)
 		return 0;
+
+	/* Free alac buffers */
+	for(i = 0; i < 2; i++)
+	{
+		if(dec->alac.predicterror_buffer[i] != NULL)
+			free(dec->alac.predicterror_buffer[i]);
+		if(dec->alac.outputsamples_buffer[i] != NULL)
+			free(dec->alac.outputsamples_buffer[i]);
+		if(dec->alac.uncompressed_bytes_buffer[i] != NULL)
+			free(dec->alac.uncompressed_bytes_buffer[i]);
+	}
 
 	/* Free decoder */
 	free(dec);
