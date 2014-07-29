@@ -347,7 +347,7 @@ struct dmap *dmap_init(dmap_cb cb, dmap_in_cb in_cb, dmap_out_cb out_cb,
 
 int dmap_parse(struct dmap *d, unsigned char *buffer, size_t len)
 {
-	unsigned char *data;
+	unsigned char *data = NULL;
 	uint64_t value = 0;
 	size_t size = 0;
 	int i;
