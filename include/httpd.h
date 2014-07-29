@@ -34,6 +34,9 @@
 #define HTTPD_NOT_IMPLEMENTED 501
 #define HTTPD_SERVICE_UNAVAILABLE 503
 
+/* HTTP Header */
+#define HTTPD_HEADER_CONTENT_TYPE "Content-Type"
+
 /* HTTP method accepted */
 #define HTTPD_GET 1
 #define HTTPD_PUT 2
@@ -49,6 +52,8 @@
 #define HTTPD_JSON 1
 /* HTTPD_POST is used here too */
 
+struct httpd_res;
+
 #define HTTPD_REQ_INIT {NULL, NULL, 0, NULL, NULL, 0, NULL}
 struct httpd_req {
 	/* URL specific */
@@ -59,8 +64,6 @@ struct httpd_req {
 	struct json *json;
 	unsigned char *data;
 	size_t len;
-	/* Returned values */
-	char *content_type;
 	/* Private data: do not edit! */
 	void *priv_data;
 };
@@ -70,7 +73,7 @@ struct url_table {
 	int extended;
 	int method;
 	int upload;
-	int (*process)(void *, struct httpd_req *, unsigned char **, size_t *);
+	int (*process)(void *, struct httpd_req *, struct httpd_res **);
 };
 
 struct httpd_handle;
@@ -87,6 +90,20 @@ int httpd_close(struct httpd_handle *h);
 int httpd_add_urls(struct httpd_handle *h, const char *name,
 		   struct url_table *urls, void *user_data);
 int httpd_remove_urls(struct httpd_handle *h, const char *name);
+
+/* Create HTTP response */
+typedef ssize_t (*httpd_res_cb)(void *user_data, uint64_t pos, char *buffer,
+				size_t size);
+typedef void (*httpd_res_free_cb) (void *user_data);
+
+struct httpd_res *httpd_new_response(char *str, int must_free, int must_copy);
+struct httpd_res *httpd_new_data_response(unsigned char *buffer, size_t len,
+					  int must_free, int must_copy);
+struct httpd_res *httpd_new_cb_response(uint64_t size, size_t block_size,
+					httpd_res_cb cb, void *user_data,
+					httpd_res_free_cb free_cb);
+int httpd_add_header(struct httpd_res *res, const char *header,
+		     const char *value);
 
 /* Get stringquery values in URL */
 const char *httpd_get_query(struct httpd_req *req, const char *key);

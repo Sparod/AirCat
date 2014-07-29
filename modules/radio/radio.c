@@ -313,108 +313,107 @@ static int radio_close(struct radio_handle *h)
 	return 0;
 }
 
-#define HTTPD_RESPONSE(s) *buffer = (unsigned char*)s; \
-			  *size = strlen(s);
-
-static int radio_httpd_play(struct radio_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int radio_httpd_play(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
+
 	/* Play radio */
 	radio_play(h, req->resource);
 
 	return 200;
 }
 
-static int radio_httpd_stop(struct radio_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int radio_httpd_stop(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
+
 	/* Stop current radio */
 	radio_stop(h);
 
 	return 200;
 }
 
-static int radio_httpd_status(struct radio_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int radio_httpd_status(void *user_data, struct httpd_req *req,
+			      struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
 	char *stat;
 
 	/* Get radio status */
 	stat = radio_get_json_status(h, 0);
 	if(stat == NULL)
 	{
-		HTTPD_RESPONSE(strdup("No status"));
+		*res = httpd_new_response("No status", 0, 0);
 		return 500;
 	}
 
-	HTTPD_RESPONSE(stat);
+	*res = httpd_new_response(stat, 1, 0);
 	return 200;
 }
 
-static int radio_httpd_cat_info(struct radio_handle *h, struct httpd_req *req,
-				unsigned char **buffer, size_t *size)
+static int radio_httpd_cat_info(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
 	char *info;
 
 	/* Get info about category */
 	info = radio_get_json_category_info(h, req->resource);
 	if(info == NULL)
 	{
-		HTTPD_RESPONSE(strdup("Radio not found"));
+		*res = httpd_new_response("Radio not found", 0, 0);
 		return 404;
 	}
 
-	HTTPD_RESPONSE(info);
+	*res = httpd_new_response(info, 1, 0);
 	return 200;
 }
 
-static int radio_httpd_info(struct radio_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int radio_httpd_info(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
 	char *info;
 
 	/* Get info about radio */
 	info = radio_get_json_radio_info(h, req->resource);
 	if(info == NULL)
 	{
-		HTTPD_RESPONSE(strdup("Radio not found"));
+		*res = httpd_new_response("Radio not found", 0, 0);
 		return 404;
 	}
 
-	HTTPD_RESPONSE(info);
+	*res = httpd_new_response(info, 1, 0);
 	return 200;
 }
 
-static int radio_httpd_list(struct radio_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int radio_httpd_list(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct radio_handle *h = user_data;
 	char *list = NULL;
 
 	/* Get Radio list */
 	list = radio_get_json_list(h, req->resource);
 	if(list == NULL)
 	{
-		HTTPD_RESPONSE(strdup("No radio list"));
+		*res = httpd_new_response("No radio list", 0, 0);
 		return 500;
 	}
 
-	HTTPD_RESPONSE(list);
+	*res = httpd_new_response(list, 1, 0);
 	return 200;
 }
 
 static struct url_table radio_url[] = {
-	{"/category/info/", HTTPD_EXT_URL, HTTPD_GET, 0,
-						 (void*) &radio_httpd_cat_info},
-	{"/info/",          HTTPD_EXT_URL, HTTPD_GET, 0,
-						     (void*) &radio_httpd_info},
-	{"/list",           HTTPD_EXT_URL, HTTPD_GET, 0,
-						     (void*) &radio_httpd_list},
-	{"/play",           HTTPD_EXT_URL, HTTPD_PUT, 0,
-						     (void*) &radio_httpd_play},
-	{"/stop",           0,             HTTPD_PUT, 0,
-						     (void*) &radio_httpd_stop},
-	{"/status",         HTTPD_EXT_URL, HTTPD_GET, 0,
-						   (void*) &radio_httpd_status},
+	{"/category/info/", HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_cat_info},
+	{"/info/",          HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_info},
+	{"/list",           HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_list},
+	{"/play",           HTTPD_EXT_URL, HTTPD_PUT, 0, &radio_httpd_play},
+	{"/stop",           0,             HTTPD_PUT, 0, &radio_httpd_stop},
+	{"/status",         HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_status},
 	{0, 0, 0}
 };
 

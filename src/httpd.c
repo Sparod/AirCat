@@ -1155,10 +1155,8 @@ static struct MHD_Response *httpd_process_url(const char *url, int method,
 					      int *code)
 {
 	struct httpd_req req = HTTPD_REQ_INIT;
-	struct MHD_Response *response;
-	unsigned char *resp = NULL;
+	struct MHD_Response *response = NULL;
 	const char *resource;
-	size_t resp_len = 0;
 	int ret;
 
 	/* Check ressource name*/
@@ -1235,28 +1233,15 @@ static struct MHD_Response *httpd_process_url(const char *url, int method,
 	req.method = method;
 	req.resource = resource;
 	req.priv_data = r_data;
-	req.content_type = NULL;
 
 	/* Process URL */
-	*code = u->process(user_data, &req, &resp, &resp_len);
+	*code = u->process(user_data, &req, (struct httpd_res **) &response);
 
-	/* Create HTTP response with message */
-	if(resp == NULL || resp_len == 0)
+	if(response == NULL)
 		response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
-	else
-		response = MHD_create_response_from_data(resp_len, resp,
-							 MHD_YES, MHD_NO);
 
 	/* Add session in cookie header */
 	httpd_add_session_header(response, r_data->session);
-
-	/* Add content-type */
-	if(req.content_type != NULL)
-	{
-		MHD_add_response_header(response, MHD_HTTP_HEADER_CONTENT_TYPE,
-					req.content_type);
-		free(req.content_type);
-	}
 
 	return response;
 }
@@ -1638,6 +1623,38 @@ static void httpd_completed(void *user_data, struct MHD_Connection *c,
 /******************************************************************************
  *                        Callback specific functions                         *
  ******************************************************************************/
+
+struct httpd_res *httpd_new_response(char *str, int must_free, int must_copy)
+{
+	return httpd_new_data_response((unsigned char *) str, strlen(str),
+				       must_free, must_copy);
+}
+
+struct httpd_res *httpd_new_data_response(unsigned char *buffer, size_t len,
+					  int must_free, int must_copy)
+{
+	return (struct httpd_res *) MHD_create_response_from_data(len, buffer,
+								  must_free,
+								  must_copy);
+}
+
+struct httpd_res *httpd_new_cb_response(uint64_t size, size_t block_size,
+					httpd_res_cb cb, void *user_data,
+					httpd_res_free_cb free_cb)
+{
+	return (struct httpd_res *) MHD_create_response_from_callback(size,
+								     block_size,
+								     cb,
+								     user_data,
+								     free_cb);
+}
+
+int httpd_add_header(struct httpd_res *res, const char *header,
+		     const char *value)
+{
+	return MHD_add_response_header((struct MHD_Response *) res, header,
+				       value);
+}
 
 const char *httpd_get_query(struct httpd_req *req, const char *key)
 {

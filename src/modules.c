@@ -408,9 +408,10 @@ void modules_close(struct modules_handle *h)
 	free(h);
 }
 
-static int modules_httpd_enable(struct modules_handle *h, struct httpd_req *req,
-				unsigned char **buffer, size_t *size)
+static int modules_httpd_enable(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct modules_handle *h = user_data;
 	struct module_list *l;
 
 	if(req->resource == NULL || *req->resource == '\0')
@@ -440,10 +441,10 @@ static int modules_httpd_enable(struct modules_handle *h, struct httpd_req *req,
 	return 404;
 }
 
-static int modules_httpd_disable(struct modules_handle *h,
-				 struct httpd_req *req, unsigned char **buffer,
-				 size_t *size)
+static int modules_httpd_disable(void *user_data, struct httpd_req *req,
+				 struct httpd_res **res)
 {
+	struct modules_handle *h = user_data;
 	struct module_list *l;
 
 	if(req->resource == NULL || *req->resource == '\0')
@@ -473,11 +474,12 @@ static int modules_httpd_disable(struct modules_handle *h,
 	return 404;
 }
 
-static int modules_httpd_config(struct modules_handle *h, struct httpd_req *req,
-				unsigned char **buffer, size_t *size)
+static int modules_httpd_config(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct modules_handle *h = user_data;
 	struct json *json;
-	const char *str;
+	char *str;
 
 	if(req->method == HTTPD_GET)
 	{
@@ -488,12 +490,12 @@ static int modules_httpd_config(struct modules_handle *h, struct httpd_req *req,
 
 		/* Get string */
 		str = strdup(json_export(json));
-		*buffer = (unsigned char*) str;
-		if(str != NULL)
-			*size = strlen(str);
 
 		/* Free configuration */
 		json_free(json);
+
+		/* Create response */
+		*res = httpd_new_response(str, 1, 0);
 	}
 	else
 		modules_set_config(h, req->json, req->resource);
@@ -501,9 +503,10 @@ static int modules_httpd_config(struct modules_handle *h, struct httpd_req *req,
 	return 200;
 }
 
-static int modules_httpd_list(struct modules_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int modules_httpd_list(void *user_data, struct httpd_req *req,
+			      struct httpd_res **res)
 {
+	struct modules_handle *h = user_data;
 	struct json *json, *tmp;
 	struct module_list *l;
 	char *str;
@@ -540,25 +543,20 @@ static int modules_httpd_list(struct modules_handle *h, struct httpd_req *req,
 
 	/* Get JSON string */
 	str = strdup(json_export(json));
-	*buffer = (unsigned char*) str;
-	if(str != NULL)
-		*size = strlen(str);
 
 	/* Free JSON object */
 	json_free(json);
 
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
+#define HTTPD_PG HTTPD_PUT | HTTPD_GET
 struct url_table modules_urls[] = {
-	{"/enable/",  HTTPD_EXT_URL, HTTPD_PUT,             0,
-						 (void*) &modules_httpd_enable},
-	{"/disable/", HTTPD_EXT_URL, HTTPD_PUT,             0,
-						(void*) &modules_httpd_disable},
-	{"/config",   HTTPD_EXT_URL, HTTPD_PUT | HTTPD_GET, 0,
-						 (void*) &modules_httpd_config},
-	{"/list",    0,              HTTPD_GET,             0,
-						   (void*) &modules_httpd_list},
+	{"/enable/",  HTTPD_EXT_URL, HTTPD_PUT, 0, &modules_httpd_enable},
+	{"/disable/", HTTPD_EXT_URL, HTTPD_PUT, 0, &modules_httpd_disable},
+	{"/config",   HTTPD_EXT_URL, HTTPD_PG,  0, &modules_httpd_config},
+	{"/list",     0,             HTTPD_GET, 0, &modules_httpd_list},
 	{0, 0, 0, 0}
 };
 

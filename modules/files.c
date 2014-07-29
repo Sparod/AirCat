@@ -855,104 +855,104 @@ static int files_close(struct files_handle *h)
 	return 0;
 }
 
-#define HTTPD_RESPONSE(s) *buffer = (unsigned char*)s; \
-			  *size = strlen(s);
-
-static int files_httpd_playlist_add(struct files_handle *h,
-				    struct httpd_req *req,
-				    unsigned char **buffer, size_t *size)
+static int files_httpd_playlist_add(void *user_data, struct httpd_req *req,
+				    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	int idx;
 
 	/* Add file to playlist */
 	idx = files_add(h, req->resource);
 	if(idx < 0)
 	{
-		HTTPD_RESPONSE(strdup("File is not supported"));
+		*res = httpd_new_response("File is not supported", 0, 0);
 		return 406;
 	}
 
 	return 200;
 }
 
-static int files_httpd_playlist_play(struct files_handle *h,
-				     struct httpd_req *req,
-				     unsigned char **buffer, size_t *size)
+static int files_httpd_playlist_play(void *user_data, struct httpd_req *req,
+				     struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	int idx;
 
 	/* Get index from URL */
 	idx = atoi(req->resource);
 	if(idx < 0)
 	{
-		HTTPD_RESPONSE(strdup("Bad index"));
+		*res = httpd_new_response("Bad index", 0, 0);
 		return 400;
 	}
 
 	/* Play selected file in playlist */
 	if(files_play(h, idx) != 0)
 	{
-		HTTPD_RESPONSE(strdup("Playlist error"));
+		*res = httpd_new_response("Playlist error", 0, 0);
 		return 500;
 	}
 
 	return 200;
 }
 
-static int files_httpd_playlist_remove(struct files_handle *h,
-				       struct httpd_req *req,
-				       unsigned char **buffer, size_t *size)
+static int files_httpd_playlist_remove(void *user_data, struct httpd_req *req,
+				       struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	int idx;
 
 	/* Get index from URL */
 	idx = atoi(req->resource);
 	if(idx < 0)
 	{
-		HTTPD_RESPONSE(strdup("Bad index"));
+		*res = httpd_new_response("Bad index", 0, 0);
 		return 400;
 	}
 
 	/* Remove from playlist */
 	if(files_remove(h, idx) != 0)
 	{
-		HTTPD_RESPONSE(strdup("Playlist error"));
+		*res = httpd_new_response("Playlist error", 0, 0);
 		return 500;
 	}
 
 	return 200;
 }
 
-static int files_httpd_playlist_flush(struct files_handle *h,
-				      struct httpd_req *req,
-				      unsigned char **buffer, size_t *size)
+static int files_httpd_playlist_flush(void *user_data, struct httpd_req *req,
+				      struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
+
 	/* Flush playlist */
 	files_flush(h);
 
 	return 200;
 }
 
-static int files_httpd_playlist(struct files_handle *h, struct httpd_req *req,
-			 	unsigned char **buffer, size_t *size)
+static int files_httpd_playlist(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	char *list = NULL;
 
 	/* Get playlist */
 	list = files_get_json_playlist(h);
 	if(list == NULL)
 	{
-		HTTPD_RESPONSE(strdup("Playlist error"));
+		*res = httpd_new_response("Playlist error", 0, 0);
 		return 500;
 	}
 
-	HTTPD_RESPONSE(list);
+	*res = httpd_new_response(list, 1, 0);
 	return 200;
 }
 
-static int files_httpd_play(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_play(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	int idx = -1;
 
 	/* Add file to playlist */
@@ -961,7 +961,7 @@ static int files_httpd_play(struct files_handle *h, struct httpd_req *req,
 		idx = files_add(h, req->resource);
 		if(idx < 0)
 		{
-			HTTPD_RESPONSE(strdup("File is not supported"));
+			*res = httpd_new_response("File not supported", 0, 0);
 			return 406;
 		}
 	}
@@ -969,52 +969,61 @@ static int files_httpd_play(struct files_handle *h, struct httpd_req *req,
 	/* Play the file now */
 	if(files_play(h, idx) != 0)
 	{
-		HTTPD_RESPONSE(strdup("Cannot play the file"));
+		*res = httpd_new_response("Cannot play the file", 0, 0);
 		return 406;
 	}
 
 	return 200;
 }
 
-static int files_httpd_pause(struct files_handle *h, struct httpd_req *req,
-			     unsigned char **buffer, size_t *size)
+static int files_httpd_pause(void *user_data, struct httpd_req *req,
+			     struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
+
 	/* Pause file playing */
 	files_pause(h);
 
 	return 200;
 }
 
-static int files_httpd_stop(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_stop(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
+
 	/* Stop file playing */
 	files_stop(h);
 
 	return 200;
 }
 
-static int files_httpd_prev(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_prev(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
+
 	/* Go to / play previous file in playlist */
 	files_prev(h);
 
 	return 200;
 }
 
-static int files_httpd_next(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_next(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
+
 	/* Go to / play next file in playlist */
 	files_next(h);
 
 	return 200;
 }
 
-static int files_httpd_status(struct files_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int files_httpd_status(void *user_data, struct httpd_req *req,
+			      struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	char *str = NULL;
 	int add_pic = 0;
 
@@ -1025,17 +1034,18 @@ static int files_httpd_status(struct files_handle *h, struct httpd_req *req,
 	str = files_get_json_status(h, add_pic);
 	if(str == NULL)
 	{
-		HTTPD_RESPONSE(strdup("Status error"));
+		*res = httpd_new_response("Status error", 0, 0);
 		return 500;
 	}
 
-	HTTPD_RESPONSE(str);
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
-static int files_httpd_seek(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_seek(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	unsigned long pos;
 
 	/* Get position from URL */
@@ -1044,57 +1054,50 @@ static int files_httpd_seek(struct files_handle *h, struct httpd_req *req,
 	/* Seek in stream */
 	if(files_seek(h, pos) != 0)
 	{
-		HTTPD_RESPONSE(strdup("Bad position"));
+		*res = httpd_new_response("Bad position", 0, 0);
 		return 400;
 	}
 
 	return 200;
 }
 
-static int files_httpd_list(struct files_handle *h, struct httpd_req *req,
-			    unsigned char **buffer, size_t *size)
+static int files_httpd_list(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
 {
+	struct files_handle *h = user_data;
 	char *list = NULL;
 
 	/* Get file list */
 	list = files_get_json_list(h, req->resource);
 	if(list == NULL)
 	{
-		HTTPD_RESPONSE(strdup("Bad directory"));
+		*res = httpd_new_response("Bad directory", 0, 0);
 		return 404;
 	}
 
-	HTTPD_RESPONSE(list);
+	*res = httpd_new_response(list, 1, 0);
 	return 200;
 }
 
 static struct url_table files_url[] = {
 	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, 0,
-					     (void*) &files_httpd_playlist_add},
+						     &files_httpd_playlist_add},
 	{"/playlist/play/",   HTTPD_EXT_URL, HTTPD_PUT, 0,
-					    (void*) &files_httpd_playlist_play},
+						    &files_httpd_playlist_play},
 	{"/playlist/remove/", HTTPD_EXT_URL, HTTPD_PUT, 0,
-					  (void*) &files_httpd_playlist_remove},
+						  &files_httpd_playlist_remove},
 	{"/playlist/flush",   0,             HTTPD_PUT, 0,
-					   (void*) &files_httpd_playlist_flush},
+						   &files_httpd_playlist_flush},
 	{"/playlist",         0,             HTTPD_GET, 0,
-						 (void*) &files_httpd_playlist},
-	{"/play",             HTTPD_EXT_URL, HTTPD_PUT, 0,
-						     (void*) &files_httpd_play},
-	{"/pause",            0,             HTTPD_PUT, 0,
-						    (void*) &files_httpd_pause},
-	{"/stop",             0,             HTTPD_PUT, 0,
-						     (void*) &files_httpd_stop},
-	{"/prev",             0,             HTTPD_PUT, 0,
-						     (void*) &files_httpd_prev},
-	{"/next",             0,             HTTPD_PUT, 0,
-						     (void*) &files_httpd_next},
-	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0,
-						     (void*) &files_httpd_seek},
-	{"/status",           HTTPD_EXT_URL, HTTPD_GET, 0,
-						   (void*) &files_httpd_status},
-	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0,
-						     (void*) &files_httpd_list},
+							 &files_httpd_playlist},
+	{"/play",             HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_play},
+	{"/pause",            0,             HTTPD_PUT, 0, &files_httpd_pause},
+	{"/stop",             0,             HTTPD_PUT, 0, &files_httpd_stop},
+	{"/prev",             0,             HTTPD_PUT, 0, &files_httpd_prev},
+	{"/next",             0,             HTTPD_PUT, 0, &files_httpd_next},
+	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_seek},
+	{"/status",           HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_status},
+	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{0, 0, 0}
 };
 

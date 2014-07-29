@@ -1144,10 +1144,10 @@ static int airtunes_close_callback(struct rtsp_client *c, void *user_data)
 			       s != NULL ? json_object_new_string(s) : NULL);
 #define ADD_INT(j, k, i) json_object_object_add(j, k, json_object_new_int(i));
 
-static int airtunes_httpd_status(struct airtunes_handle *h,
-				 struct httpd_req *req, unsigned char **buffer,
-				 size_t *size)
+static int airtunes_httpd_status(void *user_data, struct httpd_req *req,
+				 struct httpd_res **res)
 {
+	struct airtunes_handle *h = user_data;
 	struct airtunes_stream *s;
 	json_object *root, *tmp;
 	unsigned long played;
@@ -1197,21 +1197,21 @@ static int airtunes_httpd_status(struct airtunes_handle *h,
 	/* Free JSON object */
 	json_object_put(root);
 
-	*buffer = str;
-	*size = str != NULL ? strlen(str) : 0;
+	/* Create response */
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
-static int airtunes_httpd_img(struct airtunes_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int airtunes_httpd_img(void *user_data, struct httpd_req *req,
+			      struct httpd_res **res)
 {
+	struct airtunes_handle *h = user_data;
 	struct airtunes_stream *s;
 
 	/* Check id from URL */
 	if(req->resource == NULL)
 	{
-		*buffer = strdup("Bad index");
-		*size = 10;
+		*res = httpd_new_response("Bad index", 0, 0);
 		return 400;
 	}
 
@@ -1229,24 +1229,18 @@ static int airtunes_httpd_img(struct airtunes_handle *h, struct httpd_req *req,
 		/* Unlock mutex */
 		pthread_mutex_unlock(&h->mutex);
 
-		*buffer = strdup("Stream not found");
-		*size = 17;
+		*res = httpd_new_response("Stream not found", 0, 0);
 		return 400;
 	}
 
 	/* Get image from stream */
 	if(s->img != NULL && s->img_type != NULL && s->img_len == s->img_size)
 	{
-		*buffer = malloc(s->img_len);
-		if(*buffer == NULL)
-		{
-			/* Unlock mutex */
-			pthread_mutex_unlock(&h->mutex);
-			return 500;
-		}
-		memcpy(*buffer, s->img, s->img_len);
-		*size = s->img_len;
-		req->content_type = strdup(s->img_type);
+		/* Create response */
+		*res = httpd_new_data_response(s->img, s->img_len, 1, 1);
+
+		/* Add content type */
+		httpd_add_header(*res, HTTPD_HEADER_CONTENT_TYPE, s->img_type);
 	}
 
 	/* Unlock mutex */
@@ -1255,20 +1249,16 @@ static int airtunes_httpd_img(struct airtunes_handle *h, struct httpd_req *req,
 	return 200;
 }
 
-static int airtunes_httpd_restart(struct airtunes_handle *h,
-				  struct httpd_req *req, unsigned char **buffer,
-				  size_t *size)
+static int airtunes_httpd_restart(void *user_data, struct httpd_req *req,
+				  struct httpd_res **res)
 {
 	return 200;
 }
 
 static struct url_table airtunes_url[] = {
-	{"/status",  HTTPD_STRICT_URL, HTTPD_GET, 0,
-						(void*) &airtunes_httpd_status},
-	{"/img",     HTTPD_EXT_URL,    HTTPD_GET, 0,
-						   (void*) &airtunes_httpd_img},
-	{"/restart", HTTPD_STRICT_URL, HTTPD_PUT, 0,
-					       (void*) &airtunes_httpd_restart},
+	{"/status",  HTTPD_STRICT_URL, HTTPD_GET, 0, &airtunes_httpd_status},
+	{"/img",     HTTPD_EXT_URL,    HTTPD_GET, 0, &airtunes_httpd_img},
+	{"/restart", HTTPD_STRICT_URL, HTTPD_PUT, 0, &airtunes_httpd_restart},
 	{0, 0, 0}
 };
 

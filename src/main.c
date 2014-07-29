@@ -255,8 +255,8 @@ int main(int argc, char* argv[])
  *                           Basic URLs for AirCat                            *
  ******************************************************************************/
 
-static int config_httpd_default(void *h, struct httpd_req *req,
-				unsigned char **buffer, size_t *size)
+static int config_httpd_default(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
 	/* Set Audio output to default */
 	outputs_set_config(outputs, NULL);
@@ -270,8 +270,8 @@ static int config_httpd_default(void *h, struct httpd_req *req,
 	return 200;
 }
 
-static int config_httpd_reload(void *h, struct httpd_req *req,
-			       unsigned char **buffer, size_t *size)
+static int config_httpd_reload(void *user_data, struct httpd_req *req,
+			       struct httpd_res **res)
 {
 	struct json *cfg;
 
@@ -308,8 +308,8 @@ static int config_httpd_reload(void *h, struct httpd_req *req,
 	return 200;
 }
 
-static int config_httpd_save(void *h, struct httpd_req *req,
-			     unsigned char **buffer, size_t *size)
+static int config_httpd_save(void *user_data, struct httpd_req *req,
+			     struct httpd_res **res)
 {
 	struct json *cfg = NULL;
 
@@ -346,12 +346,12 @@ static int config_httpd_save(void *h, struct httpd_req *req,
 	return 200;
 }
 
-static int config_httpd(void *h, struct httpd_req *req,
-			     unsigned char **buffer, size_t *size)
+static int config_httpd(void *user_data, struct httpd_req *req,
+			struct httpd_res **res)
 {
 	struct json *json, *tmp;
 	struct lh_entry *entry;
-	const char *str;
+	char *str;
 
 	if(req->method == HTTPD_GET)
 	{
@@ -391,11 +391,12 @@ static int config_httpd(void *h, struct httpd_req *req,
 
 		/* Get string */
 		str = strdup(json_export(json));
-		*buffer = (unsigned char*) str;
-		*size = strlen(str);
 
 		/* Free configuration */
 		json_free(json);
+
+		/* Create response */
+		*res = httpd_new_response(str, 1, 0);
 	}
 	else
 	{
@@ -451,15 +452,12 @@ static int config_httpd(void *h, struct httpd_req *req,
 	return 200;
 }
 
+#define HTTPD_PG HTTPD_GET | HTTPD_PUT
 struct url_table config_urls[] = {
-	{"/default", 0,             HTTPD_PUT,             0,
-						 (void*) &config_httpd_default},
-	{"/reload",  0,             HTTPD_PUT,             0,
-						  (void*) &config_httpd_reload},
-	{"/save",    0,             HTTPD_PUT,             0,
-						    (void*) &config_httpd_save},
-	{"",        HTTPD_EXT_URL, HTTPD_GET | HTTPD_PUT, HTTPD_JSON,
-							 (void*) &config_httpd},
+	{"/default", 0,             HTTPD_PUT, 0,        &config_httpd_default},
+	{"/reload",  0,             HTTPD_PUT, 0,         &config_httpd_reload},
+	{"/save",    0,             HTTPD_PUT, 0,          &config_httpd_save},
+	{"",         HTTPD_EXT_URL, HTTPD_PG,  HTTPD_JSON, &config_httpd},
 	{0, 0, 0, 0}
 };
 

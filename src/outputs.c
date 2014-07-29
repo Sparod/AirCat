@@ -947,9 +947,10 @@ static int outputs_find_stream_from_url(struct outputs_handle *h,
 	return -1;
 }
 
-static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int outputs_httpd_volume(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct outputs_handle *h = user_data;
 	struct output_stream_handle *s = NULL;
 	struct output_handle *handle = NULL;
 	unsigned int vol = 0;
@@ -988,12 +989,12 @@ static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 
 		/* Get JSON string */
 		str = strdup(json_export(json));
-		*buffer = (unsigned char*) str;
-		if(str != NULL)
-			*size = strlen(str);
 
 		/* Free JSON object */
 		json_free(json);
+
+		/* Create response */
+		*res = httpd_new_response(str, 1, 0);
 	}
 	else
 	{
@@ -1048,9 +1049,10 @@ static int outputs_httpd_volume(struct outputs_handle *h, struct httpd_req *req,
 	return 200;
 }
 
-static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int outputs_httpd_status(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
+	struct outputs_handle *h = user_data;
 	struct json *root, *list, *list2, *tmp, *tmp2;
 	struct output_stream_handle *s;
 	struct output_handle *l;
@@ -1133,19 +1135,18 @@ static int outputs_httpd_status(struct outputs_handle *h, struct httpd_req *req,
 
 	/* Get JSON string */
 	str = strdup(json_export(root));
-	*buffer = (unsigned char*) str;
-	if(str != NULL)
-		*size = strlen(str);
 
 	/* Free JSON object */
 	json_free(root);
 
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
-static int outputs_httpd_list(struct outputs_handle *h, struct httpd_req *req,
-			      unsigned char **buffer, size_t *size)
+static int outputs_httpd_list(void *user_data, struct httpd_req *req,
+			      struct httpd_res **res)
 {
+	struct outputs_handle *h = user_data;
 	struct json *root, *tmp;
 	struct output_list *l;
 	char *str;
@@ -1197,22 +1198,18 @@ static int outputs_httpd_list(struct outputs_handle *h, struct httpd_req *req,
 
 	/* Get JSON string */
 	str = strdup(json_export(root));
-	*buffer = (unsigned char*) str;
-	if(str != NULL)
-		*size = strlen(str);
 
 	/* Free JSON object */
 	json_free(root);
 
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
+#define HTTPD_PG HTTPD_GET | HTTPD_PUT
 struct url_table outputs_urls[] = {
-	{"/volume", HTTPD_EXT_URL, HTTPD_GET | HTTPD_PUT, 0,
-						 (void*) &outputs_httpd_volume},
-	{"/status", 0,             HTTPD_GET,             0,
-						 (void*) &outputs_httpd_status},
-	{"/list",   0,             HTTPD_GET,             0,
-						   (void*) &outputs_httpd_list},
+	{"/volume", HTTPD_EXT_URL, HTTPD_PG , 0, &outputs_httpd_volume},
+	{"/status", 0,             HTTPD_GET, 0, &outputs_httpd_status},
+	{"/list",   0,             HTTPD_GET, 0, &outputs_httpd_list},
 	{0, 0, 0, 0}
 };
