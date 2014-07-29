@@ -143,6 +143,9 @@ unsigned long cache_get_time(struct cache_handle *h)
 {
 	unsigned long time;
 
+	if(h == NULL)
+		return 0;
+
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -202,6 +205,9 @@ static void cache_resize(struct cache_handle *h, int unset_is_ready)
 
 int cache_set_time(struct cache_handle *h, unsigned long time)
 {
+	if(h == NULL)
+		return -1;
+
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -223,6 +229,9 @@ int cache_is_ready(struct cache_handle *h)
 {
 	int ret;
 
+	if(h == NULL)
+		return 0;
+
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -238,6 +247,9 @@ int cache_is_ready(struct cache_handle *h)
 unsigned char cache_get_filling(struct cache_handle *h)
 {
 	unsigned long percent;
+
+	if(h == NULL)
+		return 0;
 
 	/* Lock cache access */
 	pthread_mutex_lock(&h->mutex);
@@ -654,7 +666,7 @@ ssize_t cache_write(void *user_data, const unsigned char *buffer, size_t size,
 	struct cache_handle *h = (struct cache_handle *) user_data;
 	unsigned long in_size = 0;
 
-	if(h->input_callback != NULL)
+	if(h == NULL || h->input_callback != NULL)
 		return -1;
 
 	/* No cache */
@@ -703,6 +715,9 @@ void cache_flush(struct cache_handle *h)
 {
 	struct cache_format *cf;
 
+	if(h == NULL)
+		return;
+
 	/* Lock input callback */
 	cache_lock(h);
 
@@ -737,12 +752,18 @@ void cache_flush(struct cache_handle *h)
 
 void cache_lock(struct cache_handle *h)
 {
+	if(h == NULL)
+		return;
+
 	/* Lock input callback access */
 	pthread_mutex_lock(&h->input_lock);
 }
 
 void cache_unlock(struct cache_handle *h)
 {
+	if(h == NULL)
+		return;
+
 	/* Unlock input callback access */
 	pthread_mutex_unlock(&h->input_lock);
 }

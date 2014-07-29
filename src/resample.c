@@ -432,7 +432,7 @@ int resample_read(void *user_data, unsigned char *buffer, size_t size,
 	struct resample_handle *h = (struct resample_handle *) user_data;
 
 	/* read() cannot be used with an output callback */
-	if(h->output_callback != NULL)
+	if(h == NULL || h->output_callback != NULL)
 		return -1;
 
 	/* Lock buffer access */
@@ -470,7 +470,7 @@ ssize_t resample_write(void *user_data, const unsigned char *buffer,
 	size_t len;
 
 	/* write() cannot be used with an input callback */
-	if(h->input_callback != NULL)
+	if(h == NULL || h->input_callback != NULL)
 		return -1;
 
 	/* Lock buffer access */
@@ -542,6 +542,9 @@ unsigned long resample_delay(struct resample_handle *h)
 {
 	double delay;
 
+	if(h == NULL)
+		return 0;
+
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
@@ -563,6 +566,9 @@ unsigned long resample_delay(struct resample_handle *h)
 
 void resample_flush(struct resample_handle *h)
 {
+	if(h == NULL)
+		return;
+
 	/* Lock buffer access */
 	pthread_mutex_lock(&h->mutex);
 
