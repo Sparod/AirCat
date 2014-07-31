@@ -31,10 +31,9 @@ struct radio_handle {
 	/* Radio player */
 	struct shout_handle *shout;
 	struct radio_item *radio;
-	/* Radio list */
-	struct radio_list_handle *list;
+	/* Databse: radio list */
+	struct db_handle *db;
 	/* Config part */
-	char *list_file;
 	unsigned long cache;
 };
 
@@ -53,19 +52,14 @@ static int radio_open(struct radio_handle **handle, struct module_attr *attr)
 
 	/* Init structure */
 	h->shout = NULL;
-	h->list = NULL;
 	h->output = attr->output;
+	h->db = attr->db;
 	h->stream = NULL;
 	h->radio = NULL;
-	h->list_file = NULL;
 	h->cache = 0;
 
 	/* Load configuration */
 	radio_set_config(h, attr->config);
-
-	/* Load radio list */
-	if(radio_list_open(&h->list, h->list_file) != 0)
-		return -1;
 
 	return 0;
 }
@@ -82,7 +76,7 @@ static int radio_play(struct radio_handle *h, const char *id)
 	radio_stop(h);
 
 	/* Get radio item */
-	h->radio = radio_list_get_radio(h->list, id);
+	h->radio = radio_get_radio_item(h->db, id);
 	if(h->radio == NULL)
 		return -1;
 
@@ -211,22 +205,6 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	return str;
 }
 
-static char *radio_get_json_category_info(struct radio_handle *h,
-					  const char *id)
-{
-	return radio_list_get_category_json(h->list, id);
-}
-
-static char *radio_get_json_radio_info(struct radio_handle *h, const char *id)
-{
-	return radio_list_get_radio_json(h->list, id);
-}
-
-static char *radio_get_json_list(struct radio_handle *h, const char *id)
-{
-	return radio_list_get_list_json(h->list, id);
-}
-
 static int radio_set_config(struct radio_handle *h, const struct json *c)
 {
 	unsigned long cache;
@@ -236,26 +214,16 @@ static int radio_set_config(struct radio_handle *h, const struct json *c)
 		return -1;
 
 	/* Free previous values */
-	if(h->list_file != NULL)
-		free(h->list_file);
-	h->list_file = NULL;
 	cache = 0;
 
 	/* Parse config */
 	if(c != NULL)
 	{
-		/* Get radio list file */
-		file = json_get_string(c, "list_file");
-		if(file != NULL)
-			h->list_file = strdup(file);
-
 		/* Get cache size (in ms) */
 		cache = json_get_int(c, "cache");
 	}
 
 	/* Set default values */
-	if(h->list_file == NULL)
-		h->list_file = strdup("/var/aircat/radio_list.json");
 	if(cache == 0)
 		cache = 5000;
 
@@ -280,8 +248,6 @@ static struct json *radio_get_config(struct radio_handle *h)
 	if(c == NULL)
 		return NULL;
 
-	/* Set current radio list file */
-	json_set_string(c, "list_file", h->list_file);
 	/* Set current cache */
 	json_set_int(c, "cache", h->cache);
 
@@ -296,17 +262,9 @@ static int radio_close(struct radio_handle *h)
 	/* Stop radio */
 	radio_stop(h);
 
-	/* Free radio list */
-	if(h->list != NULL)
-		radio_list_close(h->list);
-
 	/* Stop and close shoutcast player */
 	if(h->shout != NULL)
 		shoutcast_close(h->shout);
-
-	/* Free list file */
-	if(h->list_file != NULL)
-		free(h->list_file);
 
 	free(h);
 
@@ -360,7 +318,7 @@ static int radio_httpd_cat_info(void *user_data, struct httpd_req *req,
 	char *info;
 
 	/* Get info about category */
-	info = radio_get_json_category_info(h, req->resource);
+	info = radio_get_json_category_info(h->db, req->resource);
 	if(info == NULL)
 	{
 		*res = httpd_new_response("Radio not found", 0, 0);
@@ -378,7 +336,7 @@ static int radio_httpd_info(void *user_data, struct httpd_req *req,
 	char *info;
 
 	/* Get info about radio */
-	info = radio_get_json_radio_info(h, req->resource);
+	info = radio_get_json_radio_info(h->db, req->resource);
 	if(info == NULL)
 	{
 		*res = httpd_new_response("Radio not found", 0, 0);
@@ -396,7 +354,7 @@ static int radio_httpd_list(void *user_data, struct httpd_req *req,
 	char *list = NULL;
 
 	/* Get Radio list */
-	list = radio_get_json_list(h, req->resource);
+	list = radio_get_json_list(h->db, req->resource);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("No radio list", 0, 0);
