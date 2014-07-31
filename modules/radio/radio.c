@@ -108,7 +108,7 @@ static int radio_stop(struct radio_handle *h)
 		shoutcast_close(h->shout);
 
 	if(h->radio != NULL)
-		radio_list_free_radio_item(h->radio);
+		radio_free_radio_item(h->radio);
 
 	h->stream = NULL;
 	h->shout = NULL;
