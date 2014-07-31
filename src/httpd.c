@@ -1236,7 +1236,18 @@ static struct MHD_Response *httpd_process_url(const char *url, int method,
 
 	/* Process URL */
 	*code = u->process(user_data, &req, (struct httpd_res **) &response);
+	if(*code == 0)
+		return NULL;
 
+	/* Callback failure */
+	if(*code < 0 && response == NULL)
+	{
+		*code = 500;
+		response = MHD_create_response_from_data(14, "Internal Error",
+							 MHD_NO, MHD_NO);
+	}
+
+	/* Create an empty response */
 	if(response == NULL)
 		response = MHD_create_response_from_data(0, "", MHD_NO, MHD_NO);
 
@@ -1527,6 +1538,16 @@ static int httpd_request(void *user_data, struct MHD_Connection *c,
 	{
 		response = httpd_response("Method not acceptable!");
 		code = 406;
+
+		/* Lock specific URL */
+		pthread_mutex_lock(&current_urls->mutex);
+
+		/* Decrement connection counter */
+		current_urls->count--;
+
+		/* Unlock specific URL */
+		pthread_mutex_unlock(&current_urls->mutex);
+
 		goto end;
 	}
 
