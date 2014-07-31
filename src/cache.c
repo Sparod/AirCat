@@ -546,9 +546,9 @@ flush:
 		/* Unlock cache */
 		cache_unlock(h);
 
-		/* Buffer is already fill: sleep 1ms */
+		/* Buffer is already fill: sleep 10ms */
 		if(len >= BUFFER_SIZE / 4)
-			usleep(1000);
+			usleep(10000);
 	}
 
 	/* Free buffer */
