@@ -17,5 +17,6 @@ EXTRA_DIST = config_file.h \
 	     sdp.h \
 	     utils.h \
 	     module.h \
+	     db.h \
 	     json.h
 

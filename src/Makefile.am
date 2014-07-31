@@ -25,6 +25,7 @@ aircat_SOURCES = main.c \
 		 output_alsa.c \
 		 resample.c \
 		 cache.c \
+		 db.c \
 		 utils.c
 
 aircat_LDADD = $(libssl_LIBS) \
@@ -36,6 +37,7 @@ aircat_LDADD = $(libssl_LIBS) \
 	       $(libmicrohttpd_LIBS) \
 	       $(libjsonc_LIBS) \
 	       $(libtag_LIBS) \
+	       $(libsqlite_LIBS) \
 	       -lpthread
 
 aircat_LDFLAGS = -export-dynamic
@@ -48,6 +50,7 @@ aircat_CFLAGS = -DMODULES_PATH='"${modules_DIR}"' \
 		 $(libavahi_CFLAGS) \
 		 $(libmicrohttpd_CFLAGS) \
 		 $(libjsonc_CFLAGS) \
+		 $(libsqlite_CFLAGS) \
 		 -Wall
 
 # C++ support and TagLib support

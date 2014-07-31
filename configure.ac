@@ -58,6 +58,9 @@ PKG_CHECK_MODULES(libtag, taglib >= 1.7, [
 	AC_DEFINE([HAVE_TAGLIB], 1, ["Use taglib"])
 ])
 
+# Check for sqlite3 for database support
+PKG_CHECK_MODULES(libsqlite, sqlite3 >= 3.6.19)
+
 # Init the Libtool
 LT_INIT([dlopen])
 

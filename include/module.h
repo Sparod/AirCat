@@ -23,10 +23,13 @@
 #include "avahi.h"
 #include "httpd.h"
 #include "json.h"
+#include "db.h"
 
 struct module_attr {
 	struct output_handle *output;
 	struct avahi_handle *avahi;
+	struct db_handle *db;
+	const char *path;
 	const struct json *config;
 };
 

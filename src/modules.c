@@ -41,7 +41,9 @@ struct module_list {
 	/* Module pointers */
 	void *lib;
 	void *handle;
+	char *path;
 	struct module *mod;
+	struct db_handle *db;
 	struct output_handle *out;
 	/* Next module in list */
 	struct module_list *next;
@@ -56,7 +58,7 @@ struct modules_handle {
 };
 
 int modules_open(struct modules_handle **handle, struct json *config,
-		 const char *path)
+		 const char *path, const char *mod_path)
 {
 	struct modules_handle *h;
 	struct module_list *l;
@@ -66,6 +68,9 @@ int modules_open(struct modules_handle **handle, struct json *config,
 	void *lib;
 	DIR *dir;
 	int len;
+
+	if(path == NULL || mod_path == NULL)
+		return -1;
 
 	/* Allocate structure */
 	*handle = malloc(sizeof(struct modules_handle));
@@ -112,7 +117,8 @@ int modules_open(struct modules_handle **handle, struct json *config,
 
 		/* Prepare module entry */
 		l = malloc(sizeof(struct module_list));
-		if(l == NULL)
+		if(l == NULL ||
+		   asprintf(&l->path, "%s/%s", mod_path, mod->id) < 0)
 		{
 			dlclose(lib);
 			continue;
@@ -126,6 +132,7 @@ int modules_open(struct modules_handle **handle, struct json *config,
 		l->mod = mod;
 		l->handle = NULL;
 		l->out = NULL;
+		l->db = NULL;
 
 		/* Add to list */
 		l->next = h->list;
@@ -325,10 +332,16 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 				l->mod->close(l->handle);
 			l->handle = NULL;
 
+			/* Close database */
+			if(l->db != NULL)
+				db_close(l->db);
+
 			/* Free output handler */
 			if(l->out != NULL)
 				output_close(l->out);
 
+			l->out = NULL;
+			l->db = NULL;
 			l->opened = 0;
 		}
 		else if(l->enabled != 0 && l->opened == 0)
@@ -336,9 +349,14 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			/* Create an output handler for module */
 			output_open(&l->out, outputs, l->name);
 
+			/* Create a db instance for module */
+			db_open(&l->db, l->path, l->id);
+
 			/* Prepare attributes */
-			attr.avahi = avahi;
+			attr.path = l->path;
 			attr.output = l->out;
+			attr.avahi = avahi;
+			attr.db = l->db;
 
 			/* Get module configuration from file */
 			attr.config = json_get(h->configs, l->id);
@@ -386,9 +404,17 @@ void modules_close(struct modules_handle *h)
 		l = h->list;
 		h->list = l->next;
 
-		/*Close the module */
+		/* Close the module */
 		if(l->mod->close != NULL && l->handle != NULL)
 			l->mod->close(l->handle);
+
+		/* Close output handle */
+		if(l->out != NULL)
+			output_close(l->out);
+
+		/* Close db handle */
+		if(l->db != NULL)
+			db_close(l->db);
 
 		/* Remove module */
 		dlclose(l->lib);
@@ -397,6 +423,7 @@ void modules_close(struct modules_handle *h)
 		FREE_STRING(l->id);
 		FREE_STRING(l->name);
 		FREE_STRING(l->description);
+		FREE_STRING(l->path);
 
 		/* Free entry */
 		free(l);

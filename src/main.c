@@ -45,6 +45,10 @@
 	#define MODULES_PATH "/usr/lib/aircat/"
 #endif
 
+#ifndef MODULES_USER_PATH
+	#define MODULES_USER_PATH "/var/aircat/"
+#endif
+
 /* Common modules */
 static struct outputs_handle *outputs = NULL;
 static struct avahi_handle *avahi = NULL;
@@ -188,7 +192,7 @@ int main(int argc, char* argv[])
 	cfg = config_get_json(config, "modules");
 
 	/* Open Modules */
-	modules_open(&modules, cfg, MODULES_PATH);
+	modules_open(&modules, cfg, MODULES_PATH, MODULES_USER_PATH);
 
 	/* Free Modules configuration */
 	json_free(cfg);

@@ -27,7 +27,7 @@ extern struct url_table modules_urls[];
 
 /* Basic functions */
 int modules_open(struct modules_handle **handle, struct json *config,
-		 const char *path);
+		 const char *path, const char *mod_path);
 void modules_close(struct modules_handle *h);
 
 /* Modules config */
