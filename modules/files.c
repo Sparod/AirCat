@@ -577,7 +577,7 @@ static struct json *files_get_file_json_object(const char *filename,
 	return tmp;
 }
 
-static char *files_get_json_status(struct files_handle *h, int add_pic)
+static char *files_get_json_status(struct files_handle *h)
 {
 	unsigned long played;
 	struct json *tmp;
@@ -598,7 +598,7 @@ static char *files_get_json_status(struct files_handle *h, int add_pic)
 
 	/* Create basic JSON object */
 	str = basename(h->playlist[idx].filename);
-	tmp = files_get_file_json_object(str, h->playlist[idx].format, add_pic);
+	tmp = files_get_file_json_object(str, h->playlist[idx].format, 0);
 	if(tmp != NULL)
 	{
 		/* Add curent postion and audio file length */
@@ -1025,13 +1025,9 @@ static int files_httpd_status(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	char *str = NULL;
-	int add_pic = 0;
-
-	if(strncmp(req->resource, "img", 3) == 0)
-		add_pic = 1;
 
 	/* Get status */
-	str = files_get_json_status(h, add_pic);
+	str = files_get_json_status(h);
 	if(str == NULL)
 	{
 		*res = httpd_new_response("Status error", 0, 0);
@@ -1039,6 +1035,44 @@ static int files_httpd_status(void *user_data, struct httpd_req *req,
 	}
 
 	*res = httpd_new_response(str, 1, 0);
+	return 200;
+}
+
+static int files_httpd_img(void *user_data, struct httpd_req *req,
+			   struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	struct tag_picture *p = NULL;
+	char *str = NULL;
+	int idx;
+
+	/* Lock playlist */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get current index */
+	idx = h->playlist_cur;
+	if(idx >= 0)
+		p = &h->playlist[idx].format->picture;
+	if(p == NULL || p->data == NULL || p->size == NULL)
+	{
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
+
+		/* No covert art available */
+		*res = httpd_new_response("No cover", 0, 0);
+		return 404;
+	}
+
+	/* Create response */
+	*res = httpd_new_data_response(p->data, p->size, 1, 1);
+
+	/* Add content type */
+	if(p->mime != NULL)
+		httpd_add_header(*res, HTTPD_HEADER_CONTENT_TYPE, p->mime);
+
+	/* Unlock playlist */
+	pthread_mutex_unlock(&h->mutex);
+
 	return 200;
 }
 
@@ -1096,7 +1130,8 @@ static struct url_table files_url[] = {
 	{"/prev",             0,             HTTPD_PUT, 0, &files_httpd_prev},
 	{"/next",             0,             HTTPD_PUT, 0, &files_httpd_next},
 	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_seek},
-	{"/status",           HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_status},
+	{"/status",           0            , HTTPD_GET, 0, &files_httpd_status},
+	{"/img",              0            , HTTPD_GET, 0, &files_httpd_img},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{0, 0, 0}
 };
