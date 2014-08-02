@@ -1353,7 +1353,19 @@ static int httpd_auth_by_session(const char *url, int method,
 
 	/* Check session */
 	if(req->session != NULL && req->session->logged != 0)
+	{
+		/* Logout and revoke session */
+		if(strcmp(url, "/logout") == 0)
+		{
+			/* Set expiration time to zero: remove session */
+			req->session->time = 0;
+
+			goto redirect;
+		}
+
+		/* Continue request processing */
 		return HTTPD_CONTINUE;
+	}
 
 redirect:
 	/* Create response */
