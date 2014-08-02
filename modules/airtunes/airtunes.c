@@ -1238,24 +1238,21 @@ static int airtunes_httpd_img(void *user_data, struct httpd_req *req,
 		if(strcmp(s->id, req->resource) == 0)
 			break;
 	}
-	if(s == NULL)
+	if(s == NULL || s->img == NULL || s->img_len != s->img_size)
 	{
 		/* Unlock mutex */
 		pthread_mutex_unlock(&h->mutex);
 
-		*res = httpd_new_response("Stream not found", 0, 0);
-		return 400;
+		*res = httpd_new_response("No stream/cover art found", 0, 0);
+		return 404;
 	}
 
-	/* Get image from stream */
-	if(s->img != NULL && s->img_type != NULL && s->img_len == s->img_size)
-	{
-		/* Create response */
-		*res = httpd_new_data_response(s->img, s->img_len, 1, 1);
+	/* Create response */
+	*res = httpd_new_data_response(s->img, s->img_len, 1, 1);
 
-		/* Add content type */
+	/* Add content type */
+	if(s->img_type != NULL)
 		httpd_add_header(*res, HTTPD_HEADER_CONTENT_TYPE, s->img_type);
-	}
 
 	/* Unlock mutex */
 	pthread_mutex_unlock(&h->mutex);
