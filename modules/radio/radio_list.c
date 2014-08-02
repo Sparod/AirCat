@@ -24,6 +24,8 @@
 #include "radio_list.h"
 #include "json.h"
 
+#define RADIO_LIST_DEFAULT_COUNT 25
+
 /* Get a radio by id */
 struct radio_item *radio_get_radio_item(struct db_handle *db, const char *id)
 {
@@ -284,13 +286,22 @@ static int category_to_json(void *user_data, int col_count, char **values,
 	return 0;
 }
 
-char *radio_get_json_list(struct db_handle *db, const char *id)
+char *radio_get_json_list(struct db_handle *db, const char *id,
+			  unsigned long page, unsigned long count)
 {
 	struct json *root, *list;
+	char limit[30] = "";
 	char *str = NULL;
 	long p_id;
 	char *sql;
 	int len;
+
+	/* Prepare SQL LIMIT */
+	if(page == 0)
+		page = 1;
+	if(count == 0)
+		count = RADIO_LIST_DEFAULT_COUNT;
+	snprintf(limit, 30, "LIMIT %lu, %lu", (page-1) * count, count);
 
 	if(id != NULL && strcmp(id, "all") == 0)
 	{
@@ -299,9 +310,17 @@ char *radio_get_json_list(struct db_handle *db, const char *id)
 		if(list == NULL)
 			return NULL;
 
+		/* Prepare SQL */
+		len = asprintf(&sql, "SELECT id,name,url,description "
+				     "FROM radio_list "
+				     "ORDER BY name ASC %s", limit);
+
 		/* List all radios */
-		db_exec(db, "SELECT id,name,url,description FROM radio_list",
-			&radio_to_json, list);
+		if(len > 0)
+		{
+			db_exec(db, sql, &radio_to_json, list);
+			free(sql);
+		}
 
 		/* Get string from JSON object */
 		str = strdup(json_export(list));
@@ -326,7 +345,8 @@ char *radio_get_json_list(struct db_handle *db, const char *id)
 
 		/* Prepare SQL */
 		len = asprintf(&sql, "SELECT id,name FROM category_list "
-				     "WHERE p_id = '%ld'", p_id);
+				     "WHERE p_id = '%ld' "
+				     "ORDER BY name ASC %s", p_id, limit);
 		if(len < 0)
 		{
 			json_free(list);
@@ -350,7 +370,8 @@ char *radio_get_json_list(struct db_handle *db, const char *id)
 				     "FROM radio_list AS r "
 				     "INNER JOIN radio_category AS rc "
 				     "ON r.id = rc.rad_id "
-				     "WHERE rc.cat_id = '%ld'", p_id);
+				     "WHERE rc.cat_id = '%ld' "
+				     "ORDER BY name ASC %s", p_id, limit);
 
 		if(len < 0)
 		{

@@ -45,7 +45,8 @@ void radio_free_category_item(struct category_item *category);
 /* JSON list */
 char *radio_get_json_category_info(struct db_handle *db, const char *id);
 char *radio_get_json_radio_info(struct db_handle *db, const char *id);
-char *radio_get_json_list(struct db_handle *db, const char *id);
+char *radio_get_json_list(struct db_handle *db, const char *id,
+			  unsigned long page, unsigned long count);
 
 #endif
 

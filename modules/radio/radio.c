@@ -351,10 +351,22 @@ static int radio_httpd_list(void *user_data, struct httpd_req *req,
 			    struct httpd_res **res)
 {
 	struct radio_handle *h = user_data;
+	unsigned long page = 0, count = 0;
+	const char *value;
 	char *list = NULL;
 
+	/* Get page */
+	value = httpd_get_query(req, "page");
+	if(value != NULL)
+		page = strtoul(value, NULL, 10);
+
+	/* Get entries per page */
+	value = httpd_get_query(req, "count");
+	if(value != NULL)
+		count = strtoul(value, NULL, 10);
+
 	/* Get Radio list */
-	list = radio_get_json_list(h->db, req->resource);
+	list = radio_get_json_list(h->db, req->resource, page, count);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("No radio list", 0, 0);
