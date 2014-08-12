@@ -230,7 +230,7 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 		{22050, 24000, 16000, 0},
 		{11025, 8000, 8000, 0}
 	};
-	int mpeg, layer, padding;
+	int mp, mpeg, layer, padding;
 	unsigned long samplerate;
 	unsigned int bitrate;
 	int tmp;
@@ -246,10 +246,14 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 		{
 			/* Get Mpeg version */
 			mpeg = 3 - ((h->in_buffer[i+1] >> 3) & 0x03);
+			mp = mpeg;
 			if(mpeg == 2)
 				continue;
 			if(mpeg == 3)
+			{
 				mpeg = 2;
+				mp = 1;
+			}
 
 			/* Get Layer */
 			layer = 3 - ((h->in_buffer[i+1] >> 1) & 0x03);
@@ -260,20 +264,13 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 			tmp = (h->in_buffer[i+2] >> 4) & 0x0F;
 			if(tmp == 0 || tmp == 15)
 				continue;
-			else
-			{
-				if(mpeg != 2)
-					bitrate = bitrates[mpeg][layer][tmp];
-				else
-					bitrate = bitrates[1][layer][tmp];
-			}
+			bitrate = bitrates[mp][layer][tmp];
 
 			/* Get samplerate */
 			tmp = (h->in_buffer[i+2] >> 2) & 0x03;
 			if(tmp == 3)
 				continue;
-			else
-				samplerate = samplerates[mpeg][tmp];
+			samplerate = samplerates[mpeg][tmp];
 
 			/* Get padding */
 			padding = (h->in_buffer[i+2] >> 1) & 0x01;
@@ -284,6 +281,12 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 				/* Layer I */
 				len = ((12 * bitrate * 1000 / samplerate) +
 				       padding) * 4;
+			}
+			else if(mpeg > 0 && layer == 2)
+			{
+				/* MPEG 2 and 2.5 in layer III */
+				len = (72 * bitrate * 1000 / samplerate) +
+				      padding;
 			}
 			else
 			{
