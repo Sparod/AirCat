@@ -19,6 +19,7 @@
 #ifndef _DEMUX_H
 #define _DEMUX_H
 
+#include "file_format.h"
 #include "format.h"
 #include "stream.h"
 

@@ -49,6 +49,11 @@ unsigned int samplerates[3][4] = {
 	{11025, 8000, 8000, 0}
 };
 
+unsigned int samples[2][3] = {
+	{384, 1152, 1152},
+	{384, 1152, 576}
+};
+
 struct mp3_frame {
 	unsigned char mpeg; /* 0: MPEG 1, 1: MPEG 2, 2: MPEG 2.5 */
 	unsigned char layer; /* 0: layer 1, 1: layer 2, 2: layer 3 */
@@ -57,6 +62,7 @@ struct mp3_frame {
 	unsigned char padding;
 	unsigned char channels; /* 0: Mono, 1: Stereo, 2: Joint Stereo,
 				   3: Dual channel */
+	unsigned int samples;
 	unsigned int length;
 };
 
@@ -64,10 +70,11 @@ struct demux {
 	/* Stream */
 	struct stream_handle *stream;
 	const unsigned char *buffer;
-	unsigned long size;
 	/* Stream length */
 	unsigned long duration;
 	unsigned long length;
+	/* Stream format */
+	struct file_format format;
 	/* Xing/VBRI specific */
 	unsigned long nb_bytes;
 	unsigned int nb_frame;
@@ -88,6 +95,8 @@ struct demux {
 static int demux_mp3_parse_header(const unsigned char *buffer,
 				  unsigned int size, struct mp3_frame *f)
 {
+	int mp;
+
 	if(size < 4)
 		return -1;
 
@@ -97,10 +106,14 @@ static int demux_mp3_parse_header(const unsigned char *buffer,
 
 	/* Get Mpeg version */
 	f->mpeg = 3 - ((buffer[1] >> 3) & 0x03);
+	mp = f->mpeg;
 	if(f->mpeg == 2)
 		return -1;
 	if(f->mpeg == 3)
+	{
 		f->mpeg = 2;
+		mp = 1;
+	}
 
 	/* Get Layer */
 	f->layer = 3 - ((buffer[1] >> 1) & 0x03);
@@ -111,20 +124,13 @@ static int demux_mp3_parse_header(const unsigned char *buffer,
 	f->bitrate = (buffer[2] >> 4) & 0x0F;
 	if(f->bitrate == 0 || f->bitrate == 15)
 		return -1;
-	else
-	{
-		if(f->mpeg != 2)
-			f->bitrate = bitrates[f->mpeg][f->layer][f->bitrate];
-		else
-			f->bitrate = bitrates[1][f->layer][f->bitrate];
-	}
+	f->bitrate = bitrates[mp][f->layer][f->bitrate];
 
 	/* Get samplerate */
 	f->samplerate = (buffer[2] >> 2) & 0x03;
 	if(f->samplerate == 3)
 		return -1;
-	else
-		f->samplerate = samplerates[f->mpeg][f->samplerate];
+	f->samplerate = samplerates[f->mpeg][f->samplerate];
 
 	/* Get padding */
 	f->padding = (buffer[2] >> 1) & 0x01;
@@ -132,12 +138,21 @@ static int demux_mp3_parse_header(const unsigned char *buffer,
 	/* Get channel count */
 	f->channels = (((buffer[3] >> 6) & 0x03) + 1) % 4;
 
-	/* Calculate length */
+	/* Get samples count */
+	f->samples = samples[mp][f->layer];
+
+	/* Calculate frame length */
 	if(f->layer == 0)
 	{
 		/* Layer I */
 		f->length = ((12 * f->bitrate * 1000 / f->samplerate) +
 			    f->padding) * 4;
+	}
+	else if(f->mpeg > 0 && f->layer == 2)
+	{
+		/* MPEG 2 and 2.5 in layer III */
+		f->length = (72 * f->bitrate * 1000 / f->samplerate) +
+			     f->padding;
 	}
 	else
 	{
@@ -359,8 +374,6 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	memset(d, 0, sizeof(struct demux));
 	d->stream = stream;
 	d->buffer = buffer;
-	d->size = stream_get_size(stream);
-	d->duration = (stream_get_format(stream))->length;
 	d->length = stream_get_size(stream);
 
 	/* Move to first frame */
@@ -379,6 +392,24 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	/* Update position of stream */
 	d->offset = first + id3_size;
 
+	/* Calculate stream duration */
+	if(d->nb_frame > 0)
+	{
+		/* Calculate duration with XING/VBRI headers */
+		d->duration = frame.samples * d->nb_frame / frame.samplerate;
+	}
+	else if(d->length > 0)
+	{
+		/* Estimate duration assuming bitrate is constant */
+		d->duration = (d->length - d->offset) / (frame.bitrate * 125);
+	}
+
+	/* Fill format */
+	d->format.samplerate = frame.samplerate;
+	d->format.channels = frame.channels;
+	d->format.bitrate = frame.bitrate;
+	d->format.length = d->duration;
+
 	/* Update samplerate and channels */
 	*samplerate = frame.samplerate;
 	if(frame.channels == 0)
@@ -391,7 +422,7 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 
 struct file_format *demux_mp3_get_format(struct demux *d)
 {
-	return stream_get_format(d->stream);
+	return &d->format;
 }
 
 int demux_mp3_get_dec_config(struct demux *d, int *codec,

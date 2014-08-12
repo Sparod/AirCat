@@ -48,6 +48,8 @@ struct demux {
 	const unsigned char *buffer;
 	unsigned long buffer_size;
 	unsigned long size;
+	/* Stream format */
+	struct file_format format;
 	/* MP4 Atoms */
 	/* mdhd atom */
 	int32_t mdhd_time_scale;
@@ -725,6 +727,15 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 	d->cur_chunk = 0;
 	d->cur_offset = d->stco_chunk_offset[0];
 
+	/* Fill format */
+	d->format.samplerate = d->mp4a_samplerate;
+	d->format.channels = d->mp4a_channel_count;
+	d->format.bitrate = d->esds_avg_bitrate / 1000;
+
+	/* Calculate stream duration */
+	if(d->mdhd_time_scale != 0)
+		d->format.length = d->mdhd_duration / d->mdhd_time_scale;
+
 	/* Update samplerate and channels */
 	*samplerate = d->mp4a_samplerate;
 	*channels = d->mp4a_channel_count;
@@ -732,10 +743,9 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 	return 0;
 }
 
-
 struct file_format *demux_mp4_get_format(struct demux *d)
 {
-	return stream_get_format(d->stream);
+	return &d->format;
 }
 
 int demux_mp4_get_dec_config(struct demux *d, int *codec,
@@ -755,14 +765,17 @@ ssize_t demux_mp4_next_frame(struct demux *d)
 	if(d->cur_sample >= d->num_samples)
 		return -1;
 
+	/* Seek to next frame */
+	if(stream_seek(d->stream, d->cur_offset, SEEK_SET) < 0)
+		return -1;
+
 	/* Read frame */
-	stream_seek(d->stream, d->cur_offset, SEEK_SET);
 	size = stream_read(d->stream, d->cur_sample_size);
 
 	/* Update current sample */
 	d->cur_sample++;
 	if(d->cur_sample >= d->num_samples)
-		return -1;
+		return size;
 
 	/* Update current sample counter in current chunk */
 	d->cur_chunk_sample++;

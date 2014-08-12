@@ -47,11 +47,16 @@ int demux_open(struct demux_handle **handle, struct stream_handle *stream,
 	/* Init handle */
 	memset(h, 0, sizeof(struct demux_handle));
 
-	/* Find demuxer */
+	/* Get content type */
 	type = stream_get_content_type(stream);
+	if(type == NULL)
+		return -1;
+
+	/* Find demuxer */
 	if(strcmp(type, "audio/mpeg") == 0)
 		memcpy(h, &demux_mp3, sizeof(struct demux_handle));
-	else if(strcmp(type, "audio/mp4") == 0)
+	else if(strcmp(type, "audio/mp4") == 0 ||
+		strcmp(type, "video/mp4") == 0 )
 		memcpy(h, &demux_mp4, sizeof(struct demux_handle));
 	else
 		return -1;
