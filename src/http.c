@@ -503,43 +503,57 @@ ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
 {
 	struct timeval tv;
 	fd_set readfs;
+	ssize_t len = 0;
 	ssize_t ret;
 
 	if(h == NULL || h->sock < 0)
 		return -1;
 
-	if(timeout >= 0)
+	/* Get all buffer */
+	while(size > 0)
 	{
-		/* Prepare a select */
-		FD_ZERO(&readfs);
-		FD_SET(h->sock, &readfs);
+		/* Uses a timeout */
+		if(timeout >= 0)
+		{
+			/* Prepare a select */
+			FD_ZERO(&readfs);
+			FD_SET(h->sock, &readfs);
 
-		/* Set timeout */
-		tv.tv_sec = 0;
-		tv.tv_usec = timeout*1000;
+			/* Set timeout */
+			tv.tv_sec = 0;
+			tv.tv_usec = timeout*1000;
 
-		if(select(h->sock + 1, &readfs, NULL, NULL, &tv) < 0)
-			return -1;
+			/* Do select */
+			ret = select(h->sock + 1, &readfs, NULL, NULL, &tv);
+			if(ret < 0)
+				return -1;
+
+			/* Timeout */
+			if(ret == 0)
+				break;
+		}
+
+		/* Read data from TCP socket */
+		if(timeout == -1 || FD_ISSET(h->sock, &readfs))
+		{
+	#ifdef HAVE_OPENSSL
+			if(h->is_ssl)
+				ret = SSL_read(h->ssl, buffer, size);
+			else
+	#endif
+				ret = read(h->sock, buffer, size);
+
+			/* End of stream */
+			if(ret <= 0)
+				return -1;
+
+			len += ret;
+			buffer += ret;
+			size -= ret;
+		}
 	}
 
-	/* Read data from TCP socket */
-	if(timeout == -1 || FD_ISSET(h->sock, &readfs))
-	{
-#ifdef HAVE_OPENSSL
-		if(h->is_ssl)
-			ret = SSL_read(h->ssl, buffer, size);
-		else
-#endif
-			ret = read(h->sock, buffer, size);
-
-		/* End of stream */
-		if(ret <= 0)
-			return -1;
-
-		return ret;
-	}
-
-	return 0;
+	return len;
 }
 
 void http_close_connection(struct http_handle *h)
