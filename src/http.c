@@ -103,18 +103,24 @@ int http_set_option(struct http_handle *h, int option, char *value)
 	switch (option)
 	{
 		case HTTP_USER_AGENT:
+			if(h->user_agent != NULL)
+				free(h->user_agent);
 			h->user_agent = strdup(value);
 			break;
 		case HTTP_PROXY:
 			h->proxy_use = strcmp(value, "yes") == 0 ? 1 : 0;
 			break;
 		case HTTP_PROXY_HOST:
+			if(h->proxy_hostname != NULL)
+				free(h->proxy_hostname);
 			h->proxy_hostname = strdup(value);
 			break;
 		case HTTP_PROXY_PORT:
 			h->proxy_port = atoi(value);
 			break;
 		case HTTP_EXTRA_HEADER:
+			if(h->extra != NULL)
+				free(h->extra);
 			h->extra = strdup(value);
 			break;
 		case HTTP_FOLLOW_REDIRECT:
@@ -492,12 +498,12 @@ char *http_get_header(struct http_handle *h, const char *name,
 	return NULL;
 }
 
-int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
-		      long timeout)
+ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
+			  size_t size, long timeout)
 {
 	struct timeval tv;
 	fd_set readfs;
-	int ret;
+	ssize_t ret;
 
 	if(h == NULL || h->sock < 0)
 		return -1;
@@ -536,11 +542,8 @@ int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
 	return 0;
 }
 
-void http_close(struct http_handle *h)
+void http_close_connection(struct http_handle *h)
 {
-	if(h == NULL)
-		return;
-
 	/* Close socket */
 	if(h->sock >= 0)
 	{
@@ -554,6 +557,7 @@ void http_close(struct http_handle *h)
 		}
 #endif
 		close(h->sock);
+		h->sock = -1;
 	}
 
 	/* Free headers */
@@ -561,6 +565,15 @@ void http_close(struct http_handle *h)
 
 	/* Free hostname */
 	FREE_STR(h->hostname);
+}
+
+void http_close(struct http_handle *h)
+{
+	if(h == NULL)
+		return;
+
+	/* Close connection */
+	http_close_connection(h);
 
 	/* Free config strings */
 	FREE_STR(h->user_agent);

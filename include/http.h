@@ -44,8 +44,10 @@ char *http_get_header(struct http_handle *h, const char *name,
 		      int case_sensitive);
 
 #define http_read(h, b, s) http_read_timeout(h, b, s, -1)
-int http_read_timeout(struct http_handle *h, unsigned char *buffer, int size,
-		      long timeout);
+ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
+			  size_t size, long timeout);
+
+void http_close_connection(struct http_handle *h);
 
 void http_close(struct http_handle *h);
 
