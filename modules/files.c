@@ -1053,7 +1053,7 @@ static int files_httpd_img(void *user_data, struct httpd_req *req,
 	idx = h->playlist_cur;
 	if(idx >= 0)
 		p = &h->playlist[idx].format->picture;
-	if(p == NULL || p->data == NULL || p->size == NULL)
+	if(p == NULL || p->data == NULL || p->size == 0)
 	{
 		/* Unlock playlist */
 		pthread_mutex_unlock(&h->mutex);
