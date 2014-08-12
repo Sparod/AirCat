@@ -26,19 +26,23 @@ int stream_open(struct stream_handle **handle, const char *uri,
 const unsigned char *stream_get_buffer(struct stream_handle *h);
 size_t stream_get_buffer_size(struct stream_handle *h);
 const char *stream_get_content_type(struct stream_handle *h);
+int stream_is_seekable(struct stream_handle *h);
 void stream_close(struct stream_handle *h);
 
 /*
  * Read len bytes in stream and fill input buffer with it.
  * If len equal to 0, all allocated buffer is filled.
  */
-ssize_t stream_read(struct stream_handle *h, size_t len);
+#define stream_read(h, l) stream_read_timeout(h, l, -1)
+ssize_t stream_read_timeout(struct stream_handle *h, size_t len, long timeout);
 
 /*
  * Read len bytes more in stream and append to input buffer.
  * If len equal to 0, all allocated buffer is filled.
  */
-ssize_t stream_complete(struct stream_handle *h, size_t len);
+#define stream_complete(h, l) stream_complete_timeout(h, l, -1)
+ssize_t stream_complete_timeout(struct stream_handle *h, size_t len,
+				long timeout);
 
 /*
  * Move input buffer to fit with stream position passed. Input buffer position
