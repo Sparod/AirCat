@@ -1051,7 +1051,7 @@ static int files_httpd_img(void *user_data, struct httpd_req *req,
 
 	/* Get current index */
 	idx = h->playlist_cur;
-	if(idx >= 0)
+	if(idx >= 0 && h->playlist[idx].format != NULL)
 		p = &h->playlist[idx].format->picture;
 	if(p == NULL || p->data == NULL || p->size == 0)
 	{
