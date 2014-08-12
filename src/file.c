@@ -97,11 +97,6 @@ int file_open(struct file_handle **handle, const char *uri)
 	if(demux_open(&h->demux, h->stream, &samplerate, &channels) != 0)
 		return -1;
 
-	/* Get format from demuxer */
-	format = demux_get_format(h->demux);
-	if(format == NULL)
-		return -1;
-
 	/* Get decoder configuration from demuxer (useful for MP4) */
 	demux_get_dec_config(h->demux, &codec, &dec_config, &dec_config_size);
 
@@ -111,22 +106,11 @@ int file_open(struct file_handle **handle, const char *uri)
 		return -1;
 
 	/* Get file properties */
-	if(format->samplerate == 0 || format->channels == 0)
-	{
-		/* Get information from decoder */
-		h->samplerate = samplerate;
-		h->channels = channels;
-
-		/* Calculate stream length */
-		//h->length = h->file_size * 8 / decoder_get_bitrate(h->dec);
-	}
-	else
-	{
-		h->samplerate = format->samplerate;
-		h->channels = format->channels;
-		h->length = format->length;
-		h->bitrate = format->bitrate * 1000;
-	}
+	format = demux_get_format(h->demux);
+	h->samplerate = format->samplerate;
+	h->channels = format->channels;
+	h->length = format->length;
+	h->bitrate = format->bitrate * 1000;
 
 	/* Samplerate fix: bad samplerate and/or channels in mp4 header */
 	if(format->type == FILE_FORMAT_AAC &&
