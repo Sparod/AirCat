@@ -19,15 +19,12 @@
 #ifndef _STREAM_H
 #define _STREAM_H
 
-#include "file_format.h"
-
 struct stream_handle;
 
 int stream_open(struct stream_handle **handle, const char *uri,
 		unsigned char *buffer, size_t size);
 const unsigned char *stream_get_buffer(struct stream_handle *h);
 size_t stream_get_buffer_size(struct stream_handle *h);
-struct file_format *stream_get_format(struct stream_handle *h);
 const char *stream_get_content_type(struct stream_handle *h);
 void stream_close(struct stream_handle *h);
 

@@ -32,7 +32,6 @@ struct stream_handle {
 	/* URI to file */
 	char *uri;
 	char *content_type;
-	struct file_format *format;
 	/* File descriptor */
 	int fd;
 	long pos;
@@ -77,16 +76,6 @@ int stream_open(struct stream_handle **handle, const char *uri,
 	h->buffer_len = 0;
 	h->free_buffer = 0;
 
-	/* Get file format */
-	h->format = file_format_parse(uri, 0);
-	if(h->format != NULL)
-	{
-		if(h->format->type == FILE_FORMAT_MPEG)
-			h->content_type = strdup("audio/mpeg");
-		else if(h->format->type == FILE_FORMAT_AAC)
-			h->content_type = strdup("audio/mp4");
-	}
-
 	/* Allocate buffer if not specified */
 	if(buffer == NULL)
 	{
@@ -107,7 +96,8 @@ int stream_open(struct stream_handle **handle, const char *uri,
 		ext = &uri[strlen(uri)-4];
 		if(strcasecmp(ext, ".mp3") == 0)
 			h->content_type = strdup("audio/mpeg");
-		else if(strcasecmp(ext, ".mp4") == 0)
+		else if(strcasecmp(ext, ".m4a") == 0 ||
+			strcasecmp(ext, ".mp4") == 0)
 			h->content_type = strdup("audio/mp4");
 	}
 
@@ -122,11 +112,6 @@ const unsigned char *stream_get_buffer(struct stream_handle *h)
 size_t stream_get_buffer_size(struct stream_handle *h)
 {
 	return h->buffer_size;
-}
-
-struct file_format *stream_get_format(struct stream_handle *h)
-{
-	return h->format;
 }
 
 const char *stream_get_content_type(struct stream_handle *h)
@@ -247,10 +232,6 @@ void stream_close(struct stream_handle *h)
 	if(h->content_type != NULL)
 		free(h->content_type);
 	free(h->uri);
-
-	/* Free format */
-	if(h->format != NULL)
-		file_format_free(h->format);
 
 	/* Free handle */
 	free(h);
