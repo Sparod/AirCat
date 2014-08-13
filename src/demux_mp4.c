@@ -27,11 +27,12 @@
 #endif
 
 #include "demux.h"
+#include "id3.h"
 
 #define ATOM_CHECK(b, a) memcmp(&b[4], a, 4)
-#define ATOM_READ16(b) ((b)[0] << 8) | (b)[1];
+#define ATOM_READ16(b) ((b)[0] << 8) | (b)[1]
 #define ATOM_READ32(b) ((b)[0] << 24) | ((b)[1] << 16) | ((b)[2] << 8) | \
-		       (b)[3];
+		       (b)[3]
 #define ATOM_READ64(b) ((unsigned long long)(b)[0] << 56) | \
 		       ((unsigned long long)(b)[1] << 48) | \
 		       ((unsigned long long)(b)[2] << 40) | \
@@ -39,8 +40,8 @@
 		       ((unsigned long long)(b)[4] << 24) | \
 		       ((unsigned long long)(b)[5] << 16) | \
 		       ((unsigned long long)(b)[6] << 8) | \
-		       (unsigned long long)(b)[7];
-#define ATOM_LEN(b) ATOM_READ32(b)
+		       (unsigned long long)(b)[7]
+#define ATOM_LEN(b) (ATOM_READ32(b))
 
 struct demux {
 	/* Stream */
@@ -92,6 +93,18 @@ struct demux {
 	unsigned long cur_chunk_idx;
 	unsigned long cur_chunk;
 	unsigned long cur_offset;
+	/* Meta data */
+	char *title;
+	char *artist;
+	char *album;
+	char *comment;
+	char *genre;
+	char *year;
+	int track;
+	int total_track;
+	unsigned char *pic;
+	size_t pic_len;
+	char *pic_mime;
 };
 
 static int demux_mp4_find_chunk(struct demux *d, unsigned long sample,
@@ -606,6 +619,303 @@ static void demux_mp4_parse_track(struct demux *d)
 	stream_seek(d->stream, atom_size-count, SEEK_CUR);
 }
 
+static void demux_mp4_parse_txt(struct demux *d, char **str)
+{
+	unsigned long pos = 0;
+	unsigned long count;
+	unsigned long size;
+	unsigned long len;
+
+	/* Get size */
+	size = ATOM_LEN(d->buffer);
+	stream_read(d->stream, 8);
+	size -= 8;
+
+	/* Check sub-atom */
+	if(ATOM_CHECK(d->buffer, "data") == 0)
+	{
+		/* Get string length */
+		len = ATOM_LEN(d->buffer) - 16;
+
+		/* Skip version and flags */
+		stream_read(d->stream, 8);
+		size -= 16;
+
+		/* Free previous string */
+		if(*str != NULL)
+			free(*str);
+
+		/* Allocate new string */
+		*str = calloc(1, len + 1);
+		if(*str != NULL)
+		{
+			/* Copy string */
+			while(len > 0)
+			{
+				count = d->buffer_size;
+				if(count > len)
+					count = len;
+				count = stream_read(d->stream, count);
+				memcpy(*str + pos, d->buffer, count);
+				pos += count;
+				len -= count;
+				size -= count;
+			}
+		}
+	}
+
+	/* Go to next atom */
+	stream_seek(d->stream, size, SEEK_CUR);
+}
+
+static void demux_mp4_parse_trkn(struct demux *d)
+{
+	unsigned long size;
+
+	/* Get size */
+	size = ATOM_LEN(d->buffer);
+	stream_read(d->stream, 8);
+	size -= 8;
+
+	/* Check sub-atom */
+	if(ATOM_CHECK(d->buffer, "data") == 0 && ATOM_LEN(d->buffer) == 24)
+	{
+		/* Skip version and flags */
+		stream_read(d->stream, 10);
+		size -= 20;
+
+		/* Read track */
+		stream_read(d->stream, 2);
+		d->track = ATOM_READ16(d->buffer);
+
+		/* Read total tack */
+		stream_read(d->stream, 2);
+		d->total_track = ATOM_READ16(d->buffer);
+	}
+
+	/* Go to next atom */
+	stream_seek(d->stream, size, SEEK_CUR);
+}
+
+static void demux_mp4_parse_gnre(struct demux *d)
+{
+	unsigned long size;
+	uint16_t genre;
+
+	/* Get size */
+	size = ATOM_LEN(d->buffer);
+	stream_read(d->stream, 8);
+	size -= 8;
+
+	/* Check sub-atom */
+	if(ATOM_CHECK(d->buffer, "data") == 0 && ATOM_LEN(d->buffer) == 18)
+	{
+		/* Skip version and flags */
+		stream_read(d->stream, 8);
+		size -= 16;
+
+		/* Read genre index */
+		stream_read(d->stream, 2);
+		genre = ATOM_READ16(d->buffer);
+
+		/* Check genre */
+		if(genre > 0 || genre <= ID3v1_genres_count)
+		{
+			/* Free previous genre */
+			if(d->genre != NULL)
+				free(d->genre);
+
+			/* Copy genre */
+			d->genre = strdup(ID3v1_genres[genre-1]);
+		}
+	}
+
+	/* Go to next atom */
+	stream_seek(d->stream, size, SEEK_CUR);
+}
+
+static void demux_mp4_parse_covr(struct demux *d)
+{
+	unsigned long pos = 0;
+	unsigned long count;
+	unsigned long size;
+	unsigned long len;
+	uint32_t flags;
+
+	/* Get size */
+	size = ATOM_LEN(d->buffer);
+	stream_read(d->stream, 8);
+	size -= 8;
+
+	/* Check sub-atom */
+	if(ATOM_CHECK(d->buffer, "data") == 0)
+	{
+		/* Get length */
+		len =  ATOM_LEN(d->buffer) - 16;
+
+		/* Get flags for type */
+		stream_read(d->stream, 8);
+		flags = ATOM_READ32(d->buffer);
+		size -= 8;
+
+		/* Free previous buffer */
+		if(d->pic != NULL)
+			free(d->pic);
+		if(d->pic_mime != NULL)
+			free(d->pic_mime);
+		d->pic_mime = NULL;
+		d->pic_len = 0;
+
+		/* Allocate new buffer */
+		d->pic = malloc(len);
+		if(d->pic != NULL)
+		{
+			/* Copy length */
+			d->pic_len = len;
+
+			/* Copy data */
+			while(len > 0)
+			{
+				count = d->buffer_size;
+				if(count > len)
+					count = len;
+				count = stream_read(d->stream, count);
+				memcpy(d->pic + pos, d->buffer, count);
+				pos += count;
+				len -= count;
+				size -= count;
+			}
+
+			/* Generate mime */
+			if(flags == 13)
+				d->pic_mime = strdup("image/jpeg");
+			else if(flags == 14)
+				d->pic_mime = strdup("image/png");
+		}
+	}
+
+	/* Go to next atom */
+	stream_seek(d->stream, size, SEEK_CUR);
+}
+
+static void demux_mp4_parse_ilst(struct demux *d)
+{
+	unsigned long atom_size;
+	unsigned long count = 8;
+	unsigned long size;
+
+	/* Get size of current atom */
+	atom_size = ATOM_LEN(d->buffer);
+
+	/* Get all children atoms */
+	while(count < atom_size)
+	{
+		/* Size of sub-atom */
+		stream_read(d->stream, 8);
+		size = ATOM_LEN(d->buffer);
+
+		/* Process sub-atom */
+		if(ATOM_CHECK(d->buffer, "\251alb") == 0)
+			demux_mp4_parse_txt(d, &d->album);
+		else if(ATOM_CHECK(d->buffer, "\251ART") == 0)
+			demux_mp4_parse_txt(d, &d->artist);
+		else if(ATOM_CHECK(d->buffer, "\251cmt") == 0)
+			demux_mp4_parse_txt(d, &d->comment);
+		else if(ATOM_CHECK(d->buffer, "\251day") == 0)
+			demux_mp4_parse_txt(d, &d->year);
+		else if(ATOM_CHECK(d->buffer, "\251nam") == 0)
+			demux_mp4_parse_txt(d, &d->title);
+		else if(ATOM_CHECK(d->buffer, "\251gen") == 0)
+			demux_mp4_parse_txt(d, &d->genre);
+		else if(ATOM_CHECK(d->buffer, "trkn") == 0)
+			demux_mp4_parse_trkn(d);
+		else if(ATOM_CHECK(d->buffer, "gnre") == 0)
+			demux_mp4_parse_gnre(d);
+		else if(ATOM_CHECK(d->buffer, "covr") == 0)
+			demux_mp4_parse_covr(d);
+		else
+		{
+			/* Ignore other sub-atoms */
+			stream_seek(d->stream, size, SEEK_CUR);
+		}
+		count += size;
+	}
+
+	/* Finish atom reading */
+	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+}
+
+static void demux_mp4_parse_meta(struct demux *d)
+{
+	unsigned long atom_size;
+	unsigned long count = 12;
+	unsigned long size;
+
+	/* Get size of current atom */
+	atom_size = ATOM_LEN(d->buffer);
+
+	/* Skip version and flags */
+	stream_read(d->stream, 4);
+
+	/* Get all children atoms */
+	while(count < atom_size)
+	{
+		/* Size of sub-atom */
+		stream_read(d->stream, 8);
+		size = ATOM_LEN(d->buffer);
+
+		/* Process sub-atom */
+		if(ATOM_CHECK(d->buffer, "ilst") == 0)
+		{
+			/* Parse "ilst" atom */
+			demux_mp4_parse_ilst(d);
+		}
+		else
+		{
+			/* Ignore other sub-atoms */
+			stream_seek(d->stream, size, SEEK_CUR);
+		}
+		count += size;
+	}
+
+	/* Finish atom reading */
+	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+}
+
+static void demux_mp4_parse_udta(struct demux *d)
+{
+	unsigned long atom_size;
+	unsigned long count = 8;
+	unsigned long size;
+
+	/* Get size of current atom */
+	atom_size = ATOM_LEN(d->buffer);
+
+	/* Get all children atoms */
+	while(count < atom_size)
+	{
+		/* Size of sub-atom */
+		stream_read(d->stream, 8);
+		size = ATOM_LEN(d->buffer);
+
+		/* Process sub-atom */
+		if(ATOM_CHECK(d->buffer, "meta") == 0)
+		{
+			/* Parse "meta" atom */
+			demux_mp4_parse_meta(d);
+		}
+		else
+		{
+			/* Ignore other sub-atoms */
+			stream_seek(d->stream, size, SEEK_CUR);
+		}
+		count += size;
+	}
+
+	/* Finish atom reading */
+	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+}
+
 static void demux_mp4_parse_moov(struct demux *d)
 {
 	unsigned long atom_size;
@@ -614,6 +924,7 @@ static void demux_mp4_parse_moov(struct demux *d)
 
 	/* Get atom size */
 	atom_size = ATOM_LEN(d->buffer);
+
 
 	/* Get all children atoms */
 	while(count < atom_size)
@@ -627,6 +938,11 @@ static void demux_mp4_parse_moov(struct demux *d)
 		{
 			/* Parse "track" atom */
 			demux_mp4_parse_track(d);
+		}
+		else if(ATOM_CHECK(d->buffer, "udta") == 0)
+		{
+			/* Parse "udta" atom */
+			demux_mp4_parse_udta(d);
 		}
 		else
 		{
@@ -731,6 +1047,18 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 	d->format.samplerate = d->mp4a_samplerate;
 	d->format.channels = d->mp4a_channel_count;
 	d->format.bitrate = d->esds_avg_bitrate / 1000;
+	d->format.title = d->title;
+	d->format.artist = d->artist;
+	d->format.album = d->album;
+	d->format.comment = d->comment;
+	d->format.genre = d->genre;
+	d->format.track = d->track;
+	d->format.total_track = d->total_track;
+	if(d->year != NULL)
+		d->format.year = strtol(d->year, NULL, 10);
+	d->format.picture.data = d->pic;
+	d->format.picture.mime = d->pic_mime;
+	d->format.picture.size = d->pic_len;
 
 	/* Calculate stream duration */
 	if(d->mdhd_time_scale != 0)
@@ -874,6 +1202,14 @@ void demux_mp4_close(struct demux *d)
 	FREE_MP4(d->stts_sample_count);
 	FREE_MP4(d->stts_sample_delta);
 	FREE_MP4(d->esds_buffer);
+	FREE_MP4(d->title);
+	FREE_MP4(d->artist);
+	FREE_MP4(d->album);
+	FREE_MP4(d->comment);
+	FREE_MP4(d->genre);
+	FREE_MP4(d->year);
+	FREE_MP4(d->pic);
+	FREE_MP4(d->pic_mime);
 
 	/* Free handle */
 	free(d);
