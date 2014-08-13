@@ -26,6 +26,7 @@ aircat_SOURCES = main.c \
 		 resample.c \
 		 cache.c \
 		 db.c \
+		 id3.c \
 		 utils.c
 
 aircat_LDADD = $(libssl_LIBS) \
@@ -66,5 +67,6 @@ EXTRA_DIST = modules.h \
 	     decoder_pcm.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \
-	     decoder_alac.h
+	     decoder_alac.h \
+	     id3.h
 

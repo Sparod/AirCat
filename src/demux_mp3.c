@@ -26,6 +26,7 @@
 #endif
 
 #include "demux.h"
+#include "id3.h"
 
 unsigned int bitrates[2][3][15] = {
 	{ /* MPEG-1 */
@@ -90,6 +91,18 @@ struct demux {
 	unsigned int toc_frames;
 	/* First frame offset */
 	unsigned long offset;
+	/* Meta data */
+	char *title;
+	char *artist;
+	char *album;
+	char *comment;
+	char *genre;
+	int year;
+	int track;
+	int total_track;
+	unsigned char *pic;
+	size_t pic_len;
+	char *pic_mime;
 };
 
 static int demux_mp3_parse_header(const unsigned char *buffer,
@@ -286,12 +299,10 @@ static int demux_mp3_parse_vbri(struct mp3_frame *f,
 	if(d->toc_frames == 0 || d->toc_frames * (d->toc_count+1) < d->nb_frame)
 		return 0;
 
-
 	/* Calculate TOC size */
 	size = d->toc_size * d->toc_count;
 	if(f->length < 62 + size)
 		return 0;
-
 
 	/* Copy TOC */
 	d->vbri_toc = malloc(size);
@@ -301,11 +312,38 @@ static int demux_mp3_parse_vbri(struct mp3_frame *f,
 	return 0;
 }
 
+#define ID3V2_SIZE(b) (((b)[0] << 21) | ((b)[1] << 14) | ((b)[2] << 7) | (b)[3])
+
+static long demux_mp3_parse_id3(struct demux *d)
+{
+	long id3_size = 0;
+
+	/* Read 10 first bytes for ID3 header */
+	if(stream_read(d->stream, 10) != 10)
+		return -1;
+
+	/* Check ID3V2 tag */
+	if(memcmp(d->buffer, "ID3", 3) == 0)
+	{
+		/* Get ID3 size */
+		id3_size = ID3V2_SIZE(&d->buffer[6]);
+		id3_size += 10;
+
+		/* Add footer size */
+		if(d->buffer[5] & 0x20)
+			id3_size += 10;
+
+		/* Skip ID3 in file */
+		stream_seek(d->stream, id3_size, SEEK_CUR);
+	}
+
+	return id3_size;
+}
+
 int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 		   unsigned long *samplerate, unsigned char *channels)
 {
 	struct demux *d;
-	const unsigned char *buffer;
 	unsigned long id3_size = 0;
 	struct mp3_frame frame;
 	long first = -1;
@@ -313,55 +351,6 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	int i;
 
 	if(stream == NULL)
-		return -1;
-
-	/* Get stream buffer */
-	buffer = stream_get_buffer(stream);
-
-	/* Read 10 first bytes for ID3 header */
-	if(stream_read(stream, 10) != 10)
-		return -1;
-
-	/* Check ID3V2 tag */
-	if(memcmp(buffer, "ID3", 3) == 0)
-	{
-		/* Get ID3 size */
-		id3_size = (buffer[6] << 21) | (buffer[7] << 14) |
-		       (buffer[8] << 7) | buffer[9];
-		id3_size += 10;
-
-		/* Add footer size */
-		if(buffer[5] & 0x20)
-			id3_size += 10;
-
-		/* Skip ID3 in file */
-		stream_seek(stream, id3_size, SEEK_CUR);
-	}
-
-	/* Complete input buffer */
-	len = stream_complete(stream, 0);
-
-	/* Sync to first frame */
-	for(i = 0; i < len - 3; i++)
-	{
-		if(buffer[i] == 0xFF && (buffer[i+1] & 0xE0) == 0xE0)
-		{
-			/* Check header */
-			if(demux_mp3_parse_header(&buffer[i], 4, &frame)
-			   != 0)
-				continue;
-
-			/* Check next frame */
-			if(i + frame.length + 2 > len ||
-			   buffer[i+frame.length] != 0xFF ||
-			   (buffer[i+frame.length+1] & 0xE0) != 0xE0)
-				continue;
-
-			first = i;
-			break;
-		}
-	}
-	if(first < 0)
 		return -1;
 
 	/* Allocate structure */
@@ -373,16 +362,45 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	/* Init structure */
 	memset(d, 0, sizeof(struct demux));
 	d->stream = stream;
-	d->buffer = buffer;
+	d->buffer = stream_get_buffer(stream);
 	d->length = stream_get_size(stream);
+
+	/* Parse ID3v2 tags */
+	id3_size = demux_mp3_parse_id3(d);
+
+	/* Complete input buffer */
+	len = stream_complete(stream, 0);
+
+	/* Sync to first frame */
+	for(i = 0; i < len - 3; i++)
+	{
+		if(d->buffer[i] == 0xFF && (d->buffer[i+1] & 0xE0) == 0xE0)
+		{
+			/* Check header */
+			if(demux_mp3_parse_header(&d->buffer[i], 4, &frame)
+			   != 0)
+				continue;
+
+			/* Check next frame */
+			if(i + frame.length + 2 > len ||
+			   d->buffer[i+frame.length] != 0xFF ||
+			   (d->buffer[i+frame.length+1] & 0xE0) != 0xE0)
+				continue;
+
+			first = i;
+			break;
+		}
+	}
+	if(first < 0)
+		return -1;
 
 	/* Move to first frame */
 	stream_seek(stream, first, SEEK_CUR);
 	len = stream_complete(stream, 0);
 
 	/* Parse Xing/Lame/VBRI header */
-	if(demux_mp3_parse_xing(&frame, buffer, len, d) == 0 ||
-	   demux_mp3_parse_vbri(&frame, buffer, len, d) == 0)
+	if(demux_mp3_parse_xing(&frame, d->buffer, len, d) == 0 ||
+	   demux_mp3_parse_vbri(&frame, d->buffer, len, d) == 0)
 	{
 		/* Move to next frame */
 		first += frame.length;
@@ -409,6 +427,17 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	d->format.channels = frame.channels;
 	d->format.bitrate = frame.bitrate;
 	d->format.length = d->duration;
+	d->format.title = d->title;
+	d->format.artist = d->artist;
+	d->format.album = d->album;
+	d->format.comment = d->comment;
+	d->format.genre = d->genre;
+	d->format.track = d->track;
+	d->format.total_track = d->total_track;
+	d->format.year = d->year;
+	d->format.picture.data = d->pic;
+	d->format.picture.mime = d->pic_mime;
+	d->format.picture.size = d->pic_len;
 
 	/* Update samplerate and channels */
 	*samplerate = frame.samplerate;
@@ -513,6 +542,8 @@ unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
 	return pos;
 }
 
+#define FREE_STR(s) if(s != NULL) free(s)
+
 void demux_mp3_close(struct demux *d)
 {
 	if(d == NULL)
@@ -523,6 +554,15 @@ void demux_mp3_close(struct demux *d)
 		free(d->toc);
 	if(d->vbri_toc != NULL)
 		free(d->vbri_toc);
+
+	/* Free metadata */
+	FREE_STR(d->title);
+	FREE_STR(d->artist);
+	FREE_STR(d->album);
+	FREE_STR(d->comment);
+	FREE_STR(d->genre);
+	FREE_STR(d->pic);
+	FREE_STR(d->pic_mime);
 
 	/* Free handle */
 	free(d);
