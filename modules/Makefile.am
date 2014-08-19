@@ -4,7 +4,7 @@ LIBS = $(libjsonc_LIBS)
 moduledir = $(modules_DIR)
 
 # Files module
-libmodule_files_la_SOURCES = files.c
+libmodule_files_la_SOURCES = files/files.c
 
 # Radio module
 libmodule_radio_la_SOURCES = radio/radio.c \

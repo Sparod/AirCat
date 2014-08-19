@@ -1,5 +1,5 @@
 /*
- * files.h - A File manager module
+ * files.c - A Media library / File manager module
  *
  * Copyright (c) 2014   A. Dilly
  *
