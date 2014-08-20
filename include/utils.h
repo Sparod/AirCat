@@ -32,5 +32,27 @@ int parse_url(const char *url, int *protocol, char **hostname,
 /* Random string generator */
 char *random_string(int size);
 
+/* Custom dirent structure */
+struct _dirent {
+	ino_t inode;
+	mode_t mode;
+	off_t size;
+	time_t atime;
+	time_t mtime; 
+	time_t ctime;
+	char name[256];
+};
+
+/* Custom alphasort function */
+int _alphasort(const struct _dirent **a, const struct _dirent **b);
+
+/* Custom alphasort function: folder are first in list */
+int _alphasort_first(const struct _dirent **a, const struct _dirent **b);
+
+/* Custom scandir function */
+int _scandir(const char *path, struct _dirent ***list,
+	     int (*selector) (const struct _dirent *),
+	     int (*compar)(const struct _dirent **, const struct _dirent **));
+
 #endif
 

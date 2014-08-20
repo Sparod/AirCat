@@ -16,11 +16,15 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -222,5 +226,95 @@ char *random_string(int size)
 	str[size] = '\0';
 
 	return str;
+}
+
+int _alphasort(const struct _dirent **a, const struct _dirent **b)
+{
+	return strcoll((*a)->name, (*b)->name);
+}
+
+int _alphasort_first(const struct _dirent **a, const struct _dirent **b)
+{
+	if(((*a)->mode & S_IFMT) != ((*b)->mode & S_IFMT))
+		return ((*a)->mode & S_IFDIR) ? 0 : 1;
+
+	return strcoll((*a)->name, (*b)->name);
+}
+
+int _scandir(const char *path, struct _dirent ***list,
+	     int (*selector) (const struct _dirent *),
+	     int (*compar)(const struct _dirent **, const struct _dirent **))
+{
+	struct _dirent **_list = NULL;
+	struct _dirent **new;
+	struct dirent *dir;
+	struct stat st;
+	size_t count = 0;
+	size_t size = 0;
+	size_t nlen = 0;
+	char *file;
+	DIR *dp;
+
+	/* Open directory */
+	dp = opendir(path);
+	if (dp == NULL)
+		return -1;
+
+	/* List all files */
+	while((dir = readdir(dp)) != NULL)
+	{
+		/* Skip . and .. */
+		if(dir->d_name[0] == '.' && (dir->d_name[1] == '\0' ||
+		   (dir->d_name[1] == '.' && dir->d_name[2] == '\0')))
+			continue;
+
+		/* Reallocate list */
+		if(count == size)
+		{
+			if(size == 0)
+				size = 10;
+			else
+				size *= 2;
+			new = realloc(_list, size * sizeof(struct _dirent *));
+			if(new == NULL)
+				break;
+			_list = new;
+		}
+
+		/* Allocate new entry */
+		nlen = _D_ALLOC_NAMLEN(dir);
+		_list[count] = malloc(sizeof(struct _dirent) - 256 + nlen);
+		if(_list[count] == NULL)
+			break;
+
+		/* Generate complete file path */
+		asprintf(&file, "%s/%s", path, dir->d_name);
+		if(file == NULL)
+			break;
+
+		/* Get stat of file */
+		stat(file, &st);
+		free(file);
+
+		/* Copy data */
+		_list[count]->inode = dir->d_ino;
+		_list[count]->mode = st.st_mode;
+		_list[count]->size = st.st_size;
+		_list[count]->atime = st.st_atime;
+		_list[count]->mtime = st.st_mtime;
+		_list[count]->ctime = st.st_ctime;
+		memcpy(_list[count]->name, dir->d_name, nlen);
+		count++;
+	}
+
+	/* Close directory */
+	closedir(dp);
+
+	/* Sort list */
+	qsort(_list, count, sizeof(struct _dirent *), (__compar_fn_t) compar);
+
+	/* Return values */
+	*list = _list;
+	return count;
 }
 
