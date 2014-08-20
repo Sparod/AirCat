@@ -39,7 +39,11 @@ void *db_get_db(struct db_handle *h);
 int db_attach(struct db_handle *h, const char *file, const char *name);
 int db_exec(struct db_handle *h, const char *sql, db_cb callback,
 	    void *user_data);
+int64_t db_get_last_id(struct db_handle *h);
 void db_close(struct db_handle *h);
+
+char *db_mprintf(const char *str, ...);
+void db_free(void *ptr);
 
 struct db_query *db_prepare(struct db_handle *h, const char *sql, size_t len);
 int db_step(struct db_query *query);

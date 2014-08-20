@@ -137,6 +137,11 @@ int db_exec(struct db_handle *h, const char *sql, db_cb callback,
 	return ret;
 }
 
+int64_t db_get_last_id(struct db_handle *h)
+{
+	return sqlite3_last_insert_rowid(h->db);
+}
+
 void db_close(struct db_handle *h)
 {
 	if(h == NULL)
@@ -154,6 +159,23 @@ void db_close(struct db_handle *h)
 
 	/* Free structure */
 	free(h);
+}
+
+char *db_mprintf(const char *str, ...)
+{
+	char *result;
+	va_list vl;
+
+	va_start(vl, str);
+	result = sqlite3_vmprintf(str, vl);
+	va_end(vl);
+
+	return result;
+}
+
+void db_free(void *ptr)
+{
+	sqlite3_free(ptr);
 }
 
 struct db_query *db_prepare(struct db_handle *h, const char *sql, size_t len)
