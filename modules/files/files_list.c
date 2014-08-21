@@ -177,20 +177,74 @@ static int files_list_update_file(struct db_handle *db, const char *path,
 	return ret;
 }
 
+static int files_list_add_meta(struct db_handle *db, struct json *root,
+			       const char *path, const char *file,
+			       int64_t path_id, int64_t mtime, int parse)
+{
+	struct db_query *query;
+	char *sql = NULL;
+	int up = 0;
+	int ret;
+
+	/* Prepare SQL request */
+	sql = db_mprintf("SELECT id,mtime,title,artist,album "
+			 "FROM song WHERE file='%q' AND path_id='%ld'",
+			 file, path_id);
+	if(sql == NULL)
+		goto end;
+
+retry:
+	/* Prepare request */
+	query = db_prepare(db, sql, -1);
+	if(query == NULL)
+		goto end;
+
+	/* Do request */
+	ret = db_step(query);
+
+	/* File not present or out of date in database */
+	if(!up && (ret != 0 || db_column_int64(query, 1) != mtime))
+	{
+		/* Skip parsing */
+		if(!parse)
+			goto end;
+
+		/* Add or update file in database */
+		files_list_update_file(db, path, file, mtime, path_id,
+				       db_column_int64(query, 0));
+
+		/* Finalize request */
+		db_finalize(query);
+
+		/* Retry SQL request */
+		up = 1;
+		goto retry;
+	}
+
+	/* Fill JSON object */
+	json_set_string(root, "title", db_column_text(query, 2));
+	json_set_string(root, "artist", db_column_text(query, 3));
+	json_set_string(root, "album", db_column_text(query, 4));
+
+end:
+	/* Finalize request */
+	db_finalize(query);
+	if(sql != NULL)
+		db_free(sql);
+
+	return 0;
+}
+
 struct json *files_list_file(struct db_handle *db, const char *path,
 			     const char *uri)
 {
 	struct json *root = NULL;
-	struct db_query *query;
 	struct stat st;
 	char *real_path = NULL;
 	char *file_path = NULL;
 	char *uri_path = NULL;
-	char *sql = NULL;
 	char *file;
 	int64_t path_id;
-	int up = 0;
-	int ret;
 
 	/* Check URI */
 	if(uri == NULL || *uri == '\0')
@@ -227,49 +281,13 @@ struct json *files_list_file(struct db_handle *db, const char *path,
 	if(files_list_get_path(db, uri_path, &path_id, 0) != 0)
 		goto end;
 
-	/* Prepare SQL request */
-	sql = db_mprintf("SELECT id,mtime,title,artist,album "
-			 "FROM song WHERE file='%q' AND path_id='%ld'",
-			 file, path_id);
-	if(sql == NULL)
-		goto end;
-
-retry:
-	/* Prepare request */
-	query = db_prepare(db, sql, -1);
-	if(query == NULL)
-		goto end;
-
-	/* Do request */
-	ret = db_step(query);
-
-	/* File not present or out of date in database */
-	if(!up && (ret != 0 || db_column_int64(query, 1) != st.st_mtime))
-	{
-		/* Add or update file in database */
-		files_list_update_file(db, real_path, file, st.st_mtime,
-				       path_id, db_column_int64(query, 0));
-
-		/* Finalize request */
-		db_finalize(query);
-
-		/* Retry SQL request */
-		up = 1;
-		goto retry;
-	}
-
 	/* Fill JSON object */
 	json_set_string(root, "file", file);
-	json_set_string(root, "title", db_column_text(query, 2));
-	json_set_string(root, "artist", db_column_text(query, 3));
-	json_set_string(root, "album", db_column_text(query, 4));
 
-	/* Finalize request */
-	db_finalize(query);
+	/* Add meta to JSON object */
+	files_list_add_meta(db, root, real_path, file, path_id, st.st_mtime, 1);
 
 end:
-	if(sql != NULL)
-		db_free(sql);
 	if(uri_path != NULL)
 		free(uri_path);
 	if(real_path != NULL)
@@ -371,6 +389,11 @@ char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 
 			/* Add file name */
 			json_set_string(tmp, "file", list_dir[i]->name);
+
+			/* Add meta to JSON if available */
+			files_list_add_meta(db, tmp, real_path,
+					    list_dir[i]->name, path_id,
+					    list_dir[i]->mtime, 0);
 
 			/* Add to array */
 			if(json_array_add(root, tmp) != 0)
