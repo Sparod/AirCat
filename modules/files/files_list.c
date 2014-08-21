@@ -21,6 +21,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "file_format.h"
 #include "files_list.h"
@@ -46,6 +47,7 @@ void files_list_init(struct db_handle *db)
 			 " title TEXT,"
 			 " artist TEXT,"
 			 " album TEXT,"
+			 " cover TEXT,"
 			 " mtime INTEGER"
 			 ")");
 	if(sql == NULL)
@@ -132,19 +134,90 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	return 0;
 }
 
-#define FILES_SQL_INSERT "INSERT INTO song (file,title,artist,album,path_id," \
-			 "mtime) " \
-			 "VALUES ('%q', '%q', '%q', '%q', %ld, %ld)"
+static char *files_list_save_cover(struct file_format *format, const char *path,
+				   const char *file)
+{
+	char *file_path;
+	char *cover;
+	char *md5;
+	FILE *fp;
+	int len;
+
+	/* Calculate hash of image */
+	md5 = md5_encode_str(format->picture.data, format->picture.size);
+	if(md5 == NULL || *md5 == '\0')
+	{
+		if(format->artist == NULL && format->album == NULL)
+			cover = strdup(file);
+		else
+			asprintf(&cover , "%s_%s.xxx",
+				 format->artist != NULL ? format->artist : "",
+				 format->album != NULL ? format->album : "");
+		if(cover == NULL)
+			goto end;
+		len = strlen(cover) - 4;
+	}
+	else
+	{
+		len = strlen(md5);
+		cover = realloc(md5, len + 5);
+		if(cover == NULL)
+			goto end;
+		md5 = NULL;
+	}
+
+	/* Generate file name with extension */
+	cover[len] = '\0';
+	if(format->picture.mime != NULL)
+	{
+		if(strcmp(format->picture.mime, "image/jpeg") == 0)
+			strcpy(&cover[len], ".jpg");
+		else if(strcmp(format->picture.mime, "image/png") == 0)
+			strcpy(&cover[len], ".png");
+	}
+
+	/* Generate complete file path */
+	asprintf(&file_path, "%s/%s", path, cover);
+	if(file_path == NULL)
+		goto end;
+
+	/* Create file */
+	if(access(file_path, F_OK ) == 0)
+		goto end;
+
+	/* Open new file */
+	fp = fopen(file_path, "wb");
+	if(fp == NULL)
+		goto end;
+
+	/* Write data to it */
+	fwrite(format->picture.data, format->picture.size, 1, fp);
+
+	/* Close file */
+	fclose(fp);
+
+end:
+	if(md5 != NULL)
+		free(md5);
+	if(file_path != NULL)
+		free(file_path);
+	return cover;
+}
+
+#define FILES_SQL_INSERT "INSERT INTO song (file,title,artist,album,cover," \
+			 "path_id,mtime) " \
+			 "VALUES ('%q', '%q', '%q', '%q', '%q', %ld, %ld)"
 #define FILES_SQL_UPDATE "UPDATE song " \
 			 "SET file='%q',title='%q',artist='%q',album='%q'," \
-			 "path_id='%ld',mtime='%ld'" \
+			 "cover='%q',path_id='%ld',mtime='%ld'" \
 			 "WHERE id='%ld'"
 
-static int files_list_update_file(struct db_handle *db, const char *path,
-				  const char *file, int64_t mtime,
-				  int64_t path_id, int64_t id)
+static int files_list_update_file(struct db_handle *db, const char *cover_path,
+				  const char *path, const char *file,
+				  int64_t mtime, int64_t path_id, int64_t id)
 {
 	struct file_format *format;
+	char *cover = NULL;
 	char *file_path;
 	char *str;
 	int ret;
@@ -158,12 +231,17 @@ static int files_list_update_file(struct db_handle *db, const char *path,
 	format = file_format_parse(file_path, TAG_PICTURE);
 	free(file_path);
 
+	/* Save format */
+	if(format != NULL && format->picture.data != NULL &&
+	   format->picture.size > 0)
+		cover = files_list_save_cover(format, cover_path, file);
+
 #define FMT_STR(n) format != NULL && format->n != NULL ? format->n : ""
 
 	/* Prepare SQL request */
 	str = db_mprintf(id > 0 ? FILES_SQL_UPDATE : FILES_SQL_INSERT,
 			 file, FMT_STR(title), FMT_STR(artist), FMT_STR(album),
-			 path_id, mtime, id);
+			 cover != NULL ? cover : "", path_id, mtime, id);
 
 #undef FMT_STR
 
@@ -179,7 +257,8 @@ static int files_list_update_file(struct db_handle *db, const char *path,
 
 static int files_list_add_meta(struct db_handle *db, struct json *root,
 			       const char *path, const char *file,
-			       int64_t path_id, int64_t mtime, int parse)
+			       int64_t path_id, int64_t mtime, int parse,
+			       const char *cover_path)
 {
 	struct db_query *query;
 	char *sql = NULL;
@@ -187,7 +266,7 @@ static int files_list_add_meta(struct db_handle *db, struct json *root,
 	int ret;
 
 	/* Prepare SQL request */
-	sql = db_mprintf("SELECT id,mtime,title,artist,album "
+	sql = db_mprintf("SELECT id,mtime,title,artist,album,cover "
 			 "FROM song WHERE file='%q' AND path_id='%ld'",
 			 file, path_id);
 	if(sql == NULL)
@@ -210,8 +289,8 @@ retry:
 			goto end;
 
 		/* Add or update file in database */
-		files_list_update_file(db, path, file, mtime, path_id,
-				       db_column_int64(query, 0));
+		files_list_update_file(db, cover_path, path, file, mtime,
+				       path_id, db_column_int64(query, 0));
 
 		/* Finalize request */
 		db_finalize(query);
@@ -225,6 +304,7 @@ retry:
 	json_set_string(root, "title", db_column_text(query, 2));
 	json_set_string(root, "artist", db_column_text(query, 3));
 	json_set_string(root, "album", db_column_text(query, 4));
+	json_set_string(root, "cover", db_column_text(query, 5));
 
 end:
 	/* Finalize request */
@@ -235,8 +315,8 @@ end:
 	return 0;
 }
 
-struct json *files_list_file(struct db_handle *db, const char *path,
-			     const char *uri)
+struct json *files_list_file(struct db_handle *db, const char *cover_path,
+			     const char *path, const char *uri)
 {
 	struct json *root = NULL;
 	struct stat st;
@@ -285,7 +365,8 @@ struct json *files_list_file(struct db_handle *db, const char *path,
 	json_set_string(root, "file", file);
 
 	/* Add meta to JSON object */
-	files_list_add_meta(db, root, real_path, file, path_id, st.st_mtime, 1);
+	files_list_add_meta(db, root, real_path, file, path_id, st.st_mtime, 1,
+			    cover_path);
 
 end:
 	if(uri_path != NULL)
@@ -393,7 +474,7 @@ char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 			/* Add meta to JSON if available */
 			files_list_add_meta(db, tmp, real_path,
 					    list_dir[i]->name, path_id,
-					    list_dir[i]->mtime, 0);
+					    list_dir[i]->mtime, 0, NULL);
 
 			/* Add to array */
 			if(json_array_add(root, tmp) != 0)

@@ -23,8 +23,8 @@
 #include "db.h"
 
 void files_list_init(struct db_handle *db);
-struct json *files_list_file(struct db_handle *db, const char *path,
-			     const char *uri);
+struct json *files_list_file(struct db_handle *db, const char *cover_path,
+			     const char *path, const char *uri);
 char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 		       unsigned long page, unsigned long count,
 		       const char *sort);

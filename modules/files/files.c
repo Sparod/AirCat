@@ -61,6 +61,7 @@ struct files_handle {
 	pthread_mutex_t mutex;
 	int stop;
 	/* Configuration */
+	char *cover_path;
 	char *path;
 };
 
@@ -88,6 +89,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 	h->is_playing = 0;
 	h->playlist_cur = -1;
 	h->stop = 0;
+	h->cover_path = NULL;
 	h->path = NULL;
 
 	/* Allocate playlist */
@@ -293,7 +295,7 @@ static int files_add(struct files_handle *h, const char *filename)
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
 	p->filename = strdup(real_path);
-	p->tag = files_list_file(h->db, h->path, filename);
+	p->tag = files_list_file(h->db, h->cover_path, h->path, filename);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -624,6 +626,7 @@ static char *files_get_json_playlist(struct files_handle *h)
 
 static int files_set_config(struct files_handle *h, const struct json *c)
 {
+	const char *cover_path;
 	const char *path;
 
 	if(h == NULL)
@@ -632,6 +635,9 @@ static int files_set_config(struct files_handle *h, const struct json *c)
 	/* Free previous values */
 	if(h->path != NULL)
 		free(h->path);
+	if(h->cover_path != NULL)
+		free(h->cover_path);
+	h->cover_path = NULL;
 	h->path = NULL;
 
 	/* Parse configuration */
@@ -641,11 +647,18 @@ static int files_set_config(struct files_handle *h, const struct json *c)
 		path = json_get_string(c, "path");
 		if(path != NULL)
 			h->path = strdup(path);
+
+		/* Get cover path */
+		cover_path = json_get_string(c, "cover_path");
+		if(cover_path != NULL)
+			h->cover_path = strdup(cover_path);
 	}
 
 	/* Set default values */
 	if(h->path == NULL)
-		h->path = strdup("/var/aircat/files");
+		h->path = strdup("/var/aircat/files/media");
+	if(h->cover_path == NULL)
+		h->cover_path = strdup("/var/aircat/files/cover");
 
 	return 0;
 }
@@ -661,6 +674,7 @@ static struct json *files_get_config(struct files_handle *h)
 
 	/* Set current files path */
 	json_set_string(c, "path", h->path);
+	json_set_string(c, "cover_path", h->cover_path);
 
 	return c;
 }
@@ -881,16 +895,12 @@ static int files_httpd_img(void *user_data, struct httpd_req *req,
 			   struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
+	int code;
 
-	/* Lock playlist */
-	pthread_mutex_lock(&h->mutex);
+	/* Create a file response */
+	*res = httpd_new_file_response(h->cover_path, req->resource, &code);
 
-	/* TODO: Add new picture support */
-
-	/* Unlock playlist */
-	pthread_mutex_unlock(&h->mutex);
-
-	return 500;
+	return code;
 }
 
 static int files_httpd_seek(void *user_data, struct httpd_req *req,
@@ -919,7 +929,7 @@ static int files_httpd_info(void *user_data, struct httpd_req *req,
 	struct json *info = NULL;
 
 	/* Get file */
-	info = files_list_file(h->db, h->path, req->resource);
+	info = files_list_file(h->db, h->cover_path, h->path, req->resource);
 	if(info == NULL)
 	{
 		*res = httpd_new_response("Bad file", 0, 0);
@@ -979,7 +989,7 @@ static struct url_table files_url[] = {
 	{"/next",             0,             HTTPD_PUT, 0, &files_httpd_next},
 	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_seek},
 	{"/status",           0            , HTTPD_GET, 0, &files_httpd_status},
-	{"/img",              0            , HTTPD_GET, 0, &files_httpd_img},
+	{"/img",              HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_img},
 	{"/info",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{0, 0, 0}
