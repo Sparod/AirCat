@@ -102,6 +102,8 @@ struct httpd_res *httpd_new_data_response(unsigned char *buffer, size_t len,
 struct httpd_res *httpd_new_cb_response(uint64_t size, size_t block_size,
 					httpd_res_cb cb, void *user_data,
 					httpd_res_free_cb free_cb);
+struct httpd_res *httpd_new_file_response(const char *path, const char *file,
+					  int *code);
 int httpd_add_header(struct httpd_res *res, const char *header,
 		     const char *value);
 

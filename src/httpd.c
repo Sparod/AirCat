@@ -877,7 +877,7 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 	path = malloc(strlen(web_path) + strlen(url) + 12);
 	if(path == NULL)
 		goto error;
-	sprintf(path, "%s%s", web_path, url);
+	sprintf(path, "%s/%s", web_path, url);
 
 	/* Get file properties */
 	if(stat(path, &s) != 0)
@@ -1680,6 +1680,12 @@ struct httpd_res *httpd_new_cb_response(uint64_t size, size_t block_size,
 								     cb,
 								     user_data,
 								     free_cb);
+}
+
+struct httpd_res *httpd_new_file_response(const char *path, const char *file,
+					  int *code)
+{
+	return (struct httpd_res *) httpd_file_response(path, file, code, NULL);
 }
 
 int httpd_add_header(struct httpd_res *res, const char *header,
