@@ -19,6 +19,9 @@
 #ifndef _UTILS_H
 #define _UTILS_H
 
+#include <dirent.h>
+#include <sys/stat.h>
+
 /* Base64 functions */
 char *base64_encode(const char *buffer, int length);
 int base64_decode(char *buffer);
@@ -51,7 +54,7 @@ int _alphasort_first(const struct _dirent **a, const struct _dirent **b);
 
 /* Custom scandir function */
 int _scandir(const char *path, struct _dirent ***list,
-	     int (*selector) (const struct _dirent *),
+	     int (*selector)(const struct dirent *, const struct stat *),
 	     int (*compar)(const struct _dirent **, const struct _dirent **));
 
 #endif

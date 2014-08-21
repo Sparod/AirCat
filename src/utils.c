@@ -242,7 +242,7 @@ int _alphasort_first(const struct _dirent **a, const struct _dirent **b)
 }
 
 int _scandir(const char *path, struct _dirent ***list,
-	     int (*selector) (const struct _dirent *),
+	     int (*selector)(const struct dirent *, const struct stat *),
 	     int (*compar)(const struct _dirent **, const struct _dirent **))
 {
 	struct _dirent **_list = NULL;
@@ -268,6 +268,19 @@ int _scandir(const char *path, struct _dirent ***list,
 		   (dir->d_name[1] == '.' && dir->d_name[2] == '\0')))
 			continue;
 
+		/* Generate complete file path */
+		asprintf(&file, "%s/%s", path, dir->d_name);
+		if(file == NULL)
+			break;
+
+		/* Get stat of file */
+		stat(file, &st);
+		free(file);
+
+		/* Check if entry will be added */
+		if(selector != NULL && selector(dir, &st) == 0)
+			continue;
+
 		/* Reallocate list */
 		if(count == size)
 		{
@@ -286,15 +299,6 @@ int _scandir(const char *path, struct _dirent ***list,
 		_list[count] = malloc(sizeof(struct _dirent) - 256 + nlen);
 		if(_list[count] == NULL)
 			break;
-
-		/* Generate complete file path */
-		asprintf(&file, "%s/%s", path, dir->d_name);
-		if(file == NULL)
-			break;
-
-		/* Get stat of file */
-		stat(file, &st);
-		free(file);
 
 		/* Copy data */
 		_list[count]->inode = dir->d_ino;
