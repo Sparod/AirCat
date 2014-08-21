@@ -187,9 +187,23 @@ static char *files_list_save_cover(struct file_format *format, const char *path,
 	cover[len] = '\0';
 	if(format->picture.mime != NULL)
 	{
-		if(strcmp(format->picture.mime, "image/jpeg") == 0)
+		if(strcmp(format->picture.mime, "image/jpeg") == 0 ||
+		   strcmp(format->picture.mime, "image/jpg") == 0)
 			strcpy(&cover[len], ".jpg");
 		else if(strcmp(format->picture.mime, "image/png") == 0)
+			strcpy(&cover[len], ".png");
+	}
+
+	/* No mime type found */
+	if(cover[len] =='\0')
+	{
+		/* Guess mime type with picture data */
+		if(format->picture.size >= 2 &&
+		   format->picture.data[0] == 0xFF &&
+		   format->picture.data[1] == 0xD8)
+			strcpy(&cover[len], ".jpg");
+		else if(format->picture.size >= 4 &&
+			memcmp(&format->picture.data[1], "PNG", 3) == 0)
 			strcpy(&cover[len], ".png");
 	}
 
