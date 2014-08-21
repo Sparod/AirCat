@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#include "files_list.h"
 #include "module.h"
 #include "utils.h"
 #include "file.h"
@@ -39,6 +40,8 @@ struct files_playlist {
 struct files_handle {
 	/* Output handle */
 	struct output_handle *output;
+	/* Database handle */
+	struct db_handle *db;
 	/* Current file player */
 	struct file_handle *file;
 	struct output_stream_handle *stream;
@@ -77,6 +80,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 
 	/* Init structure */
 	h->output = attr->output;
+	h->db = attr->db;
 	h->file = NULL;
 	h->prev_file = NULL;
 	h->stream = NULL;
@@ -95,6 +99,9 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 
 	/* Set configuration */
 	files_set_config(h, attr->config);
+
+	/* Init database */
+	files_list_init(h->db);
 
 	/* Init thread */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -660,129 +667,6 @@ static char *files_get_json_playlist(struct files_handle *h)
 	return str;
 }
 
-static char *files_get_json_list(struct files_handle *h, const char *path)
-{
-	char *ext[] = { ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav", NULL };
-	struct json *root = NULL, *dir_list, *file_list, *tmp;
-	struct dirent *entry;
-	struct stat s;
-	DIR *dir;
-	struct file_format *format;
-	char *real_path;
-	char *str = NULL;
-	int len, i;
-
-	/* Make real path */
-	if(path == NULL)
-	{
-		real_path = strdup(h->path);
-	}
-	else
-	{
-		len = strlen(h->path) + strlen(path) + 2;
-		real_path = calloc(sizeof(char), len);
-		if(real_path == NULL)
-			return NULL;
-		sprintf(real_path, "%s/%s", h->path, path);
-	}
-
-	/* Open directory */
-	dir = opendir(real_path);
-	if(dir == NULL)
-		goto end;
-
-	/* Create JSON object */
-	root = json_new();
-	dir_list = json_new_array();
-	if(root == NULL || dir_list == NULL)
-		goto end;
-	file_list = json_new_array();
-	if(file_list == NULL)
-	{
-		json_free(dir_list);
-		goto end;
-	}
-
-	/* List files  */
-	while((entry = readdir(dir)) != NULL)
-	{
-		if(entry->d_name[0] == '.')
-			continue;
-
-		/* Make complete filanme path */
-		len = strlen(real_path) + strlen(entry->d_name) + 2;
-		str = calloc(sizeof(char), len);
-		if(str == NULL)
-			continue;
-		sprintf(str, "%s/%s", real_path, entry->d_name);
-
-		/* Stat file */
-		stat(str, &s);
-
-		/* Add to array */
-		if(s.st_mode & S_IFREG)
-		{
-			/* Verify extension */
-			len = strlen(entry->d_name);
-			for(i = 0; ext[i] != NULL; i++)
-			{
-				if(strcmp(&entry->d_name[len-4], ext[i]) == 0)
-				{
-					/* Read meta data from file */
-					format = file_format_parse(str,
-								   TAG_PICTURE);
-
-					/* Create temporary object */
-					tmp = files_get_file_json_object(
-								  entry->d_name,
-								  format, 1);
-					if(format != NULL)
-						file_format_free(format);
-					if(tmp == NULL)
-						continue;
-
-					if(json_array_add(file_list, tmp)
-					   != 0)
-						json_free(tmp);
-					break;
-				}
-			}
-		}
-		else if(s.st_mode & S_IFDIR)
-		{
-			/* Create temporary object */
-			tmp = json_new_string(entry->d_name);
-			if(tmp == NULL)
-				continue;
-
-			if(json_array_add(dir_list, tmp) != 0)
-				json_free(tmp);
-		}
-
-		/* Free complete filenmae */
-		free(str);
-	}
-
-	/* Add both arrays to JSON object */
-	json_add(root, "directory", dir_list);
-	json_add(root, "file", file_list);
-
-	/* Get JSON string */
-	str = strdup(json_export(root));
-
-end:
-	if(root != NULL)
-		json_free(root);
-
-	if(real_path != NULL)
-		free(real_path);
-
-	if(dir != NULL)
-		closedir(dir);
-
-	return str;
-}
-
 static int files_set_config(struct files_handle *h, const struct json *c)
 {
 	const char *path;
@@ -1099,10 +983,23 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 			    struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
+	unsigned long page = 0, count = 0;
+	const char *value;
 	char *list = NULL;
 
+	/* Get page */
+	value = httpd_get_query(req, "page");
+	if(value != NULL)
+		page = strtoul(value, NULL, 10);
+
+	/* Get entries per page */
+	value = httpd_get_query(req, "count");
+	if(value != NULL)
+		count = strtoul(value, NULL, 10);
+
 	/* Get file list */
-	list = files_get_json_list(h, req->resource);
+	list = files_list_files(h->db, h->path, req->resource, page, count,
+				NULL);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);
