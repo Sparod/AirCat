@@ -874,7 +874,7 @@ static struct MHD_Response *httpd_file_response(const char *web_path,
 		goto error;
 
 	/* Create file path */
-	path = malloc(strlen(web_path) + strlen(url) + 12);
+	path = malloc(strlen(web_path) + strlen(url) + 13);
 	if(path == NULL)
 		goto error;
 	sprintf(path, "%s/%s", web_path, url);

@@ -73,7 +73,7 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	{
 		/* Prepare new string */
 		len = strlen(path);
-		gpath = malloc(len);
+		gpath = malloc(len + 1);
 		if(gpath == NULL)
 			return -1;
 
@@ -91,9 +91,13 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 
 	/* Generate SQL */
 	sql = db_mprintf("SELECT id,mtime FROM path WHERE path='%q'",
-			 gpath != NULL ? gpath: "");
+			 gpath != NULL ? gpath : "");
 	if(sql == NULL)
+	{
+		if(gpath != NULL)
+			free(gpath);
 		return -1;
+	}
 
 	/* Prepare request */
 	q = db_prepare(db, sql, -1);
@@ -107,9 +111,13 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 
 		/* Generate SQL */
 		sql = db_mprintf("INSERT INTO path (path,mtime) "
-				 "VALUES ('%q',0)", path);
+				 "VALUES ('%q',0)", gpath != NULL ? gpath : "");
 		if(sql == NULL)
+		{
+			if(gpath != NULL)
+				free(gpath);
 			return -1;
+		}
 
 		/* Add entry in database */
 		db_exec(db, sql, NULL, NULL);
@@ -119,6 +127,11 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 		*id = db_get_last_id(db);
 		if(mtime != NULL)
 			*mtime = 0;
+
+		/* Free good path */
+		if(gpath != NULL)
+			free(gpath);
+
 		return 0;
 	}
 
@@ -130,6 +143,10 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	/* Finalize request */
 	db_finalize(q);
 	db_free(sql);
+
+	/* Free good path */
+	if(gpath != NULL)
+		free(gpath);
 
 	return 0;
 }
@@ -251,6 +268,10 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 	/* Free format and SQL request */
 	db_free(str);
 	file_format_free(format);
+
+	/* Free cover */
+	if(cover != NULL)
+		free(cover);
 
 	return ret;
 }
@@ -494,6 +515,9 @@ next:
 end:
 	/* Get string from JSON object */
 	str = strdup(json_export(root));
+
+	/* Free JSON object */
+	json_free(root);
 
 	/* Free path */
 	free(real_path);

@@ -702,6 +702,8 @@ static int files_close(struct files_handle *h)
 	/* Free files path */
 	if(h->path != NULL)
 		free(h->path);
+	if(h->cover_path != NULL)
+		free(h->cover_path);
 
 	free(h);
 
@@ -927,6 +929,7 @@ static int files_httpd_info(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *info = NULL;
+	char *str;
 
 	/* Get file */
 	info = files_list_file(h->db, h->cover_path, h->path, req->resource);
@@ -936,7 +939,13 @@ static int files_httpd_info(void *user_data, struct httpd_req *req,
 		return 404;
 	}
 
-	*res = httpd_new_response((char*)json_export(info), 1, 1);
+	/* Export JSON object */
+	str = strdup(json_export(info));
+
+	/* Free JSON object */
+	json_free(info);
+
+	*res = httpd_new_response(str, 1, 0);
 	return 200;
 }
 
