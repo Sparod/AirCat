@@ -34,7 +34,7 @@
 
 struct files_playlist {
 	char *filename;
-	struct file_format *format;
+	struct json *tag;
 };
 
 struct files_handle {
@@ -246,8 +246,8 @@ static inline void files_free_playlist(struct files_playlist *p)
 {
 	if(p->filename != NULL)
 		free(p->filename);
-	if(p->format != NULL)
-		file_format_free(p->format);
+	if(p->tag != NULL)
+		json_free(p->tag);
 }
 
 static int files_add(struct files_handle *h, const char *filename)
@@ -293,7 +293,7 @@ static int files_add(struct files_handle *h, const char *filename)
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
 	p->filename = strdup(real_path);
-	p->format = file_format_parse(real_path, TAG_PICTURE);
+	p->tag = files_list_file(h->db, h->path, filename);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -539,51 +539,6 @@ static int files_seek(struct files_handle *h, unsigned long pos)
 	return 0;
 }
 
-static struct json *files_get_file_json_object(const char *filename,
-					       struct file_format *meta,
-					       int add_pic)
-{
-	struct json *tmp = NULL;
-	char *pic = NULL;
-
-	if(filename == NULL)
-		return NULL;
-
-	/* Create temporary object */
-	tmp = json_new();
-	if(tmp == NULL)
-		return NULL;
-
-	/* Add filename */
-	json_set_string(tmp, "file", filename);
-
-	/* Get tag data */
-	if(meta != NULL)
-	{
-		/* Add all tags */
-		json_set_string(tmp, "title", meta->title);
-		json_set_string(tmp, "artist", meta->artist);
-		json_set_string(tmp, "album", meta->album);
-		json_set_string(tmp, "comment", meta->comment);
-		json_set_string(tmp, "genre", meta->genre);
-		json_set_int(tmp, "track", meta->track);
-		json_set_int(tmp, "year", meta->year);
-
-		/* Get picture */
-		if(add_pic && meta->picture.data != NULL)
-			pic = base64_encode((const char *)meta->picture.data,
-					    meta->picture.size);
-
-		/* Add picture to object */
-		json_set_string(tmp, "picture", pic);
-		json_set_string(tmp, "mime", meta->picture.mime);
-		if(pic != NULL)
-			free(pic);
-	}
-
-	return tmp;
-}
-
 static char *files_get_json_status(struct files_handle *h)
 {
 	unsigned long played;
@@ -605,7 +560,7 @@ static char *files_get_json_status(struct files_handle *h)
 
 	/* Create basic JSON object */
 	str = basename(h->playlist[idx].filename);
-	tmp = files_get_file_json_object(str, h->playlist[idx].format, 0);
+	tmp = json_copy(h->playlist[idx].tag);
 	if(tmp != NULL)
 	{
 		/* Add curent postion and audio file length */
@@ -646,7 +601,7 @@ static char *files_get_json_playlist(struct files_handle *h)
 	{
 		/* Create temporary object */
 		str = basename(h->playlist[i].filename);
-		tmp = files_get_file_json_object(str, h->playlist[i].format, 0);
+		tmp = json_copy(h->playlist[i].tag);
 		if(tmp == NULL)
 			continue;
 
@@ -926,38 +881,16 @@ static int files_httpd_img(void *user_data, struct httpd_req *req,
 			   struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
-	struct tag_picture *p = NULL;
-	char *str = NULL;
-	int idx;
 
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
 
-	/* Get current index */
-	idx = h->playlist_cur;
-	if(idx >= 0 && h->playlist[idx].format != NULL)
-		p = &h->playlist[idx].format->picture;
-	if(p == NULL || p->data == NULL || p->size == 0)
-	{
-		/* Unlock playlist */
-		pthread_mutex_unlock(&h->mutex);
-
-		/* No covert art available */
-		*res = httpd_new_response("No cover", 0, 0);
-		return 404;
-	}
-
-	/* Create response */
-	*res = httpd_new_data_response(p->data, p->size, 1, 1);
-
-	/* Add content type */
-	if(p->mime != NULL)
-		httpd_add_header(*res, HTTPD_HEADER_CONTENT_TYPE, p->mime);
+	/* TODO: Add new picture support */
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
-	return 200;
+	return 500;
 }
 
 static int files_httpd_seek(void *user_data, struct httpd_req *req,
@@ -976,6 +909,24 @@ static int files_httpd_seek(void *user_data, struct httpd_req *req,
 		return 400;
 	}
 
+	return 200;
+}
+
+static int files_httpd_info(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	struct json *info = NULL;
+
+	/* Get file */
+	info = files_list_file(h->db, h->path, req->resource);
+	if(info == NULL)
+	{
+		*res = httpd_new_response("Bad file", 0, 0);
+		return 404;
+	}
+
+	*res = httpd_new_response((char*)json_export(info), 1, 1);
 	return 200;
 }
 
@@ -1029,6 +980,7 @@ static struct url_table files_url[] = {
 	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_seek},
 	{"/status",           0            , HTTPD_GET, 0, &files_httpd_status},
 	{"/img",              0            , HTTPD_GET, 0, &files_httpd_img},
+	{"/info",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{0, 0, 0}
 };
