@@ -26,6 +26,10 @@
 char *base64_encode(const char *buffer, int length);
 int base64_decode(char *buffer);
 
+/* md5 function */
+unsigned char *md5_encode(const unsigned char *buffer, long length);
+char *md5_encode_str(const unsigned char *buffer, long length);
+
 /* URL parser */
 enum { URL_HTTP, URL_HTTPS };
 int parse_url(const char *url, int *protocol, char **hostname,

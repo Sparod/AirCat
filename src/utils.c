@@ -30,6 +30,10 @@
 #include "config.h"
 #endif
 
+#ifdef HAVE_OPENSSL
+#include <openssl/md5.h>
+#endif
+
 #include "utils.h"
 
 static char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -129,6 +133,55 @@ int base64_decode(char *buffer)
 	*buffer = '\0';
 
 	return (int)(buffer - s);
+}
+
+unsigned char *md5_encode(const unsigned char *buffer, long length)
+{
+	unsigned char *hash = NULL;
+
+#ifdef HAVE_OPENSSL
+	/* Allocate hash */
+	hash = malloc(MD5_DIGEST_LENGTH);
+	if(hash == NULL)
+		return NULL;
+
+	/* Calculate md5 */
+	MD5(buffer, length, hash);
+#endif
+
+	return hash;
+}
+
+char *md5_encode_str(const unsigned char *buffer, long length)
+{
+	char *hash = NULL;
+
+#ifdef HAVE_OPENSSL
+	unsigned char md5[MD5_DIGEST_LENGTH] = "";
+	char *p;
+	char v;
+	int i;
+
+	/* Calculate md5 */
+	MD5(buffer, length, md5);
+
+	/* Allocate string */
+	hash = malloc((MD5_DIGEST_LENGTH * 2) + 1);
+	if(hash == NULL)
+		return NULL;
+
+	/* Convert hash */
+	for(i = 0, p = hash; i < MD5_DIGEST_LENGTH; i++)
+	{
+		v = (md5[i] >> 4) & 0x0F;
+		*p++ = v > 9 ? v + 0x57 : v + 0x30;
+		v = md5[i] & 0x0F;
+		*p++ = v > 9 ? v + 0x57 : v + 0x30;
+	}
+	*p = '\0';
+#endif
+
+	return hash;
 }
 
 int parse_url(const char *url, int *protocol, char **hostname,
