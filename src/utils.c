@@ -286,12 +286,25 @@ int _alphasort(const struct _dirent **a, const struct _dirent **b)
 	return strcoll((*a)->name, (*b)->name);
 }
 
+int _alphasort_reverse(const struct _dirent **a, const struct _dirent **b)
+{
+	return strcoll((*b)->name, (*a)->name);
+}
+
 int _alphasort_first(const struct _dirent **a, const struct _dirent **b)
 {
 	if(((*a)->mode & S_IFMT) != ((*b)->mode & S_IFMT))
 		return ((*a)->mode & S_IFDIR) ? 0 : 1;
 
 	return strcoll((*a)->name, (*b)->name);
+}
+
+int _alphasort_last(const struct _dirent **a, const struct _dirent **b)
+{
+	if(((*a)->mode & S_IFMT) != ((*b)->mode & S_IFMT))
+		return ((*b)->mode & S_IFDIR) ? 0 : 1;
+
+	return strcoll((*b)->name, (*a)->name);
 }
 
 int _scandir(const char *path, struct _dirent ***list,

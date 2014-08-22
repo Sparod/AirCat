@@ -52,9 +52,11 @@ struct _dirent {
 
 /* Custom alphasort function */
 int _alphasort(const struct _dirent **a, const struct _dirent **b);
+int _alphasort_reverse(const struct _dirent **a, const struct _dirent **b);
 
 /* Custom alphasort function: folder are first in list */
 int _alphasort_first(const struct _dirent **a, const struct _dirent **b);
+int _alphasort_last(const struct _dirent **a, const struct _dirent **b);
 
 /* Custom scandir function */
 int _scandir(const char *path, struct _dirent ***list,
