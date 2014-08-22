@@ -981,11 +981,23 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 			sort = FILES_LIST_ALPHA;
 		else if(strcmp(value, "alpha_reverse") == 0)
 			sort = FILES_LIST_ALPHA_REVERSE;
+		else if(strcmp(value, "title") == 0)
+			sort = FILES_LIST_TITLE;
+		else if(strcmp(value, "album") == 0)
+			sort = FILES_LIST_ALBUM;
+		else if(strcmp(value, "artist") == 0)
+			sort = FILES_LIST_ARTIST;
+		else if(strcmp(value, "title_reverse") == 0)
+			sort = FILES_LIST_TITLE_REVERSE;
+		else if(strcmp(value, "album_reverse") == 0)
+			sort = FILES_LIST_ALBUM_REVERSE;
+		else if(strcmp(value, "artist_reverse") == 0)
+			sort = FILES_LIST_ARTIST_REVERSE;
 	}
 
 	/* Get file list */
-	list = files_list_files(h->db, h->path, req->resource, page, count,
-				sort);
+	list = files_list_files(h->db, h->cover_path, h->path, req->resource,
+				page, count, sort);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);

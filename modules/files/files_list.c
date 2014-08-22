@@ -376,6 +376,32 @@ end:
 	return 0;
 }
 
+static int files_list_add_file(void *user_data, int col_count, char **values,
+			       char **names)
+{
+	struct json *list = user_data;
+	struct json *tmp;
+
+	/* Create JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		return -1;
+
+	/* Add values to it */
+	json_set_string(tmp, "file", values[0]);
+	json_set_string(tmp, "title", values[1]);
+	json_set_string(tmp, "artist", values[2]);
+	json_set_string(tmp, "album", values[3]);
+	json_set_string(tmp, "cover", values[4]);
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+	return 0;
+}
+
+
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
 			     const char *path, const char *uri)
 {
@@ -449,17 +475,30 @@ static int files_list_filter(const struct dirent *d, const struct stat *s)
 	return 1;
 }
 
-char *files_list_files(struct db_handle *db, const char *path, const char *uri,
-		       unsigned long page, unsigned long count,
-		       enum files_list_sort sort)
+static int files_list_filter_dir(const struct dirent *d, const struct stat *s)
+{
+	/* Check file ext */
+	if(s->st_mode & S_IFDIR)
+		return 1;
+
+	return 0;
+}
+
+char *files_list_files(struct db_handle *db, const char *cover_path,
+		       const char *path, const char *uri, unsigned long page,
+		       unsigned long count, enum files_list_sort sort)
 {
 	int (*_sort)(const struct _dirent **, const struct _dirent **);
+	int (*_filter)(const struct dirent *, const struct stat *) =
+							      files_list_filter;
 	struct _dirent **list_dir = NULL;
 	struct json *root, *tmp;
 	char *str = NULL;
+	char *tag_sort;
 	char *real_path;
 	int64_t path_id;
 	int list_count;
+	int only_dir = 0;
 	unsigned long offset = 0;
 	time_t mtime;
 	int i;
@@ -479,24 +518,36 @@ char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 		goto end;
 
 	/* Select sort algorithm */
-	switch(sort)
+	if(sort >= FILES_LIST_TITLE)
 	{
-		case FILES_LIST_REVERSE:
-			_sort = _alphasort_last;
-			break;
-		case FILES_LIST_ALPHA:
-			_sort = _alphasort;
-			break;
-		case FILES_LIST_ALPHA_REVERSE:
+		_sort = _alphasort;
+		only_dir = 1;
+	}
+	else if(sort == FILES_LIST_REVERSE)
+		_sort = _alphasort_last;
+	else if(sort == FILES_LIST_ALPHA)
+		_sort = _alphasort;
+	else if(sort == FILES_LIST_ALPHA_REVERSE)
+		_sort = _alphasort_reverse;
+	else
+		_sort = _alphasort_first;
+
+	/* Scan entire folder for tag sort */
+	if(only_dir)
+	{
+		/* Reverse sort */
+		if(sort >= FILES_LIST_TITLE_REVERSE)
 			_sort = _alphasort_reverse;
-			break;
-		case FILES_LIST_DEFAULT:
-		default:
-			_sort = _alphasort_first;
+
+		/* Set filter to only folder */
+		_filter = files_list_filter_dir;
+
+		/* Scan all directory not recursively */
+		files_list_scan(db, cover_path, real_path, strlen(path), 0);
 	}
 
 	/* Scan folder in alphabetic order */
-	list_count = _scandir(real_path, &list_dir, files_list_filter, _sort);
+	list_count = _scandir(real_path, &list_dir, _filter, _sort);
 	if(list_count < 0)
 		goto end;
 
@@ -527,7 +578,7 @@ char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 
 			count--;
 		}
-		else if(list_dir[i]->mode & S_IFREG)
+		else if(!only_dir && list_dir[i]->mode & S_IFREG)
 		{
 			/* Create a new JSON object */
 			tmp = json_new();
@@ -556,6 +607,46 @@ next:
 	/* Free list */
 	if(list_dir != NULL)
 		free(list_dir);
+
+	/* Sort by tag */
+	if(only_dir && count > 0)
+	{
+		/* Select correct tag sort */
+		switch(sort)
+		{
+			case FILES_LIST_TITLE:
+			case FILES_LIST_TITLE_REVERSE:
+				tag_sort = "title";
+				break;
+			case FILES_LIST_ALBUM:
+			case FILES_LIST_ALBUM_REVERSE:
+				tag_sort = "album";
+				break;
+			case FILES_LIST_ARTIST:
+			case FILES_LIST_ARTIST_REVERSE:
+				tag_sort = "artist";
+				break;
+			default:
+				tag_sort = "file";
+		}
+
+		/* Complete request with data from database */
+		str = db_mprintf("SELECT file,title,artist,album,cover "
+				 "FROM song WHERE path_id='%ld'"
+				 "ORDER BY %s %s LIMIT %ld, %ld",
+				 path_id, tag_sort,
+				 sort >= FILES_LIST_TITLE_REVERSE ? "DESC" :
+								    "ASC",
+				 offset > list_count ? offset - list_count : 0,
+				 count);
+
+		/* Don request */
+		if(str != NULL)
+		{
+			db_exec(db, str, files_list_add_file, root);
+			db_free(str);
+		}
+	}
 
 end:
 	/* Get string from JSON object */

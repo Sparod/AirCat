@@ -27,14 +27,20 @@ enum files_list_sort {
 	FILES_LIST_REVERSE,
 	FILES_LIST_ALPHA,
 	FILES_LIST_ALPHA_REVERSE,
+	FILES_LIST_TITLE = 10,
+	FILES_LIST_ALBUM,
+	FILES_LIST_ARTIST,
+	FILES_LIST_TITLE_REVERSE = 100,
+	FILES_LIST_ALBUM_REVERSE,
+	FILES_LIST_ARTIST_REVERSE,
 };
 
 void files_list_init(struct db_handle *db);
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
 			     const char *path, const char *uri);
-char *files_list_files(struct db_handle *db, const char *path, const char *uri,
-		       unsigned long page, unsigned long count,
-		       enum files_list_sort sort);
+char *files_list_files(struct db_handle *db, const char *cover_path,
+		       const char *path, const char *uri, unsigned long page,
+		       unsigned long count, enum files_list_sort sort);
 int files_list_scan(struct db_handle *db, const char *cover_path,
 		    const char *path, int len, int recursive);
 
