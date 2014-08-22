@@ -28,6 +28,8 @@ struct json *files_list_file(struct db_handle *db, const char *cover_path,
 char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 		       unsigned long page, unsigned long count,
 		       const char *sort);
+int files_list_scan(struct db_handle *db, const char *cover_path,
+		    const char *path, int len, int recursive);
 
 #endif
 

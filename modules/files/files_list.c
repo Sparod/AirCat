@@ -30,6 +30,25 @@
 
 #define FILES_LIST_DEFAULT_COUNT 25
 
+static char *files_ext[] = {
+	".mp3", ".m4a", ".mp4",	".aac",	".ogg",	".wav",
+	NULL
+};
+
+static inline int files_ext_check(const char *name)
+{
+	int len = strlen(name);
+	int i;
+
+	for(i = 0; files_ext[i] != NULL; i++)
+	{
+		if(strcmp(&name[len-4], files_ext[i]) == 0)
+			return 1;
+	}
+
+	return 0;
+}
+
 void files_list_init(struct db_handle *db)
 {
 	char *sql;
@@ -327,6 +346,10 @@ retry:
 		files_list_update_file(db, cover_path, path, file, mtime,
 				       path_id, db_column_int64(query, 0));
 
+		/* No JSON to fill */
+		if(root == NULL)
+			goto end;
+
 		/* Finalize request */
 		db_finalize(query);
 
@@ -336,10 +359,13 @@ retry:
 	}
 
 	/* Fill JSON object */
-	json_set_string(root, "title", db_column_text(query, 2));
-	json_set_string(root, "artist", db_column_text(query, 3));
-	json_set_string(root, "album", db_column_text(query, 4));
-	json_set_string(root, "cover", db_column_text(query, 5));
+	if(root != NULL)
+	{
+		json_set_string(root, "title", db_column_text(query, 2));
+		json_set_string(root, "artist", db_column_text(query, 3));
+		json_set_string(root, "album", db_column_text(query, 4));
+		json_set_string(root, "cover", db_column_text(query, 5));
+	}
 
 end:
 	/* Finalize request */
@@ -416,20 +442,10 @@ end:
 
 static int files_list_filter(const struct dirent *d, const struct stat *s)
 {
-	char *ext[] = { ".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav", NULL };
-	int i, len;
-
 	if(s->st_mode & S_IFREG)
 	{
 		/* Check file ext */
-		len = strlen(d->d_name);
-		for(i = 0; ext[i] != NULL; i++)
-		{
-			if(strcmp(&d->d_name[len-4], ext[i]) == 0)
-				return 1;
-		}
-
-		return 0;
+		return files_ext_check(d->d_name);
 	}
 
 	return 1;
@@ -537,5 +553,78 @@ end:
 	free(real_path);
 
 	return str;
+}
+
+int files_list_scan(struct db_handle *db, const char *cover_path,
+		    const char *path, int len, int recursive)
+{
+	struct dirent *dir = NULL;
+	int64_t path_id;
+	int64_t mtime;
+	struct stat s;
+	char *r_path;
+	DIR *dp;
+
+	/* Get path length */
+	if(len == 0)
+		len = strlen(path);
+
+	/* Get path id and time in database */
+	if(files_list_get_path(db, path+len, &path_id, &mtime) != 0)
+		return -1;
+
+	/* Open directory */
+	dp = opendir(path);
+	if(dp == NULL)
+		return -1;
+
+	/* Parse all entries */
+	while((dir = readdir(dp)) != NULL)
+	{
+		/* Skip . and .. */
+		if(dir->d_name[0] == '.' && (dir->d_name[1] == '\0' ||
+		   (dir->d_name[1] == '.' && dir->d_name[2] == '\0')))
+			continue;
+
+		/* Generate item path */
+		asprintf(&r_path, "%s/%s", path, dir->d_name);
+		if(r_path == NULL)
+			continue;
+
+		/* Get entry stat */
+		if(stat(r_path, &s) != 0)
+		{
+			free(r_path);
+			continue;
+		}
+
+		/* Process entry */
+		if(s.st_mode & S_IFDIR && recursive)
+		{
+			/* Skip links */
+			if(lstat(r_path, &s) == 0 && s.st_mode & S_IFLNK)
+			{
+				free(r_path);
+				continue;
+			}
+
+			/* Scan sub_folder */
+			files_list_scan(db, cover_path, r_path, len, recursive);
+		}
+		else if(s.st_mode & S_IFREG && files_ext_check(dir->d_name))
+		{
+			/* Scan file */
+			files_list_add_meta(db, NULL, path, dir->d_name,
+					    path_id, s.st_mtime, 1, cover_path);
+		}
+
+		/* Free item path */
+		free(r_path);
+	}
+
+	/* Close directory */
+	closedir(dp);
+
+	return 0;
 }
 

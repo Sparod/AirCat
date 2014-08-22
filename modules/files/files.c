@@ -63,6 +63,8 @@ struct files_handle {
 	/* Configuration */
 	char *cover_path;
 	char *path;
+	/* Scan status */
+	int scan;
 };
 
 static void *files_thread(void *user_data);
@@ -91,6 +93,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 	h->stop = 0;
 	h->cover_path = NULL;
 	h->path = NULL;
+	h->scan = 0;
 
 	/* Allocate playlist */
 	h->playlist = malloc(PLAYLIST_ALLOC_SIZE *
@@ -980,6 +983,61 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	return 200;
 }
 
+static int files_httpd_scan(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	struct json *j;
+
+	if(req->method == HTTPD_PUT)
+	{
+		/* Check if scan in progress */
+		if(h->scan)
+		{
+			*res = httpd_new_response("Scan already in progress", 0,
+						  0);
+			return 503;
+		}
+		h->scan = 1;
+
+		/* Scan all music folder */
+		if(files_list_scan(h->db, h->cover_path, h->path, 0, 1) != 0)
+		{
+			h->scan = 0;
+			*res = httpd_new_response("Scan failed", 0, 0);
+			return 500;
+		}
+		h->scan = 0;
+	}
+	else
+	{
+		/* Create a new JSON object */
+		j = json_new();
+		if(j == NULL)
+			return 500;
+
+		/* Get scan status */
+		if(h->scan)
+		{
+			json_set_string(j, "status", "in progress");
+		}
+		else
+		{
+			json_set_string(j, "status", "done");
+		}
+
+		/* Export JSON object */
+		*res = httpd_new_response((char*) json_export(j), 1, 1);
+
+		/* Free JSON object */
+		json_free(j);
+	}
+
+	return 200;
+}
+
+#define HTTPD_PG HTTPD_PUT | HTTPD_GET
+
 static struct url_table files_url[] = {
 	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, 0,
 						     &files_httpd_playlist_add},
@@ -1001,6 +1059,7 @@ static struct url_table files_url[] = {
 	{"/img",              HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_img},
 	{"/info",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
+	{"/scan",             0,             HTTPD_PG,  0, &files_httpd_scan},
 	{0, 0, 0}
 };
 
