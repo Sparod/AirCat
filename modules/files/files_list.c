@@ -442,19 +442,18 @@ end:
 
 static int files_list_filter(const struct dirent *d, const struct stat *s)
 {
+	/* Check file ext */
 	if(s->st_mode & S_IFREG)
-	{
-		/* Check file ext */
 		return files_ext_check(d->d_name);
-	}
 
 	return 1;
 }
 
 char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 		       unsigned long page, unsigned long count,
-		       const char *sort)
+		       enum files_list_sort sort)
 {
+	int (*_sort)(const struct _dirent **, const struct _dirent **);
 	struct _dirent **list_dir = NULL;
 	struct json *root, *tmp;
 	char *str = NULL;
@@ -479,9 +478,25 @@ char *files_list_files(struct db_handle *db, const char *path, const char *uri,
 	if(files_list_get_path(db, uri, &path_id, &mtime) != 0)
 		goto end;
 
+	/* Select sort algorithm */
+	switch(sort)
+	{
+		case FILES_LIST_REVERSE:
+			_sort = _alphasort_last;
+			break;
+		case FILES_LIST_ALPHA:
+			_sort = _alphasort;
+			break;
+		case FILES_LIST_ALPHA_REVERSE:
+			_sort = _alphasort_reverse;
+			break;
+		case FILES_LIST_DEFAULT:
+		default:
+			_sort = _alphasort_first;
+	}
+
 	/* Scan folder in alphabetic order */
-	list_count = _scandir(real_path, &list_dir, files_list_filter,
-			      _alphasort_first);
+	list_count = _scandir(real_path, &list_dir, files_list_filter, _sort);
 	if(list_count < 0)
 		goto end;
 

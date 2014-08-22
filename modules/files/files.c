@@ -957,6 +957,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	unsigned long page = 0, count = 0;
+	int sort = FILES_LIST_DEFAULT;
 	const char *value;
 	char *list = NULL;
 
@@ -970,9 +971,21 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	if(value != NULL)
 		count = strtoul(value, NULL, 10);
 
+	/* Get sort */
+	value = httpd_get_query(req, "sort");
+	if(value != NULL)
+	{
+		if(strcmp(value, "reverse") == 0)
+			sort = FILES_LIST_REVERSE;
+		else if(strcmp(value, "alpha") == 0)
+			sort = FILES_LIST_ALPHA;
+		else if(strcmp(value, "alpha_reverse") == 0)
+			sort = FILES_LIST_ALPHA_REVERSE;
+	}
+
 	/* Get file list */
 	list = files_list_files(h->db, h->path, req->resource, page, count,
-				NULL);
+				sort);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);
