@@ -55,19 +55,67 @@ void files_list_init(struct db_handle *db)
 
 	/* Prepare SQL */
 	sql = db_mprintf("CREATE TABLE IF NOT EXISTS path ("
-			 " id INTEGER PRIMARY KEY,"
+			 " path_id INTEGER PRIMARY KEY,"
 			 " path TEXT,"
-			 " mtime INTEGER"
+			 " mtime INTEGER,"
+			 " UNIQUE (path)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS artist ("
+			 " artist_id INTEGER PRIMARY KEY,"
+			 " artist TEXT,"
+			 " UNIQUE (artist)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS cover ("
+			 " cover_id INTEGER PRIMARY KEY,"
+			 " cover TEXT,"
+			 " UNIQUE (cover)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS album ("
+			 " album_id INTEGER PRIMARY KEY,"
+			 " album TEXT,"
+			 " tracks INTEGER,"
+			 " cover_id INTEGER,"
+			 " FOREIGN KEY (cover_id) REFERENCES cover,"
+			 " UNIQUE (album)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS artist_album ("
+			 " artist_id INTEGER,"
+			 " album_id INTEGER,"
+			 " FOREIGN KEY (artist_id) REFERENCES artist,"
+			 " FOREIGN KEY (album_id) REFERENCES album,"
+			 " UNIQUE (artist_id,album_id)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS genre ("
+			 " genre_id INTEGER PRIMARY KEY,"
+			 " genre TEXT,"
+			 " UNIQUE (genre)"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS song ("
 			 " id INTEGER PRIMARY KEY,"
 			 " file TEXT,"
 			 " path_id INTEGER,"
 			 " title TEXT,"
-			 " artist TEXT,"
-			 " album TEXT,"
-			 " cover TEXT,"
-			 " mtime INTEGER"
+			 " artist_id INTEGER,"
+			 " album_id INTEGER,"
+			 " comment TEXT,"
+			 " genre_id INTEGER,"
+			 " track INTEGER,"
+			 " year INTEGER,"
+			 " duration INTEGER,"
+			 " bitrate INTEGER,"
+			 " samplerate INTEGER,"
+			 " channels INTEGER,"
+			 " copyright TEXT,"
+			 " encoded TEXT,"
+			 " language TEXT,"
+			 " publisher TEXT,"
+			 " cover_id INTEGER,"
+			 " mtime INTEGER,"
+			 " FOREIGN KEY (path_id) REFERENCES path,"
+			 " FOREIGN KEY (artist_id) REFERENCES artist,"
+			 " FOREIGN KEY (album_id) REFERENCES album,"
+			 " FOREIGN KEY (genre_id) REFERENCES genre,"
+			 " FOREIGN KEY (cover_id) REFERENCES cover"
 			 ")");
 	if(sql == NULL)
 		return;
@@ -109,7 +157,7 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	}
 
 	/* Generate SQL */
-	sql = db_mprintf("SELECT id,mtime FROM path WHERE path='%q'",
+	sql = db_mprintf("SELECT path_id,mtime FROM path WHERE path='%q'",
 			 gpath != NULL ? gpath : "");
 	if(sql == NULL)
 	{
@@ -254,23 +302,68 @@ end:
 	return cover;
 }
 
-#define FILES_SQL_INSERT "INSERT INTO song (file,title,artist,album,cover," \
-			 "path_id,mtime) " \
-			 "VALUES ('%q', '%q', '%q', '%q', '%q', %ld, %ld)"
+#define FILES_SQL_INSERT "INSERT INTO song (file,title,artist_id,album_id," \
+			 "comment,genre_id,track,year,duration,bitrate," \
+			 "samplerate,channels,copyright,encoded,language," \
+			 "publisher,cover_id,path_id,mtime) " \
+			 "VALUES ('%q','%q','%ld','%ld','%q','%ld','%ld'," \
+			 "'%d','%ld','%d','%ld','%d','%q','%q','%q','%q'," \
+			 "'%ld','%ld', '%ld')"
 #define FILES_SQL_UPDATE "UPDATE song " \
-			 "SET file='%q',title='%q',artist='%q',album='%q'," \
-			 "cover='%q',path_id='%ld',mtime='%ld'" \
+			 "SET file='%q',title='%q',artist_id='%ld'," \
+			 "album_id='%ld',comment='%q',genre_id='%ld'," \
+			 "track='%ld',year='%d',duration='%ld',bitrate='%d'," \
+			 "samplerate='%ld',channels='%d',copyright='%q'," \
+			 "encoded='%q',language='%q',publisher='%q'," \
+			 "cover='%ld',path_id='%ld',mtime='%ld'" \
 			 "WHERE id='%ld'"
+
+static int64_t files_list_update_sub_table(struct db_handle *db, const char *insert,
+				       const char *select)
+{
+	struct db_query *query;
+	int64_t id;
+
+	/* Insert SQL */
+	if(db_exec(db, insert, NULL, NULL) != 0)
+		return -1;
+
+	/* Prepare select request */
+	query = db_prepare(db, select, -1);
+	if(query == NULL)
+		return -1;
+
+	/* Do select */
+	if(db_step(query) != 0)
+	{
+		db_finalize(query);
+		return -1;
+	}
+
+	/* Get id */
+	id = db_column_int64(query, 0);
+
+	/* Free SQL */
+	db_finalize(query);
+
+	return id;
+}
 
 static int files_list_update_file(struct db_handle *db, const char *cover_path,
 				  const char *path, const char *file,
 				  int64_t mtime, int64_t path_id, int64_t id)
 {
-	struct file_format *format;
+	struct file_format *format = NULL;
+	int64_t artist_id = 0;
+	int64_t album_id = 0;
+	int64_t cover_id = 0;
+	int64_t genre_id = 0;
 	char *cover = NULL;
 	char *file_path;
-	char *str;
-	int ret;
+	char *in_sql = NULL;
+	char *se_sql = NULL;
+	char *str = NULL;
+	int ret = -1;
 
 	/* Generate complete path */
 	asprintf(&file_path, "%s/%s", path, file);
@@ -286,21 +379,166 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 	   format->picture.size > 0)
 		cover = files_list_save_cover(format, cover_path, file);
 
+	/* Add artist and album to database */
+	if(format != NULL)
+	{
+		/* Process artist */
+		if(format->artist != NULL)
+		{
+			/* Create insert SQL */
+			in_sql = db_mprintf("INSERT OR IGNORE INTO artist "
+					    "(artist) VALUES ('%q')",
+					    format->artist);
+			if(in_sql == NULL)
+				goto end;
+
+			/* Create select SQL */
+			se_sql = db_mprintf("SELECT artist_id FROM artist "
+					    "WHERE artist='%q'",
+					    format->artist);
+			if(se_sql == NULL)
+			{
+				db_free(in_sql);
+				goto end;
+			}
+
+			artist_id = files_list_update_sub_table(db, in_sql,
+								se_sql);
+			db_free(in_sql);
+			db_free(se_sql);
+			if(artist_id < 0)
+				goto end;
+		}
+
+		/* Process cover */
+		if(cover != NULL)
+		{
+			/* Create insert SQL */
+			in_sql = db_mprintf("INSERT OR IGNORE INTO cover "
+					    "(cover) VALUES ('%q')", cover);
+			if(in_sql == NULL)
+				goto end;
+
+			/* Create select SQL */
+			se_sql = db_mprintf("SELECT cover_id FROM cover "
+					    "WHERE cover='%q'", cover);
+			if(se_sql == NULL)
+			{
+				db_free(in_sql);
+				goto end;
+			}
+
+			cover_id = files_list_update_sub_table(db, in_sql,
+								se_sql);
+			db_free(in_sql);
+			db_free(se_sql);
+			if(cover_id < 0)
+				goto end;
+		}
+
+		/* Process album */
+		if(format->album != NULL)
+		{
+			/* Create insert SQL */
+			in_sql = db_mprintf("INSERT OR IGNORE INTO album "
+					    "(album,tracks,cover_id) "
+					    "VALUES ('%q','%ld','%ld')",
+					    format->album, format->total_track,
+					    cover_id);
+			if(in_sql == NULL)
+				goto end;
+
+			/* Create select SQL */
+			se_sql = db_mprintf("SELECT album_id FROM album "
+					    "WHERE album='%q'", format->album);
+			if(se_sql == NULL)
+			{
+				db_free(in_sql);
+				goto end;
+			}
+
+			album_id = files_list_update_sub_table(db, in_sql,
+								se_sql);
+			db_free(in_sql);
+			db_free(se_sql);
+			if(album_id < 0)
+				goto end;
+		}
+
+		/* Process genre */
+		if(format->genre != NULL)
+		{
+			/* Create insert SQL */
+			in_sql = db_mprintf("INSERT OR IGNORE INTO genre "
+					    "(genre) VALUES ('%q')",
+					    format->genre);
+			if(in_sql == NULL)
+				goto end;
+
+			/* Create select SQL */
+			se_sql = db_mprintf("SELECT genre_id FROM genre "
+					    "WHERE genre='%q'", format->genre);
+			if(se_sql == NULL)
+			{
+				db_free(in_sql);
+				goto end;
+			}
+
+			genre_id = files_list_update_sub_table(db, in_sql,
+								se_sql);
+			db_free(in_sql);
+			db_free(se_sql);
+			if(genre_id < 0)
+				goto end;
+		}
+
+		/* Update artist <-> album */
+		if(artist_id != 0 && album_id != 0)
+		{
+			/* Create new SQL */
+			str = db_mprintf("INSERT OR IGNORE INTO artist_album "
+					 "(artist_id,album_id) "
+					 "VALUES ('%ld','%ld')",
+					 artist_id, album_id);
+			if(str == NULL)
+				goto end;
+
+			/* Get album id from database */
+			if(db_exec(db, str, NULL, NULL) != 0)
+				goto end;
+
+			/* Free SQL */
+			db_free(str);
+		}
+	}
+
 #define FMT_STR(n) format != NULL && format->n != NULL ? format->n : ""
+#define FMT_INT(n) format != NULL ? format->n : (long) 0
 
 	/* Prepare SQL request */
 	str = db_mprintf(id > 0 ? FILES_SQL_UPDATE : FILES_SQL_INSERT,
-			 file, FMT_STR(title), FMT_STR(artist), FMT_STR(album),
-			 cover != NULL ? cover : "", path_id, mtime, id);
+			 file, FMT_STR(title), artist_id, album_id,
+			 FMT_STR(comment), genre_id, FMT_INT(track), FMT_INT(year),
+			 FMT_INT(length), FMT_INT(bitrate),
+			 FMT_INT(samplerate), FMT_INT(channels),
+			 FMT_STR(copyright), FMT_STR(encoded),
+			 FMT_STR(language), FMT_STR(publisher),
+			 cover_id, path_id, mtime, id);
 
+#undef FMT_INT
 #undef FMT_STR
 
 	/* Add file to database */
 	ret = db_exec(db, str, NULL, NULL);
 
-	/* Free format and SQL request */
-	db_free(str);
-	file_format_free(format);
+end:
+	/* Free SQL request */
+	if(str != NULL)
+		db_free(str);
+
+	/* Free format */
+	if(format != NULL)
+		file_format_free(format);
 
 	/* Free cover */
 	if(cover != NULL)
@@ -321,7 +559,11 @@ static int files_list_add_meta(struct db_handle *db, struct json *root,
 
 	/* Prepare SQL request */
 	sql = db_mprintf("SELECT id,mtime,title,artist,album,cover "
-			 "FROM song WHERE file='%q' AND path_id='%ld'",
+			 "FROM song "
+			 "LEFT JOIN artist USING (artist_id) "
+			 "LEFT JOIN album USING (album_id) "
+			 "LEFT JOIN cover USING (cover_id) "
+			 "WHERE file='%q' AND path_id='%ld'",
 			 file, path_id);
 	if(sql == NULL)
 		goto end;
@@ -632,7 +874,11 @@ next:
 
 		/* Complete request with data from database */
 		str = db_mprintf("SELECT file,title,artist,album,cover "
-				 "FROM song WHERE path_id='%ld'"
+				 "FROM song "
+				 "LEFT JOIN artist USING (artist_id) "
+				 "LEFT JOIN album USING (album_id) "
+				 "LEFT JOIN cover USING (cover_id) "
+				 "WHERE path_id='%ld'"
 				 "ORDER BY %s %s LIMIT %ld, %ld",
 				 path_id, tag_sort,
 				 sort >= FILES_LIST_TITLE_REVERSE ? "DESC" :
