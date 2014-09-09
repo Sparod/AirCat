@@ -27,6 +27,12 @@ enum db_type {
 	DB_NULL
 };
 
+enum db_result {
+	DB_ERROR = -1,
+	DB_ROW = 0,
+	DB_DONE = 1
+};
+
 struct db_handle;
 struct db_query;
 

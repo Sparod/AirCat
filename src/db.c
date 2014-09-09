@@ -197,13 +197,18 @@ struct db_query *db_prepare(struct db_handle *h, const char *sql, size_t len)
 
 int db_step(struct db_query *query)
 {
+	int ret;
+
 	if(query == NULL)
 		return -1;
 
-	if(sqlite3_step((sqlite3_stmt *) query) != SQLITE_ROW)
-		return -1;
+	ret = sqlite3_step((sqlite3_stmt *) query);
+	if(ret == SQLITE_DONE)
+		return DB_DONE;
+	else if(ret == SQLITE_ROW)
+		return DB_ROW;
 
-	return 0;
+	return DB_ERROR;
 }
 
 int db_finalize(struct db_query *query)
