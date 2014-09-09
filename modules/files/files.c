@@ -987,12 +987,24 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 			sort = FILES_LIST_ALBUM;
 		else if(strcmp(value, "artist") == 0)
 			sort = FILES_LIST_ARTIST;
+		else if(strcmp(value, "track") == 0)
+			sort = FILES_LIST_TRACK;
+		else if(strcmp(value, "year") == 0)
+			sort = FILES_LIST_YEAR;
+		else if(strcmp(value, "duration") == 0)
+			sort = FILES_LIST_DURATION;
 		else if(strcmp(value, "title_reverse") == 0)
 			sort = FILES_LIST_TITLE_REVERSE;
 		else if(strcmp(value, "album_reverse") == 0)
 			sort = FILES_LIST_ALBUM_REVERSE;
 		else if(strcmp(value, "artist_reverse") == 0)
 			sort = FILES_LIST_ARTIST_REVERSE;
+		else if(strcmp(value, "track_reverse") == 0)
+			sort = FILES_LIST_TRACK_REVERSE;
+		else if(strcmp(value, "year_reverse") == 0)
+			sort = FILES_LIST_YEAR_REVERSE;
+		else if(strcmp(value, "duration_reverse") == 0)
+			sort = FILES_LIST_DURATION_REVERSE;
 	}
 
 	/* Get file list */

@@ -868,6 +868,18 @@ next:
 			case FILES_LIST_ARTIST_REVERSE:
 				tag_sort = "artist";
 				break;
+			case FILES_LIST_TRACK:
+			case FILES_LIST_TRACK_REVERSE:
+				tag_sort = "track";
+				break;
+			case FILES_LIST_YEAR:
+			case FILES_LIST_YEAR_REVERSE:
+				tag_sort = "year";
+				break;
+			case FILES_LIST_DURATION:
+			case FILES_LIST_DURATION_REVERSE:
+				tag_sort = "duration";
+				break;
 			default:
 				tag_sort = "file";
 		}
