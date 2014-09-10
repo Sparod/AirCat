@@ -149,7 +149,7 @@ static int demux_mp3_parse_header(const unsigned char *buffer,
 	f->padding = (buffer[2] >> 1) & 0x01;
 
 	/* Get channel count */
-	f->channels = (((buffer[3] >> 6) & 0x03) + 1) % 4;
+	f->channels = ((buffer[3] >> 6) & 0x03) == 0x03 ? 1 : 2;
 
 	/* Get samples count */
 	f->samples = samples[mp][f->layer];
@@ -387,7 +387,7 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 			   (d->buffer[i+frame.length+1] & 0xE0) != 0xE0)
 				continue;
 
-			first = i;
+			first = i + id3_size;
 			break;
 		}
 	}
@@ -395,7 +395,7 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 		return -1;
 
 	/* Move to first frame */
-	stream_seek(stream, first, SEEK_CUR);
+	stream_seek(stream, first, SEEK_SET);
 	len = stream_complete(stream, 0);
 
 	/* Parse Xing/Lame/VBRI header */
@@ -404,11 +404,15 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	{
 		/* Move to next frame */
 		first += frame.length;
-		stream_seek(stream, first, SEEK_CUR);
+		stream_seek(stream, first, SEEK_SET);
+
+		/* Complete and get first valid header */
+		stream_complete(stream, 0);
+		demux_mp3_parse_header(d->buffer, 4, &frame);
 	}
 
 	/* Update position of stream */
-	d->offset = first + id3_size;
+	d->offset = first;
 
 	/* Calculate stream duration */
 	if(d->nb_frame > 0)
