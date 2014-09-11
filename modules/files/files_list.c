@@ -22,6 +22,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "file_format.h"
 #include "files_list.h"
@@ -30,10 +31,19 @@
 
 #define FILES_LIST_DEFAULT_COUNT 25
 
+static pthread_mutex_t scan_mutex =  PTHREAD_MUTEX_INITIALIZER;
+static char *scan_status = NULL;
+static int scan_len = 0;
+static int scanning = 0;
+
 static char *files_ext[] = {
 	".mp3", ".m4a", ".mp4",	".aac",	".ogg",	".wav",
 	NULL
 };
+
+static int files_list_recursive_scan(struct db_handle *db,
+				     const char *cover_path, const char *path,
+				     int len, int recursive, int update_status);
 
 static inline int files_ext_check(const char *name)
 {
@@ -785,7 +795,8 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		_filter = files_list_filter_dir;
 
 		/* Scan all directory not recursively */
-		files_list_scan(db, cover_path, real_path, strlen(path), 0);
+		files_list_recursive_scan(db, cover_path, real_path,
+					  strlen(path), 0, 0);
 	}
 
 	/* Scan folder in alphabetic order */
@@ -919,19 +930,18 @@ end:
 	return str;
 }
 
-int files_list_scan(struct db_handle *db, const char *cover_path,
-		    const char *path, int len, int recursive)
+static int files_list_recursive_scan(struct db_handle *db,
+				     const char *cover_path, const char *path,
+				     int len, int recursive, int update_status)
 {
 	struct dirent *dir = NULL;
 	int64_t path_id;
 	int64_t mtime;
 	struct stat s;
 	char *r_path;
+	char *status;
+	int s_len;
 	DIR *dp;
-
-	/* Get path length */
-	if(len == 0)
-		len = strlen(path);
 
 	/* Get path id and time in database */
 	if(files_list_get_path(db, path+len, &path_id, &mtime) != 0)
@@ -962,6 +972,29 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 			continue;
 		}
 
+		/* Update status */
+		if(update_status)
+		{
+			/* Lock scan status access */
+			pthread_mutex_lock(&scan_mutex);
+
+			/* Update string status */
+			s_len = strlen(r_path) - len + 1;
+			if(s_len > scan_len)
+			{
+				status = realloc(scan_status, s_len);
+				if(status != NULL)
+				{
+					scan_len = s_len;
+					scan_status = status;
+				}
+			}
+			strncpy(scan_status, r_path + len, scan_len);
+
+			/* Unlock scan status access */
+			pthread_mutex_unlock(&scan_mutex);
+		}
+
 		/* Process entry */
 		if(s.st_mode & S_IFDIR && recursive)
 		{
@@ -973,7 +1006,8 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 			}
 
 			/* Scan sub_folder */
-			files_list_scan(db, cover_path, r_path, len, recursive);
+			files_list_recursive_scan(db, cover_path, r_path, len,
+						  recursive, update_status);
 		}
 		else if(s.st_mode & S_IFREG && files_ext_check(dir->d_name))
 		{
@@ -990,5 +1024,83 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 	closedir(dp);
 
 	return 0;
+}
+
+int files_list_scan(struct db_handle *db, const char *cover_path,
+		    const char *path, int recursive)
+{
+	int ret;
+
+	if(path == NULL)
+		return -1;
+
+	/* Lock scan access */
+	pthread_mutex_lock(&scan_mutex);
+
+	/* Check scanning */
+	if(scanning != 0)
+	{
+		/* Unlock scan access */
+		pthread_mutex_unlock(&scan_mutex);
+		return 1;
+	}
+	scanning = 1;
+
+	/* Unlock scan access */
+	pthread_mutex_unlock(&scan_mutex);
+
+	/* Scan directory with status */
+	ret = files_list_recursive_scan(db, cover_path, path, strlen(path),
+					recursive, 1);
+
+	/* Lock scan status access */
+	pthread_mutex_lock(&scan_mutex);
+
+	/* Free scan status string */
+	if(scan_status != NULL)
+		free(scan_status);
+	scan_status = NULL;
+	scan_len = 0;
+
+	/* Unset scanning flag */
+	scanning = 0;
+
+	/* Unlock scan status access */
+	pthread_mutex_unlock(&scan_mutex);
+
+	return 0;
+}
+
+char *files_list_get_scan(void)
+{
+	char *status = NULL;
+
+	/* Lock scan status access */
+	pthread_mutex_lock(&scan_mutex);
+
+	/* Copy string */
+	if(scan_status != NULL)
+		status = strdup(scan_status);
+
+	/* Unlock scan status access */
+	pthread_mutex_unlock(&scan_mutex);
+
+	return status;
+}
+
+int files_list_is_scanning(void)
+{
+	int status;
+
+	/* Lock scan access */
+	pthread_mutex_lock(&scan_mutex);
+
+	/* Copy status */
+	status = scanning;
+
+	/* Unlock scan access */
+	pthread_mutex_unlock(&scan_mutex);
+
+	return status;
 }
 

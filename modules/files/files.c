@@ -63,8 +63,6 @@ struct files_handle {
 	/* Configuration */
 	char *cover_path;
 	char *path;
-	/* Scan status */
-	int scan;
 };
 
 static void *files_thread(void *user_data);
@@ -93,7 +91,6 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 	h->stop = 0;
 	h->cover_path = NULL;
 	h->path = NULL;
-	h->scan = 0;
 
 	/* Allocate playlist */
 	h->playlist = malloc(PLAYLIST_ALLOC_SIZE *
@@ -1025,26 +1022,24 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *j;
+	char *status;
 
 	if(req->method == HTTPD_PUT)
 	{
 		/* Check if scan in progress */
-		if(h->scan)
+		if(files_list_is_scanning() != 0)
 		{
 			*res = httpd_new_response("Scan already in progress", 0,
 						  0);
 			return 503;
 		}
-		h->scan = 1;
 
 		/* Scan all music folder */
-		if(files_list_scan(h->db, h->cover_path, h->path, 0, 1) != 0)
+		if(files_list_scan(h->db, h->cover_path, h->path, 1) != 0)
 		{
-			h->scan = 0;
 			*res = httpd_new_response("Scan failed", 0, 0);
 			return 500;
 		}
-		h->scan = 0;
 	}
 	else
 	{
@@ -1054,9 +1049,15 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 			return 500;
 
 		/* Get scan status */
-		if(h->scan)
+		if(files_list_is_scanning() != 0)
 		{
 			json_set_string(j, "status", "in progress");
+
+			/* Get current file */
+			status = files_list_get_scan();
+			json_set_string(j, "file", status);
+			if(status != NULL)
+				free(status);
 		}
 		else
 		{

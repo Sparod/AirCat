@@ -48,7 +48,9 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		       const char *path, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort);
 int files_list_scan(struct db_handle *db, const char *cover_path,
-		    const char *path, int len, int recursive);
+		    const char *path, int recursive);
+char *files_list_get_scan(void);
+int files_list_is_scanning(void);
 
 #endif
 
