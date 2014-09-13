@@ -954,9 +954,13 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	unsigned long page = 0, count = 0;
-	int sort = FILES_LIST_DEFAULT;
+	int display = FILES_LIST_DISPLAY_DEFAULT;
+	int sort = FILES_LIST_SORT_DEFAULT;
 	const char *value;
 	char *list = NULL;
+	int artist_id = 0;
+	int album_id = 0;
+	int genre_id = 0;
 	int library = 0;
 
 	/* Get page */
@@ -974,46 +978,75 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	if(value != NULL && strcmp(value, "library") == 0)
 		library = 1;
 
+	/* Get display mode */
+	value = httpd_get_query(req, "display");
+	if(value != NULL)
+	{
+		if(strcmp(value, "album") == 0)
+			display = FILES_LIST_DISPLAY_ALBUM;
+		else if(strcmp(value, "artist") == 0)
+			display = FILES_LIST_DISPLAY_ARTIST;
+		else if(strcmp(value, "genre") == 0)
+			display = FILES_LIST_DISPLAY_GENRE;
+	}
+
+	/* Artist ID */
+	value = httpd_get_query(req, "artist_id");
+	if(value != NULL)
+		artist_id = strtoul(value, NULL, 10);;
+
+	/* Album ID */
+	value = httpd_get_query(req, "album_id");
+	if(value != NULL)
+		album_id = strtoul(value, NULL, 10);
+
+	/* Genre ID */
+	value = httpd_get_query(req, "genre_id");
+	if(value != NULL)
+		genre_id = strtoul(value, NULL, 10);
+
 	/* Get sort */
 	value = httpd_get_query(req, "sort");
 	if(value != NULL)
 	{
 		if(strcmp(value, "reverse") == 0)
-			sort = FILES_LIST_REVERSE;
+			sort = FILES_LIST_SORT_REVERSE;
 		else if(strcmp(value, "alpha") == 0)
-			sort = FILES_LIST_ALPHA;
+			sort = FILES_LIST_SORT_ALPHA;
 		else if(strcmp(value, "alpha_reverse") == 0)
-			sort = FILES_LIST_ALPHA_REVERSE;
+			sort = FILES_LIST_SORT_ALPHA_REVERSE;
 		else if(strcmp(value, "title") == 0)
-			sort = FILES_LIST_TITLE;
+			sort = FILES_LIST_SORT_TITLE;
 		else if(strcmp(value, "album") == 0)
-			sort = FILES_LIST_ALBUM;
+			sort = FILES_LIST_SORT_ALBUM;
 		else if(strcmp(value, "artist") == 0)
-			sort = FILES_LIST_ARTIST;
+			sort = FILES_LIST_SORT_ARTIST;
 		else if(strcmp(value, "track") == 0)
-			sort = FILES_LIST_TRACK;
+			sort = FILES_LIST_SORT_TRACK;
 		else if(strcmp(value, "year") == 0)
-			sort = FILES_LIST_YEAR;
+			sort = FILES_LIST_SORT_YEAR;
 		else if(strcmp(value, "duration") == 0)
-			sort = FILES_LIST_DURATION;
+			sort = FILES_LIST_SORT_DURATION;
 		else if(strcmp(value, "title_reverse") == 0)
-			sort = FILES_LIST_TITLE_REVERSE;
+			sort = FILES_LIST_SORT_TITLE_REVERSE;
 		else if(strcmp(value, "album_reverse") == 0)
-			sort = FILES_LIST_ALBUM_REVERSE;
+			sort = FILES_LIST_SORT_ALBUM_REVERSE;
 		else if(strcmp(value, "artist_reverse") == 0)
-			sort = FILES_LIST_ARTIST_REVERSE;
+			sort = FILES_LIST_SORT_ARTIST_REVERSE;
 		else if(strcmp(value, "track_reverse") == 0)
-			sort = FILES_LIST_TRACK_REVERSE;
+			sort = FILES_LIST_SORT_TRACK_REVERSE;
 		else if(strcmp(value, "year_reverse") == 0)
-			sort = FILES_LIST_YEAR_REVERSE;
+			sort = FILES_LIST_SORT_YEAR_REVERSE;
 		else if(strcmp(value, "duration_reverse") == 0)
-			sort = FILES_LIST_DURATION_REVERSE;
+			sort = FILES_LIST_SORT_DURATION_REVERSE;
 	}
 
 	/* Get file list */
 	list = files_list_files(h->db, h->cover_path,
 				library != 0 ? NULL : h->path, req->resource,
-				page, count, sort);
+				page, count, sort, display,
+				(uint64_t) artist_id, (uint64_t) album_id,
+				(uint64_t) genre_id);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);

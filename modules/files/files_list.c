@@ -568,11 +568,13 @@ static int files_list_add_meta(struct db_handle *db, struct json *root,
 	int ret;
 
 	/* Prepare SQL request */
-	sql = db_mprintf("SELECT id,mtime,title,artist,album,cover "
+	sql = db_mprintf("SELECT id,mtime,title,artist,album,cover,genre,"
+			 "artist_id,album_id,genre_id "
 			 "FROM song "
 			 "LEFT JOIN artist USING (artist_id) "
 			 "LEFT JOIN album USING (album_id) "
 			 "LEFT JOIN cover USING (cover_id) "
+			 "LEFT JOIN genre USING (genre_id) "
 			 "WHERE file='%q' AND path_id='%ld'",
 			 file, path_id);
 	if(sql == NULL)
@@ -617,6 +619,12 @@ retry:
 		json_set_string(root, "artist", db_column_text(query, 3));
 		json_set_string(root, "album", db_column_text(query, 4));
 		json_set_string(root, "cover", db_column_text(query, 5));
+		json_set_string(root, "genre", db_column_text(query, 6));
+
+		/* Add IDs */
+		json_set_int64(root, "artist_id", db_column_int64(query, 7));
+		json_set_int64(root, "album_id", db_column_int64(query, 8));
+		json_set_int64(root, "genre_id", db_column_int64(query, 9));
 	}
 
 end:
@@ -645,6 +653,12 @@ static int files_list_add_file(void *user_data, int col_count, char **values,
 	json_set_string(tmp, "artist", values[2]);
 	json_set_string(tmp, "album", values[3]);
 	json_set_string(tmp, "cover", values[4]);
+	json_set_string(tmp, "genre", values[5]);
+
+	/* Add IDs */
+	json_set_int64(tmp, "artist_id", strtoul(values[6], NULL, 10));
+	json_set_int64(tmp, "album_id", strtoul(values[7], NULL, 10));
+	json_set_int64(tmp, "genre_id", strtoul(values[8], NULL, 10));
 
 	/* Add object to array */
 	if(json_array_add(list, tmp) != 0)
@@ -653,6 +667,72 @@ static int files_list_add_file(void *user_data, int col_count, char **values,
 	return 0;
 }
 
+static int files_list_add_album(void *user_data, int col_count, char **values,
+			        char **names)
+{
+	struct json *list = user_data;
+	struct json *tmp;
+
+	/* Create JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		return -1;
+
+	/* Add values to it */
+	json_set_string(tmp, "album", values[0]);
+	json_set_int64(tmp, "album_id", strtoul(values[1], NULL, 10));
+	json_set_string(tmp, "cover", values[2]);
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+	return 0;
+}
+
+static int files_list_add_artist(void *user_data, int col_count, char **values,
+			         char **names)
+{
+	struct json *list = user_data;
+	struct json *tmp;
+
+	/* Create JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		return -1;
+
+	/* Add values to it */
+	json_set_string(tmp, "artist", values[0]);
+	json_set_int64(tmp, "artist_id", strtoul(values[1], NULL, 10));
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+	return 0;
+}
+
+static int files_list_add_genre(void *user_data, int col_count, char **values,
+			        char **names)
+{
+	struct json *list = user_data;
+	struct json *tmp;
+
+	/* Create JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		return -1;
+
+	/* Add values to it */
+	json_set_string(tmp, "genre", values[0]);
+	json_set_int64(tmp, "genre_id", strtoul(values[1], NULL, 10));
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+	return 0;
+}
 
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
 			     const char *path, const char *uri)
@@ -738,7 +818,9 @@ static int files_list_filter_dir(const struct dirent *d, const struct stat *s)
 
 char *files_list_files(struct db_handle *db, const char *cover_path,
 		       const char *path, const char *uri, unsigned long page,
-		       unsigned long count, enum files_list_sort sort)
+		       unsigned long count, enum files_list_sort sort,
+		       enum files_list_display display, uint64_t artist_id,
+		       uint64_t album_id, uint64_t genre_id)
 {
 	int (*_sort)(const struct _dirent **, const struct _dirent **);
 	int (*_filter)(const struct dirent *, const struct stat *) =
@@ -748,7 +830,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	char *real_path = NULL;
 	char *str = NULL;
 	char *tag_sort;
-	int64_t path_id;
+	int64_t path_id = 0;
 	int list_count = 0;
 	int only_dir = 0;
 	unsigned long offset = 0;
@@ -770,8 +852,8 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	/* Skip directory scan */
 	if(path == NULL)
 	{
-		if(sort < FILES_LIST_TITLE)
-			sort = FILES_LIST_TITLE;
+		if(sort < FILES_LIST_SORT_TITLE)
+			sort = FILES_LIST_SORT_TITLE;
 		only_dir = 1;
 		goto do_sql;
 	}
@@ -786,25 +868,29 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		goto end;
 
 	/* Select sort algorithm */
-	if(sort >= FILES_LIST_TITLE)
+	if(sort >= FILES_LIST_SORT_TITLE)
 	{
 		_sort = _alphasort;
 		only_dir = 1;
 	}
-	else if(sort == FILES_LIST_REVERSE)
+	else if(sort == FILES_LIST_SORT_REVERSE)
 		_sort = _alphasort_last;
-	else if(sort == FILES_LIST_ALPHA)
+	else if(sort == FILES_LIST_SORT_ALPHA)
 		_sort = _alphasort;
-	else if(sort == FILES_LIST_ALPHA_REVERSE)
+	else if(sort == FILES_LIST_SORT_ALPHA_REVERSE)
 		_sort = _alphasort_reverse;
 	else
 		_sort = _alphasort_first;
 
 	/* Scan entire folder for tag sort */
-	if(only_dir)
+	if(only_dir || display != FILES_LIST_DISPLAY_DEFAULT ||
+	   artist_id > 0 || album_id > 0 || genre_id > 0)
 	{
+		/* Set only dir */
+		only_dir = 1;
+
 		/* Reverse sort */
-		if(sort >= FILES_LIST_TITLE_REVERSE)
+		if(sort >= FILES_LIST_SORT_TITLE_REVERSE)
 			_sort = _alphasort_reverse;
 
 		/* Set filter to only folder */
@@ -871,34 +957,38 @@ next:
 		free(list_dir);
 
 do_sql:
+	/* No more files to retrieve */
+	if(only_dir == 0 || count == 0)
+		goto end;
+
 	/* Sort by tag */
-	if(only_dir && count > 0)
+	if(display == FILES_LIST_DISPLAY_DEFAULT)
 	{
 		/* Select correct tag sort */
 		switch(sort)
 		{
-			case FILES_LIST_TITLE:
-			case FILES_LIST_TITLE_REVERSE:
+			case FILES_LIST_SORT_TITLE:
+			case FILES_LIST_SORT_TITLE_REVERSE:
 				tag_sort = "title";
 				break;
-			case FILES_LIST_ALBUM:
-			case FILES_LIST_ALBUM_REVERSE:
+			case FILES_LIST_SORT_ALBUM:
+			case FILES_LIST_SORT_ALBUM_REVERSE:
 				tag_sort = "album";
 				break;
-			case FILES_LIST_ARTIST:
-			case FILES_LIST_ARTIST_REVERSE:
+			case FILES_LIST_SORT_ARTIST:
+			case FILES_LIST_SORT_ARTIST_REVERSE:
 				tag_sort = "artist";
 				break;
-			case FILES_LIST_TRACK:
-			case FILES_LIST_TRACK_REVERSE:
+			case FILES_LIST_SORT_TRACK:
+			case FILES_LIST_SORT_TRACK_REVERSE:
 				tag_sort = "track";
 				break;
-			case FILES_LIST_YEAR:
-			case FILES_LIST_YEAR_REVERSE:
+			case FILES_LIST_SORT_YEAR:
+			case FILES_LIST_SORT_YEAR_REVERSE:
 				tag_sort = "year";
 				break;
-			case FILES_LIST_DURATION:
-			case FILES_LIST_DURATION_REVERSE:
+			case FILES_LIST_SORT_DURATION:
+			case FILES_LIST_SORT_DURATION_REVERSE:
 				tag_sort = "duration";
 				break;
 			default:
@@ -906,23 +996,85 @@ do_sql:
 		}
 
 		/* Complete request with data from database */
-		str = db_mprintf("SELECT file,title,artist,album,cover "
+		str = db_mprintf("SELECT file,title,artist,album,cover,genre,"
+				 "artist_id,album_id,genre_id "
 				 "FROM song "
 				 "LEFT JOIN artist USING (artist_id) "
 				 "LEFT JOIN album USING (album_id) "
 				 "LEFT JOIN cover USING (cover_id) "
-				 "WHERE path_id%c='%ld' "
+				 "LEFT JOIN genre USING (genre_id) "
+				 "WHERE 1 \n"
+				 "%s path_id='%ld' \n"
+				 "%s album_id='%ld' \n"
+				 "%s artist_id='%ld' \n"
+				 "%s genre_id='%ld' \n"
 				 "ORDER BY %s %s LIMIT %ld, %ld",
-				 path == NULL ? '!' : ' ', path_id, tag_sort,
-				 sort >= FILES_LIST_TITLE_REVERSE ? "DESC" :
-								    "ASC",
+				 path == NULL ? "--" : "AND", path_id,
+				 album_id == 0 ? "--" : "AND", album_id,
+				 artist_id == 0 ? "--" : "AND", artist_id,
+				 genre_id == 0 ? "--" : "AND", genre_id,
+				 tag_sort,
+				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
+								 "DESC" : "ASC",
 				 offset > list_count ? offset - list_count : 0,
 				 count);
 
-		/* Don request */
+		/* Do request */
 		if(str != NULL)
 		{
 			db_exec(db, str, files_list_add_file, root);
+			db_free(str);
+		}
+	}
+	else if(display == FILES_LIST_DISPLAY_ALBUM)
+	{
+		/* Prepare request */
+		str = db_mprintf("SELECT album,album_id,cover FROM album "
+				 "LEFT JOIN cover USING (cover_id) "
+				 "ORDER BY album %s LIMIT %ld, %ld",
+				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
+								 "DESC" : "ASC",
+				 offset > list_count ? offset - list_count : 0,
+				 count);
+
+		/* Do request */
+		if(str != NULL)
+		{
+			db_exec(db, str, files_list_add_album, root);
+			db_free(str);
+		}
+	}
+	else if(display == FILES_LIST_DISPLAY_ARTIST)
+	{
+		/* Prepare request */
+		str = db_mprintf("SELECT artist,artist_id FROM artist "
+				 "ORDER BY artist %s LIMIT %ld, %ld",
+				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
+								 "DESC" : "ASC",
+				 offset > list_count ? offset - list_count : 0,
+				 count);
+
+		/* Do request */
+		if(str != NULL)
+		{
+			db_exec(db, str, files_list_add_artist, root);
+			db_free(str);
+		}
+	}
+	else if(display == FILES_LIST_DISPLAY_GENRE)
+	{
+		/* Prepare request */
+		str = db_mprintf("SELECT genre,genre_id FROM genre "
+				 "ORDER BY genre %s LIMIT %ld, %ld",
+				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
+								 "DESC" : "ASC",
+				 offset > list_count ? offset - list_count : 0,
+				 count);
+
+		/* Do request */
+		if(str != NULL)
+		{
+			db_exec(db, str, files_list_add_genre, root);
 			db_free(str);
 		}
 	}
