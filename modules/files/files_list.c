@@ -745,11 +745,11 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 							      files_list_filter;
 	struct _dirent **list_dir = NULL;
 	struct json *root, *tmp;
+	char *real_path = NULL;
 	char *str = NULL;
 	char *tag_sort;
-	char *real_path;
 	int64_t path_id;
-	int list_count;
+	int list_count = 0;
 	int only_dir = 0;
 	unsigned long offset = 0;
 	time_t mtime;
@@ -759,6 +759,22 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	root = json_new_array();
 	if(root == NULL)
 		return NULL;
+
+	/* Set default values */
+	if(page == 0)
+		page = 1;
+	if(count == 0)
+		count = FILES_LIST_DEFAULT_COUNT;
+	offset = (page-1) * count;
+
+	/* Skip directory scan */
+	if(path == NULL)
+	{
+		if(sort < FILES_LIST_TITLE)
+			sort = FILES_LIST_TITLE;
+		only_dir = 1;
+		goto do_sql;
+	}
 
 	/* Generate path from URI */
 	asprintf(&real_path, "%s/%s", path, uri != NULL ? uri : "");
@@ -803,13 +819,6 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	list_count = _scandir(real_path, &list_dir, _filter, _sort);
 	if(list_count < 0)
 		goto end;
-
-	/* Set default values */
-	if(page == 0)
-		page = 1;
-	if(count == 0)
-		count = FILES_LIST_DEFAULT_COUNT;
-	offset = (page-1) * count;
 
 	/* Parse file list */
 	for(i = offset; i < list_count && count > 0; i++)
@@ -861,6 +870,7 @@ next:
 	if(list_dir != NULL)
 		free(list_dir);
 
+do_sql:
 	/* Sort by tag */
 	if(only_dir && count > 0)
 	{
@@ -901,9 +911,9 @@ next:
 				 "LEFT JOIN artist USING (artist_id) "
 				 "LEFT JOIN album USING (album_id) "
 				 "LEFT JOIN cover USING (cover_id) "
-				 "WHERE path_id='%ld'"
+				 "WHERE path_id%c='%ld' "
 				 "ORDER BY %s %s LIMIT %ld, %ld",
-				 path_id, tag_sort,
+				 path == NULL ? '!' : ' ', path_id, tag_sort,
 				 sort >= FILES_LIST_TITLE_REVERSE ? "DESC" :
 								    "ASC",
 				 offset > list_count ? offset - list_count : 0,
@@ -925,7 +935,8 @@ end:
 	json_free(root);
 
 	/* Free path */
-	free(real_path);
+	if(real_path != NULL)
+		free(real_path);
 
 	return str;
 }

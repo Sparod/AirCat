@@ -957,6 +957,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	int sort = FILES_LIST_DEFAULT;
 	const char *value;
 	char *list = NULL;
+	int library = 0;
 
 	/* Get page */
 	value = httpd_get_query(req, "page");
@@ -967,6 +968,11 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	value = httpd_get_query(req, "count");
 	if(value != NULL)
 		count = strtoul(value, NULL, 10);
+
+	/* Flag which specify library listting */
+	value = httpd_get_query(req, "type");
+	if(value != NULL && strcmp(value, "library") == 0)
+		library = 1;
 
 	/* Get sort */
 	value = httpd_get_query(req, "sort");
@@ -1005,7 +1011,8 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	}
 
 	/* Get file list */
-	list = files_list_files(h->db, h->cover_path, h->path, req->resource,
+	list = files_list_files(h->db, h->cover_path,
+				library != 0 ? NULL : h->path, req->resource,
 				page, count, sort);
 	if(list == NULL)
 	{
