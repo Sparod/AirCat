@@ -55,7 +55,8 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		       const char *path, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort,
 		       enum files_list_display display, uint64_t artist_id,
-		       uint64_t album_id, uint64_t genre_id);
+		       uint64_t album_id, uint64_t genre_id,
+		       const char *filter);
 int files_list_scan(struct db_handle *db, const char *cover_path,
 		    const char *path, int recursive);
 char *files_list_get_scan(void);

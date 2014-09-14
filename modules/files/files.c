@@ -956,6 +956,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	unsigned long page = 0, count = 0;
 	int display = FILES_LIST_DISPLAY_DEFAULT;
 	int sort = FILES_LIST_SORT_DEFAULT;
+	const char *filter = NULL;
 	const char *value;
 	char *list = NULL;
 	int artist_id = 0;
@@ -1041,12 +1042,15 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 			sort = FILES_LIST_SORT_DURATION_REVERSE;
 	}
 
+	/* Filter */
+	filter = httpd_get_query(req, "filter");
+
 	/* Get file list */
 	list = files_list_files(h->db, h->cover_path,
 				library != 0 ? NULL : h->path, req->resource,
 				page, count, sort, display,
 				(uint64_t) artist_id, (uint64_t) album_id,
-				(uint64_t) genre_id);
+				(uint64_t) genre_id, filter);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);

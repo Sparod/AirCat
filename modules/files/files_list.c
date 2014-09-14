@@ -820,7 +820,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		       const char *path, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort,
 		       enum files_list_display display, uint64_t artist_id,
-		       uint64_t album_id, uint64_t genre_id)
+		       uint64_t album_id, uint64_t genre_id, const char *filter)
 {
 	int (*_sort)(const struct _dirent **, const struct _dirent **);
 	int (*_filter)(const struct dirent *, const struct stat *) =
@@ -884,7 +884,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 
 	/* Scan entire folder for tag sort */
 	if(only_dir || display != FILES_LIST_DISPLAY_DEFAULT ||
-	   artist_id > 0 || album_id > 0 || genre_id > 0)
+	   artist_id > 0 || album_id > 0 || genre_id > 0 || filter != NULL)
 	{
 		/* Set only dir */
 		only_dir = 1;
@@ -1008,12 +1008,16 @@ do_sql:
 				 "%s album_id='%ld' \n"
 				 "%s artist_id='%ld' \n"
 				 "%s genre_id='%ld' \n"
+				 "%s (title LIKE '%%%q%%' OR "
+				 "album LIKE '%%%q%%' OR "
+				 "artist LIKE '%%%q%%') \n"
 				 "ORDER BY %s %s LIMIT %ld, %ld",
 				 path == NULL ? "--" : "AND", path_id,
 				 album_id == 0 ? "--" : "AND", album_id,
 				 artist_id == 0 ? "--" : "AND", artist_id,
 				 genre_id == 0 ? "--" : "AND", genre_id,
-				 tag_sort,
+				 filter == NULL ? "--" : "AND", filter, filter,
+				 filter, tag_sort,
 				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
 								 "DESC" : "ASC",
 				 offset > list_count ? offset - list_count : 0,
@@ -1030,8 +1034,10 @@ do_sql:
 	{
 		/* Prepare request */
 		str = db_mprintf("SELECT album,album_id,cover FROM album "
-				 "LEFT JOIN cover USING (cover_id) "
+				 "LEFT JOIN cover USING (cover_id) \n"
+				 "%sWHERE album LIKE '%%%q%%' \n"
 				 "ORDER BY album %s LIMIT %ld, %ld",
+				 filter == NULL ? "--" : "", filter,
 				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
 								 "DESC" : "ASC",
 				 offset > list_count ? offset - list_count : 0,
@@ -1047,8 +1053,10 @@ do_sql:
 	else if(display == FILES_LIST_DISPLAY_ARTIST)
 	{
 		/* Prepare request */
-		str = db_mprintf("SELECT artist,artist_id FROM artist "
+		str = db_mprintf("SELECT artist,artist_id FROM artist \n"
+				 "%sWHERE artist LIKE '%%%q%%' \n"
 				 "ORDER BY artist %s LIMIT %ld, %ld",
+				 filter == NULL ? "--" : "", filter,
 				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
 								 "DESC" : "ASC",
 				 offset > list_count ? offset - list_count : 0,
@@ -1064,8 +1072,10 @@ do_sql:
 	else if(display == FILES_LIST_DISPLAY_GENRE)
 	{
 		/* Prepare request */
-		str = db_mprintf("SELECT genre,genre_id FROM genre "
+		str = db_mprintf("SELECT genre,genre_id FROM genre \n"
+				 "%sWHERE genre LIKE '%%%q%%' \n"
 				 "ORDER BY genre %s LIMIT %ld, %ld",
+				 filter == NULL ? "--" : "", filter,
 				 sort >= FILES_LIST_SORT_TITLE_REVERSE ?
 								 "DESC" : "ASC",
 				 offset > list_count ? offset - list_count : 0,
