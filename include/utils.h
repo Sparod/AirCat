@@ -58,6 +58,10 @@ int _alphasort_reverse(const struct _dirent **a, const struct _dirent **b);
 int _alphasort_first(const struct _dirent **a, const struct _dirent **b);
 int _alphasort_last(const struct _dirent **a, const struct _dirent **b);
 
+/* Custom selector function: select only regular files or only folders */
+int _file_only(const struct dirent *d, const struct stat *s);
+int _dir_only(const struct dirent *d, const struct stat *s);
+
 /* Custom scandir function */
 int _scandir(const char *path, struct _dirent ***list,
 	     int (*selector)(const struct dirent *, const struct stat *),

@@ -307,6 +307,16 @@ int _alphasort_last(const struct _dirent **a, const struct _dirent **b)
 	return strcoll((*b)->name, (*a)->name);
 }
 
+int _file_only(const struct dirent *d, const struct stat *s)
+{
+	return s->st_mode & S_IFREG ? 1 : 0;
+}
+
+int _dir_only(const struct dirent *d, const struct stat *s)
+{
+	return s->st_mode & S_IFDIR ? 1 : 0;
+}
+
 int _scandir(const char *path, struct _dirent ***list,
 	     int (*selector)(const struct dirent *, const struct stat *),
 	     int (*compar)(const struct _dirent **, const struct _dirent **))
