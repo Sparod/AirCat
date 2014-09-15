@@ -36,7 +36,7 @@ static char *scan_status = NULL;
 static int scan_len = 0;
 static int scanning = 0;
 
-static char *files_ext[] = {
+char *files_ext[] = {
 	".mp3", ".m4a", ".mp4",	".aac",	".ogg",	".wav",
 	NULL
 };
@@ -44,20 +44,6 @@ static char *files_ext[] = {
 static int files_list_recursive_scan(struct db_handle *db,
 				     const char *cover_path, const char *path,
 				     int len, int recursive, int update_status);
-
-static inline int files_ext_check(const char *name)
-{
-	int len = strlen(name);
-	int i;
-
-	for(i = 0; files_ext[i] != NULL; i++)
-	{
-		if(strcmp(&name[len-4], files_ext[i]) == 0)
-			return 1;
-	}
-
-	return 0;
-}
 
 void files_list_init(struct db_handle *db)
 {

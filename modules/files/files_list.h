@@ -62,5 +62,20 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 char *files_list_get_scan(void);
 int files_list_is_scanning(void);
 
+extern char *files_ext[];
+static inline int files_ext_check(const char *name)
+{
+	int len = strlen(name);
+	int i;
+
+	for(i = 0; files_ext[i] != NULL; i++)
+	{
+		if(strcmp(&name[len-4], files_ext[i]) == 0)
+			return 1;
+	}
+
+	return 0;
+}
+
 #endif
 
