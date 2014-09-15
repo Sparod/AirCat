@@ -66,6 +66,7 @@ struct files_handle {
 };
 
 static void *files_thread(void *user_data);
+static int files_play(struct files_handle *h, int index);
 static int files_stop(struct files_handle *h);
 static int files_set_config(struct files_handle *h, const struct json *c);
 
@@ -252,21 +253,13 @@ static inline void files_free_playlist(struct files_playlist *p)
 		json_free(p->tag);
 }
 
-static int files_add(struct files_handle *h, const char *filename)
+static int files_add(struct files_handle *h, const char *file_path)
 {
 	struct files_playlist *p;
-	char *real_path;
 	int len;
 
-	if(filename == NULL)
+	if(file_path == NULL)
 		return -1;
-
-	/* Make real path */
-	len = strlen(h->path) + strlen(filename) + 2;
-	real_path = calloc(sizeof(char), len);
-	if(real_path == NULL)
-		return -1;
-	sprintf(real_path, "%s/%s", h->path, filename);
 
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
@@ -282,9 +275,6 @@ static int files_add(struct files_handle *h, const char *filename)
 		{
 			/* Unlock playlist */
 			pthread_mutex_unlock(&h->mutex);
-
-			/* Free real path */
-			free(real_path);
 			return -1;
 		}
 
@@ -294,8 +284,9 @@ static int files_add(struct files_handle *h, const char *filename)
 
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
-	p->filename = strdup(real_path);
-	p->tag = files_list_file(h->db, h->cover_path, h->path, filename);
+	p->filename = strdup(file_path);
+	p->tag = files_list_file(h->db, h->cover_path, h->path,
+				 file_path+strlen(h->path)+1);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -303,10 +294,83 @@ static int files_add(struct files_handle *h, const char *filename)
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
-	/* Free real path */
-	free(real_path);
-
 	return h->playlist_len - 1;
+}
+
+static int files_file_only(const struct dirent *d, const struct stat *s)
+{
+	return (s->st_mode & S_IFREG) && files_ext_check(d->d_name) ? 1 : 0;
+}
+
+static int files_add_multiple(struct files_handle *h, const char *resource,
+			      int play)
+{
+	struct _dirent **list = NULL;
+	struct stat st;
+	char *f_path;
+	char *path;
+	int count;
+	int idx;
+	int i;
+
+	if(resource == NULL)
+		return -1;
+
+	/* Make complete path */
+	if(asprintf(&path, "%s/%s", h->path, resource) < 0)
+		return -1;
+
+	/* Stat file */
+	if(stat(path, &st) != 0)
+	{
+		free(path);
+		return -1;
+	}
+
+	/* List files if folder */
+	if(st.st_mode & S_IFDIR)
+	{
+		/* Scan folder */
+		count = _scandir(path, &list, files_file_only, _alphasort);
+
+		/* Add all files in folder */
+		for(i = 0; i < count; i++)
+		{
+			/* Make file path */
+			if(asprintf(&f_path, "%s/%s", path, list[i]->name) < 0)
+				goto next;
+
+			/* Add file to playlist */
+			idx = files_add(h, f_path);
+
+			/* Play first file */
+			if(i == 0 && play && idx >= 0)
+				files_play(h, idx);
+
+			/* Free file path */
+			free(f_path);
+next:
+			/* Free entry */
+			free(list[i]);
+		}
+
+		/* Free list */
+		free(list);
+	}
+	else if(st.st_mode & S_IFREG)
+	{
+		/* Add file to playlist */
+		idx = files_add(h, path);
+
+		/* Play first file */
+		if(play && idx >= 0)
+			files_play(h, idx);
+	}
+
+	/* Free path */
+	free(path);
+
+	return 0;
 }
 
 static int files_remove(struct files_handle *h, int index)
@@ -714,11 +778,9 @@ static int files_httpd_playlist_add(void *user_data, struct httpd_req *req,
 				    struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
-	int idx;
 
 	/* Add file to playlist */
-	idx = files_add(h, req->resource);
-	if(idx < 0)
+	if(files_add_multiple(h, req->resource, 0) < 0)
 	{
 		*res = httpd_new_response("File is not supported", 0, 0);
 		return 406;
@@ -808,23 +870,11 @@ static int files_httpd_play(void *user_data, struct httpd_req *req,
 			    struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
-	int idx = -1;
 
-	/* Add file to playlist */
-	if(*req->resource != 0)
+	/* Add files to playlist and play first */
+	if(files_add_multiple(h, req->resource, 1) < 0)
 	{
-		idx = files_add(h, req->resource);
-		if(idx < 0)
-		{
-			*res = httpd_new_response("File not supported", 0, 0);
-			return 406;
-		}
-	}
-
-	/* Play the file now */
-	if(files_play(h, idx) != 0)
-	{
-		*res = httpd_new_response("Cannot play the file", 0, 0);
+		*res = httpd_new_response("File is not supported", 0, 0);
 		return 406;
 	}
 
