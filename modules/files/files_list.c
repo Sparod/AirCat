@@ -311,7 +311,7 @@ end:
 			 "track='%ld',year='%d',duration='%ld',bitrate='%d'," \
 			 "samplerate='%ld',channels='%d',copyright='%q'," \
 			 "encoded='%q',language='%q',publisher='%q'," \
-			 "cover='%ld',path_id='%ld',mtime='%ld'" \
+			 "cover_id='%ld',path_id='%ld',mtime='%ld'" \
 			 "WHERE id='%ld'"
 
 static int64_t files_list_update_sub_table(struct db_handle *db, const char *insert,
