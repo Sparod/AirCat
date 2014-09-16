@@ -774,21 +774,6 @@ static int files_close(struct files_handle *h)
 	return 0;
 }
 
-static int files_httpd_playlist_add(void *user_data, struct httpd_req *req,
-				    struct httpd_res **res)
-{
-	struct files_handle *h = user_data;
-
-	/* Add file to playlist */
-	if(files_add_multiple(h, req->resource, 0) < 0)
-	{
-		*res = httpd_new_response("File is not supported", 0, 0);
-		return 406;
-	}
-
-	return 200;
-}
-
 static int files_httpd_playlist_play(void *user_data, struct httpd_req *req,
 				     struct httpd_res **res)
 {
@@ -866,13 +851,43 @@ static int files_httpd_playlist(void *user_data, struct httpd_req *req,
 	return 200;
 }
 
-static int files_httpd_play(void *user_data, struct httpd_req *req,
-			    struct httpd_res **res)
+static int files_httpd_add_play(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
+	struct json *list;
+	const char *path;
+	int play = 0;
+	int i, count;
 
-	/* Add files to playlist and play first */
-	if(files_add_multiple(h, req->resource, 1) < 0)
+	/* Set play */
+	if(req->url[11] == '/' || req->url[11] == '\0')
+		play = 1;
+
+	/* Add a selection to playlist */
+	if(req->json != NULL && (list = json_get(req->json, "file")) != NULL)
+	{
+		/* Get list count */
+		count = json_array_length(list);
+
+		/* Add each entry to playlist */
+		for(i = 0; i < count; i++)
+		{
+			/* Get path from entry */
+			path = json_to_string(json_array_get(list, i));
+			if(path == NULL)
+				continue;
+
+			/* Add file to playlist */
+			if(files_add_multiple(h, path, play) == 0)
+				play = 0;
+		}
+
+		return 200;
+	}
+
+	/* Add file to playlist */
+	if(files_add_multiple(h, req->resource, play) < 0)
 	{
 		*res = httpd_new_response("File is not supported", 0, 0);
 		return 406;
@@ -1171,8 +1186,8 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 #define HTTPD_PG HTTPD_PUT | HTTPD_GET
 
 static struct url_table files_url[] = {
-	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, 0,
-						     &files_httpd_playlist_add},
+	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+							 &files_httpd_add_play},
 	{"/playlist/play/",   HTTPD_EXT_URL, HTTPD_PUT, 0,
 						    &files_httpd_playlist_play},
 	{"/playlist/remove/", HTTPD_EXT_URL, HTTPD_PUT, 0,
@@ -1181,7 +1196,8 @@ static struct url_table files_url[] = {
 						   &files_httpd_playlist_flush},
 	{"/playlist",         0,             HTTPD_GET, 0,
 							 &files_httpd_playlist},
-	{"/play",             HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_play},
+	{"/play",             HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+							 &files_httpd_add_play},
 	{"/pause",            0,             HTTPD_PUT, 0, &files_httpd_pause},
 	{"/stop",             0,             HTTPD_PUT, 0, &files_httpd_stop},
 	{"/prev",             0,             HTTPD_PUT, 0, &files_httpd_prev},
