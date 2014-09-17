@@ -1292,22 +1292,26 @@ int files_list_list(struct db_handle *db, const char *uri, files_list_fn fn,
 {
 	struct files_list_data d;
 	char *type = NULL;
+	char *sort = NULL;
 	char *sql = NULL;
 	int64_t id = 0;
 
 	if(strncmp(uri, "artist_id=", 10) == 0)
 	{
 		type = "artist";
+		sort = "album_id,track";
 		id = strtoul(&uri[10], NULL, 10);
 	}
 	else if(strncmp(uri, "album_id=", 9) == 0)
 	{
 		type = "album";
+		sort = "track";
 		id = strtoul(&uri[9], NULL, 10);
 	}
 	else if(strncmp(uri, "genre_id=", 9) == 0)
 	{
 		type = "genre";
+		sort = "artist_id,album_id,track";
 		id = strtoul(&uri[9], NULL, 10);
 	}
 	else
@@ -1316,8 +1320,9 @@ int files_list_list(struct db_handle *db, const char *uri, files_list_fn fn,
 	/* Prepare SQL request */
 	sql = db_mprintf("SELECT path,file FROM song "
 			 "LEFT JOIN path USING (path_id) "
-			 "WHERE %s_id='%ld'",
-			 type, id, type);
+			 "WHERE %s_id='%ld' "
+			 "ORDER BY %s ASC",
+			 type, id, sort);
 	if(sql == NULL)
 		return -1;
 
