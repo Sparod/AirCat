@@ -62,6 +62,10 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 char *files_list_get_scan(void);
 int files_list_is_scanning(void);
 
+typedef int (*files_list_fn)(void *, const char *);
+int files_list_list(struct db_handle *db, const char *uri, files_list_fn fn,
+		    void *user_data);
+
 extern char *files_ext[];
 static inline int files_ext_check(const char *name)
 {

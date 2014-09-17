@@ -65,6 +65,12 @@ struct files_handle {
 	char *path;
 };
 
+/* Data structure used for playlist add from database */
+struct files_add_from_db_data {
+	struct files_handle *h;
+	int first_idx;
+};
+
 static void *files_thread(void *user_data);
 static int files_play(struct files_handle *h, int index);
 static int files_stop(struct files_handle *h);
@@ -302,9 +308,31 @@ static int files_file_only(const struct dirent *d, const struct stat *s)
 	return (s->st_mode & S_IFREG) && files_ext_check(d->d_name) ? 1 : 0;
 }
 
+static int files_add_from_db(void *user_data, const char *file)
+{
+	struct files_add_from_db_data *d = user_data;
+	char *file_path;
+	int idx;
+
+	/* Generate complete file path */
+	if(asprintf(&file_path, "%s/%s", d->h->path, file) < 0)
+		return -1;
+
+	/* Add file to playlist */
+	idx = files_add(d->h, file_path);
+	if(d->first_idx == -1 && idx >= 0)
+		d->first_idx = idx;
+
+	/* Free path */
+	free(file_path);
+
+	return 0;
+}
+
 static int files_add_multiple(struct files_handle *h, const char *resource,
 			      int play)
 {
+	struct files_add_from_db_data d;
 	struct _dirent **list = NULL;
 	struct stat st;
 	char *f_path;
@@ -315,6 +343,25 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 
 	if(resource == NULL)
 		return -1;
+
+	/* Special path: add files from database */
+	if(resource[0] == '?')
+	{
+		/* Prepare data */
+		d.h = h;
+		d.first_idx = -1;
+
+		/* Add file(s) to playlist */
+		if(files_list_list(h->db, &resource[1], files_add_from_db, &d)
+		   != 0)
+			return -1;
+
+		/* Play first file */
+		if(play && d.first_idx >= 0)
+			files_play(h, d.first_idx);
+
+		return 0;
+	}
 
 	/* Make complete path */
 	if(asprintf(&path, "%s/%s", h->path, resource) < 0)
@@ -865,16 +912,13 @@ static int files_httpd_add_play(void *user_data, struct httpd_req *req,
 		play = 1;
 
 	/* Add a selection to playlist */
-	if(req->json != NULL && (list = json_get(req->json, "file")) != NULL)
+	if(req->json != NULL && (count = json_array_length(req->json)) > 0)
 	{
-		/* Get list count */
-		count = json_array_length(list);
-
 		/* Add each entry to playlist */
 		for(i = 0; i < count; i++)
 		{
 			/* Get path from entry */
-			path = json_to_string(json_array_get(list, i));
+			path = json_to_string(json_array_get(req->json, i));
 			if(path == NULL)
 				continue;
 
