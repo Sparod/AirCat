@@ -1230,7 +1230,7 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 #define HTTPD_PG HTTPD_PUT | HTTPD_GET
 
 static struct url_table files_url[] = {
-	{"/playlist/add/",    HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
+	{"/playlist/add",     HTTPD_EXT_URL, HTTPD_PUT, HTTPD_JSON,
 							 &files_httpd_add_play},
 	{"/playlist/play/",   HTTPD_EXT_URL, HTTPD_PUT, 0,
 						    &files_httpd_playlist_play},
@@ -1248,8 +1248,8 @@ static struct url_table files_url[] = {
 	{"/next",             0,             HTTPD_PUT, 0, &files_httpd_next},
 	{"/seek/",            HTTPD_EXT_URL, HTTPD_PUT, 0, &files_httpd_seek},
 	{"/status",           0            , HTTPD_GET, 0, &files_httpd_status},
-	{"/img",              HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_img},
-	{"/info",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
+	{"/img/",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_img},
+	{"/info/",            HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{"/scan",             0,             HTTPD_PG,  0, &files_httpd_scan},
 	{0, 0, 0}
