@@ -255,19 +255,21 @@ int parse_url(const char *url, int *protocol, char **hostname,
 	return 0;
 }
 
-char *random_string(int size)
+char *random_string(char *str, int size)
 {
 	static int init = 1;
-	char *str;
 	int i;
 
 	/* Initialize random number generator */
 	if(init) srand(time(NULL) + getpid()), init = 0;
 
 	/* Allocate string */
-	str = malloc(size + 1);
 	if(str == NULL)
-		return NULL;
+	{
+		str = malloc(size + 1);
+		if(str == NULL)
+			return NULL;
+	}
 
 	/* Generate string */
 	for(i = 0; i < size; i++)

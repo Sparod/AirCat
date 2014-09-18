@@ -41,9 +41,12 @@
 #define MAX_LATENCY 10000
 #define DEFAULT_LATENCY 100
 
+/* Output ID length */
+#define OUTPUTS_ID_SIZE 10
+
 struct output_stream_handle {
 	/* Stream properties */
-	char *id;
+	char id[OUTPUTS_ID_SIZE+1];
 	char *name;
 	unsigned long samplerate;
 	unsigned char channels;
@@ -63,7 +66,7 @@ struct output_stream_handle {
 
 struct output_handle {
 	/* Output name */
-	char *id;
+	char id[OUTPUTS_ID_SIZE+1];
 	char *name;
 	/* Global volume for the handle */
 	unsigned int volume;
@@ -451,7 +454,7 @@ int output_open(struct output_handle **handle, struct outputs_handle *outputs,
 	h = *handle;
 
 	/* Init structure */
-	h->id = random_string(10);
+	random_string(h->id, OUTPUTS_ID_SIZE);
 	h->name = strdup(name);
 	h->outputs = outputs;
 	h->mutex = &outputs->mutex;
@@ -503,7 +506,7 @@ struct output_stream_handle *output_add_stream(struct output_handle *h,
 		goto end;
 
 	/* Fill handle */
-	s->id = random_string(10);
+	random_string(s->id, OUTPUTS_ID_SIZE);
 	s->name = name ? strdup(name) : NULL;
 	s->samplerate = samplerate;
 	s->channels = channels;
@@ -563,7 +566,6 @@ void output_remove_stream(struct output_handle *h,
 
 	/* Free stream name */
 	free(s->name);
-	free(s->id);
 
 	/* Free structure */
 	free(s);
@@ -646,7 +648,6 @@ void output_close(struct output_handle *h)
 
 	/* Free output name */
 	free(h->name);
-	free(h->id);
 
 	/* Free structure */
 	free(h);

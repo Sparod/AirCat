@@ -37,7 +37,7 @@ int parse_url(const char *url, int *protocol, char **hostname,
 	      char **resource);
 
 /* Random string generator */
-char *random_string(int size);
+char *random_string(char *str, int size);
 
 /* Custom dirent structure */
 struct _dirent {

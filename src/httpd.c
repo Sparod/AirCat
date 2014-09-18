@@ -37,6 +37,9 @@
 
 #define OPAQUE "11733b200778ce33060f31c9af70a870ba96ddd4"
 
+/* Session ID length */
+#define HTTPD_ID_SIZE 32
+
 /* Maximum time to wait end of connections for URL group remove:
  *   HTTPD_REMOVE_RETRY = number of retry,
  *   HTTPD_REMOVE_WAIT  = time to wait between to retry (in ms).
@@ -137,7 +140,7 @@ struct httpd_value {
 
 struct httpd_session {
 	/* Session ID */
-	char id[33];
+	char id[HTTPD_ID_SIZE+1];
 	/* Login flag */
 	int logged;
 	/* Session values */
@@ -694,7 +697,6 @@ static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 {
 	struct httpd_session *s;
 	int count = 0;
-	char *str;
 
 	/* Process expired sessions and force free if no more space */
 	httpd_expire_session(h, 1);
@@ -718,9 +720,7 @@ static struct httpd_session *httpd_new_session(struct httpd_handle *h)
 		return NULL;
 
 	/* Generate a random ID */
-	str = random_string(32);
-	strcpy(s->id, str);
-	free(str);
+	random_string(s->id, HTTPD_ID_SIZE);
 
 	/* Set logged flag to zero */
 	s->logged = 0;

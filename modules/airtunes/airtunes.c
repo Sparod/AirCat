@@ -39,6 +39,7 @@
 #endif
 
 #define BUFFER_SIZE 512
+#define AIRTUNES_ID_SIZE 10
 #define MAX_VOLUME OUTPUT_VOLUME_MAX
 
 #define AIRPORT_PRIVATE_KEY \
@@ -77,7 +78,7 @@ struct airtunes_stream {
 	/* Output stream */
 	struct output_stream_handle *stream;
 	/* Stream id */
-	char *id;
+	char id[AIRTUNES_ID_SIZE+1];
 	/* Stream name */
 	char *name;
 	/* Stream status */
@@ -371,7 +372,7 @@ static struct airtunes_stream *airtunes_add_stream(struct airtunes_handle *h)
 		memset(s, 0, sizeof(struct airtunes_stream));
 
 		/* Add an id to stream */
-		s->id = random_string(10);
+		random_string(s->id, AIRTUNES_ID_SIZE);
 
 		/* Lock mutex */
 		pthread_mutex_lock(&h->mutex);
@@ -392,8 +393,6 @@ static void airtunes_free_stream(struct airtunes_stream *s)
 	if(s == NULL)
 		return;
 
-	if(s->id != NULL)
-		free(s->id);
 	if(s->name != NULL)
 		free(s->name);
 	if(s->title != NULL)
