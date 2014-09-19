@@ -15,6 +15,7 @@ EXTRA_DIST = config_file.h \
 	     rtsp.h \
 	     rtp.h \
 	     sdp.h \
+	     timer.h \
 	     utils.h \
 	     module.h \
 	     db.h \

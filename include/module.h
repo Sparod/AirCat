@@ -22,12 +22,14 @@
 #include "output.h"
 #include "avahi.h"
 #include "httpd.h"
+#include "timer.h"
 #include "json.h"
 #include "db.h"
 
 struct module_attr {
 	struct output_handle *output;
 	struct avahi_handle *avahi;
+	struct timer_handle *timer;
 	struct db_handle *db;
 	const char *path;
 	const struct json *config;

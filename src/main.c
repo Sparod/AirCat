@@ -24,6 +24,7 @@
 
 #include "config_file.h"
 #include "outputs.h"
+#include "timers.h"
 #include "avahi.h"
 #include "httpd.h"
 
@@ -55,6 +56,7 @@ static struct avahi_handle *avahi = NULL;
 static struct httpd_handle *httpd = NULL;
 static struct config_handle *config = NULL;
 static struct modules_handle *modules = NULL;
+static struct timers_handle *timers = NULL;
 
 /* URLs */
 struct url_table config_urls[];
@@ -170,6 +172,9 @@ int main(int argc, char* argv[])
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
+	/* Open timer module */
+	timers_open(&timers);
+
 	/* Get Output configuration from file */
 	cfg = config_get_json(config, "output");
 
@@ -198,15 +203,19 @@ int main(int argc, char* argv[])
 	json_free(cfg);
 
 	/* Open all modules */
-	modules_refresh(modules, httpd, avahi, outputs);
+	modules_refresh(modules, httpd, avahi, outputs, timers);
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
 	httpd_add_urls(httpd, "output", outputs_urls, outputs);
 	httpd_add_urls(httpd, "modules", modules_urls, modules);
+	httpd_add_urls(httpd, "timers", timers_urls, timers);
 
 	/* Start HTTP Server */
 	httpd_start(httpd);
+
+	/* Start all timer events */
+	timers_start(timers);
 
 	/* Wait an input on stdin (only for test purpose) */
 	while(!stop_signal)
@@ -226,8 +235,11 @@ int main(int argc, char* argv[])
 		avahi_loop(avahi, 100);
 
 		/* Refresh modules */
-		modules_refresh(modules, httpd, avahi, outputs);
+		modules_refresh(modules, httpd, avahi, outputs, timers);
 	}
+
+	/* Unregister all timer events */
+	timers_stop(timers);
 
 	/* Stop HTTP Server */
 	httpd_stop(httpd);
@@ -240,6 +252,9 @@ int main(int argc, char* argv[])
 
 	/* Close Output Module */
 	outputs_close(outputs);
+
+	/* Close timer module */
+	timers_close(timers);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);
