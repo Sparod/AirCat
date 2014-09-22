@@ -31,7 +31,8 @@
 #include <netdb.h>
 #include <pthread.h>
 
-#define MAX_SIZE_HEADER 8192
+#define BUFFER_SIZE 8192
+#define MAX_SIZE_HEADER BUFFER_SIZE
 #define MAX_SIZE_LINE 512
 #define DEFAULT_USER_AGENT "tiny_http 0.1"
 #define MAX_FOLLOW 10
@@ -77,6 +78,21 @@ struct http_handle {
 	char *extra;
 	int keep_alive;
 	struct http_header *headers;
+	/* Thread */
+	pthread_t thread;
+	pthread_mutex_t mutex;
+	int stop;
+	int running;
+	/* Request for thread */
+	http_head_cb head_cb;
+	http_read_cb read_cb;
+	http_comp_cb comp_cb;
+	void *user_data;
+	int code;
+	char *url;
+	char *method;
+	unsigned char *buffer;
+	unsigned long length;
 };
 
 #define FREE_STR(s) if(s != NULL) free(s); s = NULL;
@@ -220,6 +236,9 @@ int http_open(struct http_handle **handle, int use_default)
 		/* Unlock default configuration */
 		pthread_mutex_unlock(&def_mutex);
 	}
+
+	/* Init mutex */
+	pthread_mutex_init(&h->mutex, NULL);
 
 	return 0;
 }
@@ -682,6 +701,162 @@ ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
 	return len;
 }
 
+static void *http_thread(void *user_data)
+{
+	struct http_handle *h = user_data;
+	unsigned char buffer[BUFFER_SIZE];
+	size_t size = BUFFER_SIZE;
+	ssize_t len;
+
+	/* Do request */
+	h->code = http_request(h, h->url, h->method, h->buffer, h->length);
+
+	/* Free thread values */
+	FREE_STR(h->url);
+	FREE_STR(h->method);
+	FREE_STR(h->buffer);
+	h->url = NULL;
+	h->method = NULL;
+	h->buffer = NULL;
+	h->length = 0;
+
+	/* Bad request */
+	if(h->code < 0)
+		goto end;
+
+	/* Call header callback */
+	if(h->head_cb)
+		h->head_cb(h->user_data, h->code, h);
+
+	/* Read until end of stream */
+	while(!h->stop)
+	{
+		/* Read data from connection */
+		len = http_read_timeout(h, buffer, size, 1000);
+		if(len < 0)
+			break;
+
+		/* Send data to callback */
+		if(h->read_cb &&
+		   h->read_cb(h->user_data, h->code, buffer, size) < 0)
+			break;
+	}
+
+end:
+	/* End of request: call complete callback */
+	if(h->comp_cb)
+		h->comp_cb(h->user_data, h->code);
+
+	/* Lock connection */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Thread is stopped */
+	h->stop = 0;
+	h->running = 0;
+
+	/* Unlock connection */
+	pthread_mutex_unlock(&h->mutex);
+
+	return NULL;
+}
+
+int http_request_thread(struct http_handle *h, const char *url,
+			const char *method, unsigned char *buffer,
+			unsigned long len, http_head_cb head_cb,
+			http_read_cb read_cb, http_comp_cb comp_cb,
+			void *user_data)
+{
+	int ret = -1;
+
+	/* Check URL */
+	if(url == NULL || method == NULL)
+		return -1;
+
+	/* Lock connection */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Thread is stopped */
+	if(h->running)
+	{
+		ret = 1;
+		goto end;
+	}
+
+	/* Copy data */
+	FREE_STR(h->url);
+	FREE_STR(h->method);
+	FREE_STR(h->buffer);
+	h->url = strdup(url);
+	h->method = strdup(method);
+	if(len > 0 && buffer != NULL)
+	{
+		/* Allocate memory */
+		h->buffer = malloc(len);
+		if(h->buffer == NULL)
+			goto end;
+
+		/* Copy data */
+		memcpy(h->buffer, buffer, len);
+		h->length = len;
+	}
+	else
+	{
+		h->buffer = NULL;
+		h->length = 0;
+	}
+
+	/* Create thread */
+	if(pthread_create(&h->thread, NULL, http_thread, h) != 0)
+		goto end;
+
+	/* Thread is now running */
+	h->running = 1;
+
+end:
+	/* Unlock connection */
+	pthread_mutex_unlock(&h->mutex);
+
+	return ret;
+}
+
+int http_get_code(struct http_handle *h)
+{
+	int code;
+
+	if(h == NULL)
+		return -1;
+
+	/* Lock connection */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get code */
+	code = h->code;
+
+	/* Unlock connection */
+	pthread_mutex_unlock(&h->mutex);
+
+	return code;
+}
+
+int http_status(struct http_handle *h)
+{
+	int status;
+
+	if(h == NULL)
+		return -1;
+
+	/* Lock connection */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Get thread status */
+	status = h->running;
+
+	/* Unlock connection */
+	pthread_mutex_unlock(&h->mutex);
+
+	return status;
+}
+
 void http_close_connection(struct http_handle *h)
 {
 	/* Close socket */
@@ -699,6 +874,28 @@ void http_close_connection(struct http_handle *h)
 		close(h->sock);
 		h->sock = -1;
 	}
+
+	/* Lock connection */
+	pthread_mutex_lock(&h->mutex);
+
+	/* HTTP connection is a thread */
+	if(h->running)
+	{
+		/* Stop thread */
+		h->stop = 1;
+
+		/* Unlock connection */
+		pthread_mutex_unlock(&h->mutex);
+
+		/* Wait end of thread */
+		pthread_join(h->thread, NULL);
+
+		/* Lock connection */
+		pthread_mutex_lock(&h->mutex);
+	}
+
+	/* Unlock connection */
+	pthread_mutex_unlock(&h->mutex);
 
 	/* Free headers */
 	http_free_header(h);
@@ -719,6 +916,9 @@ void http_close(struct http_handle *h)
 	FREE_STR(h->user_agent);
 	FREE_STR(h->extra);
 	FREE_STR(h->proxy_hostname);
+	FREE_STR(h->url);
+	FREE_STR(h->method);
+	FREE_STR(h->buffer);
 
 	/* Free handle */
 	free(h);

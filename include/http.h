@@ -67,7 +67,41 @@ char *http_get_header(struct http_handle *h, const char *name,
 ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
 			  size_t size, long timeout);
 
-/* Close current HTTP connection */
+/* Callback for threaded request */
+typedef int (*http_head_cb)(void *, int, struct http_handle *);
+typedef ssize_t (*http_read_cb)(void *, int, unsigned char *, size_t);
+typedef void (*http_comp_cb)(void *, int);
+
+/* Send the same request as http_request() but with a thread and three callback:
+ *  - http_head_cb: When respond header is received, this function is called. To
+ *                  access header values use http_get_header().
+ *  - http_read_cb: This function is called while data are available. It returns
+ *                  number of read bytes.
+ *  - http_comp_cb: This function is called when request is finished even if it
+ *                  is interrupted or it failed.
+ */
+#define http_get_thread(h, u, hb, rb, cb, ud) \
+		       http_request_thread(h, u, "GET", NULL, 0, hb, rb, cb, ud)
+#define http_head_thread(h, u, hb, rb, cb, ud) \
+		      http_request_thread(h, u, "HEAD", NULL, 0, hb, rb, cb, ud)
+#define http_post_thread(h, u, b, l, hb, rb, cb, ud) \
+			http_request_thread(h, u, "POST", b, l,, hb, rb, cb, ud)
+int http_request_thread(struct http_handle *h, const char *url,
+			const char *method, unsigned char *buffer,
+			unsigned long len, http_head_cb head_cb,
+			http_read_cb read_cb, http_comp_cb comp_cb,
+			void *user_data);
+
+/* Get respond code of last HTTP request */
+int http_get_code(struct http_handle *h);
+
+/* Get status of current thread */
+int http_status(struct http_handle *h);
+
+/* Close current HTTP connection (threaded or not).
+ * Note: When connection is threaded, the thread is stopped and complete
+ * callback is called before function returns.
+ */
 void http_close_connection(struct http_handle *h);
 
 /* Close connection and free handle */
