@@ -29,6 +29,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <pthread.h>
 
 #define MAX_SIZE_HEADER 8192
 #define MAX_SIZE_LINE 512
@@ -80,7 +81,112 @@ struct http_handle {
 
 #define FREE_STR(s) if(s != NULL) free(s); s = NULL;
 
-int http_open(struct http_handle **handle)
+/* Default configuration */
+static char *user_agent = NULL;
+static int proxy_use = 0;
+static char *proxy_hostname = NULL;
+static unsigned int proxy_port = 0;
+static char *extra = NULL;
+static int follow = 0;
+static int max_follow = MAX_FOLLOW;
+static pthread_mutex_t def_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+int http_set_default_option(int option, const char *c_value,
+			    unsigned int i_value)
+{
+	/* Lock default configuration */
+	pthread_mutex_lock(&def_mutex);
+
+	switch(option)
+	{
+		case HTTP_USER_AGENT:
+			FREE_STR(user_agent);
+			user_agent = c_value != NULL ? strdup(c_value) : NULL;
+			break;
+		case HTTP_PROXY:
+			proxy_use = i_value;
+			break;
+		case HTTP_PROXY_HOST:
+			FREE_STR(proxy_hostname);
+			proxy_hostname = c_value != NULL ? strdup(c_value) :
+							   NULL;
+			break;
+		case HTTP_PROXY_PORT:
+			proxy_port = i_value;
+			break;
+		case HTTP_EXTRA_HEADER:
+			FREE_STR(extra);
+			extra = c_value != NULL ? strdup(c_value) : NULL;
+			break;
+		case HTTP_FOLLOW_REDIRECT:
+			follow = i_value;
+			break;
+		case HTTP_MAX_REDIRECT:
+			max_follow = i_value;
+			if(max_follow <= 0)
+				max_follow = 1;
+			break;
+	}
+
+	/* Unlock default configuration */
+	pthread_mutex_unlock(&def_mutex);
+
+	return 0;
+}
+
+int http_get_default_option(int option, char **c_value, unsigned int *i_value)
+{
+	/* Lock default configuration */
+	pthread_mutex_lock(&def_mutex);
+
+	switch(option)
+	{
+		case HTTP_USER_AGENT:
+			*c_value = user_agent != NULL ?
+						      strdup(user_agent) : NULL;
+			break;
+		case HTTP_PROXY:
+			*i_value = proxy_use;
+			break;
+		case HTTP_PROXY_HOST:
+			*c_value = proxy_hostname != NULL ?
+						  strdup(proxy_hostname) : NULL;
+			break;
+		case HTTP_PROXY_PORT:
+			*i_value = proxy_port;
+			break;
+		case HTTP_EXTRA_HEADER:
+			*c_value = extra != NULL ? strdup(extra) : NULL;
+			break;
+		case HTTP_FOLLOW_REDIRECT:
+			*i_value = follow;
+			break;
+		case HTTP_MAX_REDIRECT:
+			*i_value = max_follow;
+			break;
+	}
+
+	/* Unlock default configuration */
+	pthread_mutex_unlock(&def_mutex);
+
+	return 0;
+}
+
+void http_free_default_options(void)
+{
+	/* Lock default configuration */
+	pthread_mutex_lock(&def_mutex);
+
+	/* Free strings */
+	FREE_STR(user_agent);
+	FREE_STR(proxy_hostname);
+	FREE_STR(extra);
+
+	/* Unlock default configuration */
+	pthread_mutex_unlock(&def_mutex);
+}
+
+int http_open(struct http_handle **handle, int use_default)
 {
 	struct http_handle *h;
 
@@ -95,39 +201,59 @@ int http_open(struct http_handle **handle)
 	h->sock = -1;
 	h->max_follow = MAX_FOLLOW;
 
+	/* Use default configuration */
+	if(use_default)
+	{
+		/* Lock default configuration */
+		pthread_mutex_lock(&def_mutex);
+
+		/* Copy configuration */
+		h->user_agent = user_agent != NULL ? strdup(user_agent) : NULL;
+		h->proxy_use = proxy_use;
+		h->proxy_hostname = proxy_hostname != NULL ?
+						  strdup(proxy_hostname) : NULL;
+		h->proxy_port = proxy_port;
+		h->extra = extra != NULL ? strdup(extra) : NULL;
+		h->follow = follow;
+		h->max_follow = max_follow;
+
+		/* Unlock default configuration */
+		pthread_mutex_unlock(&def_mutex);
+	}
+
 	return 0;
 }
 
-int http_set_option(struct http_handle *h, int option, char *value)
+int http_set_option(struct http_handle *h, int option, const char *c_value,
+		    unsigned int i_value)
 {
 	switch (option)
 	{
 		case HTTP_USER_AGENT:
-			if(h->user_agent != NULL)
-				free(h->user_agent);
-			h->user_agent = strdup(value);
+			FREE_STR(h->user_agent);
+			h->user_agent = c_value != NULL ? strdup(c_value) :
+							  NULL;
 			break;
 		case HTTP_PROXY:
-			h->proxy_use = strcmp(value, "yes") == 0 ? 1 : 0;
+			h->proxy_use = i_value;
 			break;
 		case HTTP_PROXY_HOST:
-			if(h->proxy_hostname != NULL)
-				free(h->proxy_hostname);
-			h->proxy_hostname = strdup(value);
+			FREE_STR(h->proxy_hostname);
+			h->proxy_hostname = c_value != NULL ? strdup(c_value) :
+							      NULL;
 			break;
 		case HTTP_PROXY_PORT:
-			h->proxy_port = atoi(value);
+			h->proxy_port = i_value;
 			break;
 		case HTTP_EXTRA_HEADER:
-			if(h->extra != NULL)
-				free(h->extra);
-			h->extra = strdup(value);
+			FREE_STR(h->extra);
+			h->extra = c_value != NULL ? strdup(c_value) : NULL;
 			break;
 		case HTTP_FOLLOW_REDIRECT:
-			h->follow = strcmp(value, "yes") == 0 ? 1 : 0;
+			h->follow = i_value;
 			break;
 		case HTTP_MAX_REDIRECT:
-			h->max_follow = atoi(value);
+			h->max_follow = i_value;
 			if(h->max_follow <= 0)
 				h->max_follow = 1;
 			break;

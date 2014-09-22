@@ -101,16 +101,14 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	pthread_mutex_init(&h->mutex, NULL);
 
 	/* Init http client */
-	if(http_open(&h->http) != 0)
+	if(http_open(&h->http, 1) != 0)
 	{
 		shoutcast_close(h);
 		return -1;
 	}
 
 	/* Set options */
-	http_set_option(h->http, HTTP_USER_AGENT, "Aircat 1.0");
-	http_set_option(h->http, HTTP_EXTRA_HEADER, "Icy-MetaData: 1\r\n");
-	http_set_option(h->http, HTTP_FOLLOW_REDIRECT, "yes");
+	http_set_option(h->http, HTTP_EXTRA_HEADER, "Icy-MetaData: 1\r\n", 0);
 
 	/* Connect and get header from server */
 	code = http_get(h->http, url);

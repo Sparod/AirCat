@@ -113,12 +113,12 @@ int stream_open(struct stream_handle **handle, const char *uri,
 	else
 	{
 		/* Create a new HTTP client */
-		if(http_open(&h->http) != 0)
+		if(http_open(&h->http, 1) != 0)
 			return -1;
 
 		/* Prepare request with seek option */
 		http_set_option(h->http, HTTP_EXTRA_HEADER,
-				"Range: bytes=0-\r\n");
+				"Range: bytes=0-\r\n", 0);
 
 		/* Do request */
 		code = http_get(h->http, uri);
@@ -356,7 +356,8 @@ long stream_seek(struct stream_handle *h, long pos, int whence)
 			/* Prepare request */
 			snprintf(range_req, 255, "Range: bytes=%ld-\r\n",
 				 h->pos + pos);
-			http_set_option(h->http, HTTP_EXTRA_HEADER, range_req);
+			http_set_option(h->http, HTTP_EXTRA_HEADER, range_req,
+					0);
 
 			/* Do a new request */
 			code = http_get(h->http, h->uri);
