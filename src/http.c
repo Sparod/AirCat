@@ -690,7 +690,11 @@ ssize_t http_read_timeout(struct http_handle *h, unsigned char *buffer,
 
 			/* End of stream */
 			if(ret <= 0)
-				return -1;
+			{
+				if(len == 0)
+					return -1;
+				break;
+			}
 
 			len += ret;
 			buffer += ret;
@@ -738,7 +742,7 @@ static void *http_thread(void *user_data)
 
 		/* Send data to callback */
 		if(h->read_cb &&
-		   h->read_cb(h->user_data, h->code, buffer, size) < 0)
+		   h->read_cb(h->user_data, h->code, buffer, len) < 0)
 			break;
 	}
 
@@ -804,6 +808,10 @@ int http_request_thread(struct http_handle *h, const char *url,
 		h->buffer = NULL;
 		h->length = 0;
 	}
+	h->head_cb = head_cb;
+	h->read_cb = read_cb;
+	h->comp_cb = comp_cb;
+	h->user_data = user_data;
 
 	/* Create thread */
 	if(pthread_create(&h->thread, NULL, http_thread, h) != 0)
