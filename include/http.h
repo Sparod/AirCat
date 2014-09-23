@@ -92,6 +92,10 @@ int http_request_thread(struct http_handle *h, const char *url,
 			http_read_cb read_cb, http_comp_cb comp_cb,
 			void *user_data);
 
+/* Download data from URL to destination file. Use threaded request */
+int http_download_to_file(struct http_handle *h, const char *url,
+			  const char *dst);
+
 /* Get respond code of last HTTP request */
 int http_get_code(struct http_handle *h);
 

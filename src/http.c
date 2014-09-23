@@ -819,12 +819,53 @@ int http_request_thread(struct http_handle *h, const char *url,
 
 	/* Thread is now running */
 	h->running = 1;
+	ret = 0;
 
 end:
 	/* Unlock connection */
 	pthread_mutex_unlock(&h->mutex);
 
 	return ret;
+}
+
+static ssize_t http_read_to_file(void *user_data, int code,
+				 unsigned char *buffer, size_t len)
+{
+	FILE *fp = user_data;
+
+	/* Write data to file */
+	return fwrite(buffer, 1, len, fp);
+}
+
+static void http_complete_to_file(void *user_data, int code)
+{
+	FILE *fp = user_data;
+
+	/* Close file */
+	if(fp != NULL)
+		fclose(fp);
+}
+
+int http_download_to_file(struct http_handle *h, const char *url,
+			  const char *dst)
+{
+	FILE *fp;
+
+	/* Open new file */
+	fp = fopen(dst, "wb");
+	if(fp == NULL)
+		return -1;
+
+	/* Do request */
+	if(http_request_thread(h, url, "GET", NULL, 0, NULL, http_read_to_file,
+			       http_complete_to_file, fp) != 0)
+	{
+		/* Close file */
+		fclose(fp);
+		return -1;
+	}
+
+	return 0;
 }
 
 int http_get_code(struct http_handle *h)
