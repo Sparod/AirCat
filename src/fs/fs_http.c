@@ -233,46 +233,68 @@ static void fs_http_close(struct fs_file *f)
 
 static int fs_http_opendir(struct fs_dir *d, const char *url)
 {
+	/* Directory not yet implemented */
 	return 0;
 }
 
 static struct fs_dirent *fs_http_readdir(struct fs_dir *d)
 {
+	/* Directory not yet implemented */
 	return NULL;
 }
 
 static off_t fs_http_telldir(struct fs_dir *d)
 {
+	/* Directory not yet implemented */
 	return 0;
 }
 
 static void fs_http_closedir(struct fs_dir *d)
 {
+	/* Directory not yet implemented */
 	return;
 }
 
 static int fs_http_stat(const char *url, struct stat *buf)
 {
+	/* Not yet implemented */
 	return 0;
 }
 
 static int fs_http_fstat(struct fs_file *f, struct stat *buf)
 {
+	struct fs_http_handle *h;
+
+	if(f == NULL || f->data == NULL)
+		return -1;
+	h = f->data;
+
+	/* Fill stat */
+	buf->st_mode = S_IFREG & S_IRUSR & S_IRGRP & S_IROTH;
+	buf->st_size = h->size;
+	buf->st_blksize = 512;
+	buf->st_blocks = h->size / 512;
+
 	return 0;
 }
 
 static int fs_http_statvfs(const char *url, struct statvfs *buf)
 {
+	/* Not yet implemented */
 	return 0;
 }
 
 static int fs_http_fstatvfs(struct fs_file *f, struct statvfs *buf)
 {
+	/* No information are available */
+	memset(buf, 0, sizeof(struct statvfs));
+
 	return 0;
 }
 
 static int fs_http_fake(void)
 {
+	/* Function is not yet implemented */
 	return 0;
 }
 
