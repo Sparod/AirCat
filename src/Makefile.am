@@ -6,6 +6,9 @@ aircat_SOURCES = main.c \
 		 httpd.c \
 		 avahi.c \
 		 http.c \
+		 fs/fs.c \
+		 fs/fs_posix.c \
+		 fs/fs_http.c \
 		 stream.c \
 		 demux.c \
 		 demux_mp3.c \
@@ -63,6 +66,8 @@ aircat_SOURCES += file_format_taglib.cpp
 EXTRA_DIST = modules.h \
 	     outputs.h \
 	     output_alsa.h \
+	     fs/fs_posix.h \
+	     fs/fs_http.h \
 	     demux_mp3.h \
 	     demux_mp4.h \
 	     decoder_pcm.h \
