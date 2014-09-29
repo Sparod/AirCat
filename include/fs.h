@@ -18,6 +18,8 @@
 #ifndef _FS_H
 #define _FS_H
 
+#include <unistd.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
