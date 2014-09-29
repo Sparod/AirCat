@@ -74,8 +74,8 @@ struct demux {
 	/* Stream length */
 	unsigned long duration;
 	unsigned long length;
-	/* Stream format */
-	struct file_format format;
+	/* Stream meta */
+	struct meta meta;
 	/* Xing/VBRI specific */
 	unsigned long nb_bytes;
 	unsigned int nb_frame;
@@ -426,22 +426,22 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 		d->duration = (d->length - d->offset) / (frame.bitrate * 125);
 	}
 
-	/* Fill format */
-	d->format.samplerate = frame.samplerate;
-	d->format.channels = frame.channels;
-	d->format.bitrate = frame.bitrate;
-	d->format.length = d->duration;
-	d->format.title = d->title;
-	d->format.artist = d->artist;
-	d->format.album = d->album;
-	d->format.comment = d->comment;
-	d->format.genre = d->genre;
-	d->format.track = d->track;
-	d->format.total_track = d->total_track;
-	d->format.year = d->year;
-	d->format.picture.data = d->pic;
-	d->format.picture.mime = d->pic_mime;
-	d->format.picture.size = d->pic_len;
+	/* Fill meta */
+	d->meta.samplerate = frame.samplerate;
+	d->meta.channels = frame.channels;
+	d->meta.bitrate = frame.bitrate;
+	d->meta.length = d->duration;
+	d->meta.title = d->title;
+	d->meta.artist = d->artist;
+	d->meta.album = d->album;
+	d->meta.comment = d->comment;
+	d->meta.genre = d->genre;
+	d->meta.track = d->track;
+	d->meta.total_track = d->total_track;
+	d->meta.year = d->year;
+	d->meta.picture.data = d->pic;
+	d->meta.picture.mime = d->pic_mime;
+	d->meta.picture.size = d->pic_len;
 
 	/* Update samplerate and channels */
 	*samplerate = frame.samplerate;
@@ -453,9 +453,9 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 	return 0;
 }
 
-struct file_format *demux_mp3_get_format(struct demux *d)
+struct meta *demux_mp3_get_meta(struct demux *d)
 {
-	return &d->format;
+	return &d->meta;
 }
 
 int demux_mp3_get_dec_config(struct demux *d, int *codec,
@@ -575,7 +575,7 @@ void demux_mp3_close(struct demux *d)
 struct demux_handle demux_mp3 = {
 	.demux = NULL,
 	.open = &demux_mp3_open,
-	.get_format = &demux_mp3_get_format,
+	.get_meta = &demux_mp3_get_meta,
 	.get_dec_config = &demux_mp3_get_dec_config,
 	.next_frame = &demux_mp3_next_frame,
 	.set_used = &demux_mp3_set_used,

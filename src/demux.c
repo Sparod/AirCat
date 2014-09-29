@@ -69,11 +69,11 @@ int demux_open(struct demux_handle **handle, struct stream_handle *stream,
 	return h->open(&h->demux, stream, samplerate, channels);
 }
 
-struct file_format *demux_get_format(struct demux_handle *h)
+struct meta *demux_get_meta(struct demux_handle *h)
 {
-	if(h == NULL || h->demux == NULL || h->get_format == NULL)
+	if(h == NULL || h->demux == NULL || h->get_meta == NULL)
 		return NULL;
-	return h->get_format(h->demux);
+	return h->get_meta(h->demux);
 }
 
 int demux_get_dec_config(struct demux_handle *h, int *codec,

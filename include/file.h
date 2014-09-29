@@ -19,7 +19,6 @@
 #ifndef _FILE_CLIENT_H
 #define _FILE_CLIENT_H
 
-#include "file_format.h"
 #include "format.h"
 
 /* File status */

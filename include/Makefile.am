@@ -4,7 +4,7 @@ EXTRA_DIST = config_file.h \
 	     stream.h \
 	     demux.h \
 	     file.h \
-	     file_format.h \
+	     meta.h \
 	     decoder.h \
 	     output.h \
 	     resample.h \

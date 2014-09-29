@@ -14,7 +14,7 @@ aircat_SOURCES = main.c \
 		 demux_mp3.c \
 		 demux_mp4.c \
 		 file.c \
-		 file_format.c \
+		 meta/meta.c \
 		 shoutcast.c \
 		 rtsp.c \
 		 rtp.c \
@@ -61,7 +61,7 @@ aircat_CFLAGS = -DMODULES_PATH='"${modules_DIR}"' \
 # C++ support and TagLib support
 aircat_CPPFLAGS = -I$(top_srcdir)/include \
 		  $(libtag_CFLAGS)
-aircat_SOURCES += file_format_taglib.cpp
+aircat_SOURCES += meta/meta_taglib.cpp
 
 EXTRA_DIST = modules.h \
 	     outputs.h \

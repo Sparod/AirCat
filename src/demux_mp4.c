@@ -49,8 +49,8 @@ struct demux {
 	const unsigned char *buffer;
 	unsigned long buffer_size;
 	unsigned long size;
-	/* Stream format */
-	struct file_format format;
+	/* Stream meta */
+	struct meta meta;
 	/* MP4 Atoms */
 	/* mdhd atom */
 	int32_t mdhd_time_scale;
@@ -1043,26 +1043,26 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 	d->cur_chunk = 0;
 	d->cur_offset = d->stco_chunk_offset[0];
 
-	/* Fill format */
-	d->format.samplerate = d->mp4a_samplerate;
-	d->format.channels = d->mp4a_channel_count;
-	d->format.bitrate = d->esds_avg_bitrate / 1000;
-	d->format.title = d->title;
-	d->format.artist = d->artist;
-	d->format.album = d->album;
-	d->format.comment = d->comment;
-	d->format.genre = d->genre;
-	d->format.track = d->track;
-	d->format.total_track = d->total_track;
+	/* Fill meta */
+	d->meta.samplerate = d->mp4a_samplerate;
+	d->meta.channels = d->mp4a_channel_count;
+	d->meta.bitrate = d->esds_avg_bitrate / 1000;
+	d->meta.title = d->title;
+	d->meta.artist = d->artist;
+	d->meta.album = d->album;
+	d->meta.comment = d->comment;
+	d->meta.genre = d->genre;
+	d->meta.track = d->track;
+	d->meta.total_track = d->total_track;
 	if(d->year != NULL)
-		d->format.year = strtol(d->year, NULL, 10);
-	d->format.picture.data = d->pic;
-	d->format.picture.mime = d->pic_mime;
-	d->format.picture.size = d->pic_len;
+		d->meta.year = strtol(d->year, NULL, 10);
+	d->meta.picture.data = d->pic;
+	d->meta.picture.mime = d->pic_mime;
+	d->meta.picture.size = d->pic_len;
 
 	/* Calculate stream duration */
 	if(d->mdhd_time_scale != 0)
-		d->format.length = d->mdhd_duration / d->mdhd_time_scale;
+		d->meta.length = d->mdhd_duration / d->mdhd_time_scale;
 
 	/* Update samplerate and channels */
 	*samplerate = d->mp4a_samplerate;
@@ -1071,9 +1071,9 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 	return 0;
 }
 
-struct file_format *demux_mp4_get_format(struct demux *d)
+struct meta *demux_mp4_get_meta(struct demux *d)
 {
-	return &d->format;
+	return &d->meta;
 }
 
 int demux_mp4_get_dec_config(struct demux *d, int *codec,
@@ -1218,7 +1218,7 @@ void demux_mp4_close(struct demux *d)
 struct demux_handle demux_mp4 = {
 	.demux = NULL,
 	.open = &demux_mp4_open,
-	.get_format = &demux_mp4_get_format,
+	.get_meta = &demux_mp4_get_meta,
 	.get_dec_config = &demux_mp4_get_dec_config,
 	.next_frame = &demux_mp4_next_frame,
 	.set_used = &demux_mp4_set_used,

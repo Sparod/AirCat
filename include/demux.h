@@ -19,16 +19,16 @@
 #ifndef _DEMUX_H
 #define _DEMUX_H
 
-#include "file_format.h"
 #include "format.h"
 #include "stream.h"
+#include "meta.h"
 
 /* Generic handle */
 struct demux_handle {
 	struct demux *demux;
 	int (*open)(struct demux **, struct stream_handle *, unsigned long *,
 		    unsigned char *);
-	struct file_format *(*get_format)(struct demux *);
+	struct meta *(*get_meta)(struct demux *);
 	int (*get_dec_config)(struct demux *, int *, const unsigned char **,
 			      size_t *);
 	ssize_t (*next_frame)(struct demux *);
@@ -39,7 +39,7 @@ struct demux_handle {
 
 int demux_open(struct demux_handle **handle, struct stream_handle *stream,
 	       unsigned long *samplerate, unsigned char *channels);
-struct file_format *demux_get_format(struct demux_handle *h);
+struct meta *demux_get_meta(struct demux_handle *h);
 int demux_get_dec_config(struct demux_handle *h, int *codec,
 			 const unsigned char **dec_config,
 			 size_t *dec_config_size);

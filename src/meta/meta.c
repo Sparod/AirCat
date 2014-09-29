@@ -1,5 +1,5 @@
 /*
- * file_format.c - An Audio File format parser and tag extractor
+ * meta.c - An Audio File format parser and tag extractor
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -19,14 +19,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "file_format.h"
+#include "meta.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
 #ifndef HAVE_TAGLIB
-struct file_format *file_format_parse(const char *filename, int options)
+struct meta *meta_parse(const char *filename, int options)
 {
 	return NULL;
 }
@@ -34,29 +34,29 @@ struct file_format *file_format_parse(const char *filename, int options)
 
 #define FREE_STRING(str) if(str != NULL) free(str);
 
-void file_format_free(struct file_format *f)
+void meta_free(struct meta *m)
 {
-	if(f == NULL)
+	if(m == NULL)
 		return;
 
 	/* Free string values */
-	FREE_STRING(f->title);
-	FREE_STRING(f->artist);
-	FREE_STRING(f->album);
-	FREE_STRING(f->comment);
-	FREE_STRING(f->genre);
-	FREE_STRING(f->copyright);
-	FREE_STRING(f->encoded);
-	FREE_STRING(f->language);
-	FREE_STRING(f->publisher);
+	FREE_STRING(m->title);
+	FREE_STRING(m->artist);
+	FREE_STRING(m->album);
+	FREE_STRING(m->comment);
+	FREE_STRING(m->genre);
+	FREE_STRING(m->copyright);
+	FREE_STRING(m->encoded);
+	FREE_STRING(m->language);
+	FREE_STRING(m->publisher);
 
 	/* Free picture */
-	FREE_STRING(f->picture.description);
-	FREE_STRING(f->picture.mime);
-	if(f->picture.data != NULL)
-		free(f->picture.data);
+	FREE_STRING(m->picture.description);
+	FREE_STRING(m->picture.mime);
+	if(m->picture.data != NULL)
+		free(m->picture.data);
 
 	/* Free structure */
-	free(f);
+	free(m);
 }
 

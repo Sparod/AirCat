@@ -62,7 +62,7 @@ struct file_handle {
 int file_open(struct file_handle **handle, const char *uri)
 {
 	struct file_handle *h;
-	struct file_format *format;
+	struct meta *meta;
 	const unsigned char *dec_config;
 	unsigned long dec_config_size;
 	unsigned long dec_samplerate;
@@ -106,14 +106,14 @@ int file_open(struct file_handle **handle, const char *uri)
 		return -1;
 
 	/* Get file properties */
-	format = demux_get_format(h->demux);
-	h->samplerate = format->samplerate;
-	h->channels = format->channels;
-	h->length = format->length;
-	h->bitrate = format->bitrate * 1000;
+	meta = demux_get_meta(h->demux);
+	h->samplerate = meta->samplerate;
+	h->channels = meta->channels;
+	h->length = meta->length;
+	h->bitrate = meta->bitrate * 1000;
 
 	/* Samplerate fix: bad samplerate and/or channels in mp4 header */
-	if(format->type == FILE_FORMAT_AAC &&
+	if(meta->type == FILE_FORMAT_AAC &&
 	   ((dec_samplerate != 0 && dec_samplerate != h->samplerate) ||
 	   (dec_channels != 0 && dec_channels != h->channels)))
 	{

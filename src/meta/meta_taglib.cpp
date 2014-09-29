@@ -1,6 +1,6 @@
 /*
- * file_format_taglib.cpp - An Audio File format parser and tag extractor (based
- *                          on taglib)
+ * meta_taglib.cpp - An Audio File format parser and tag extractor (based on
+ *                   taglib)
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -28,7 +28,7 @@
 #include <taglib/id3v2tag.h>
 #include <taglib/attachedpictureframe.h>
 
-#include "file_format.h"
+#include "meta.h"
 
 #define COPY_STRING(d, s) if(s != NULL && *s != 0) d = strdup(s);
 
@@ -61,19 +61,18 @@ static const int id3v2_pic_type_pref[] = {
 
 using namespace TagLib;
 
-static void tag_get_total_track(struct file_format *f, const char *str)
+static void tag_get_total_track(struct meta *m, const char *str)
 {
 	unsigned int track, total;
 
 	if(sscanf(str, "%u/%u", &track, &total) == 2)
 	{
-		f->track = track;
-		f->total_track = total;
+		m->track = track;
+		m->total_track = total;
 	}
 }
 
-static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
-				int options)
+static void tag_read_from_id3v2(ID3v2::Tag *tag, struct meta *m, int options)
 {
 
 	ID3v2::FrameList list;
@@ -90,10 +89,10 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
             COPY_STRING(dest, (*list.begin())->toString().toCString(true)); \
     }
 
-	SET(TAG_COPYRIGHT, "TCOP", f->copyright);
-	SET(TAG_ENCODED, "TENC", f->encoded);
-	SET(TAG_LANGUAGE, "TLAN", f->language);
-	SET(TAG_PUBLISHER, "TPUB", f->publisher);
+	SET(TAG_COPYRIGHT, "TCOP", m->copyright);
+	SET(TAG_ENCODED, "TENC", m->encoded);
+	SET(TAG_LANGUAGE, "TLAN", m->language);
+	SET(TAG_PUBLISHER, "TPUB", m->publisher);
 
 #undef SET
 
@@ -103,7 +102,7 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
 		list = tag->frameListMap()["TRCK"];
 		if(!list.isEmpty())
 		{
-			tag_get_total_track(f,
+			tag_get_total_track(m,
 				   (*list.begin())->toString().toCString(true));
 		}
 	}
@@ -139,30 +138,29 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct file_format *f,
 			return;
 
 		/* Get mime type */
-		COPY_STRING(f->picture.mime,
+		COPY_STRING(m->picture.mime,
 			    pic->mimeType().toCString(true));
 
 		/* Get description */
-		COPY_STRING(f->picture.description,
+		COPY_STRING(m->picture.description,
 			    pic->description().toCString(true));
 
 		/* Get picture */
 		picture = pic->picture();
-		f->picture.size = picture.size();
-		f->picture.data = (unsigned char *) malloc(picture.size());
-		if(f->picture.data == NULL)
+		m->picture.size = picture.size();
+		m->picture.data = (unsigned char *) malloc(picture.size());
+		if(m->picture.data == NULL)
 		{
-			f->picture.size = 0;
+			m->picture.size = 0;
 			return;
 		}
 
 		/* Copy data */
-		memcpy(f->picture.data, picture.data(), f->picture.size);
+		memcpy(m->picture.data, picture.data(), m->picture.size);
 	}
 }
 
-static void tag_read_from_mp4(MP4::Tag *tag, struct file_format *f,
-				int options)
+static void tag_read_from_mp4(MP4::Tag *tag, struct meta *m, int options)
 {
 	MP4::CoverArtList covr;
 
@@ -173,31 +171,31 @@ static void tag_read_from_mp4(MP4::Tag *tag, struct file_format *f,
 		/* Get mime type */
 		if(covr[0].format() == MP4::CoverArt::PNG)
 		{
-			COPY_STRING(f->picture.mime, "image/png");
+			COPY_STRING(m->picture.mime, "image/png");
 		}
 		else
 		{
-			COPY_STRING(f->picture.mime, "image/jpeg");
+			COPY_STRING(m->picture.mime, "image/jpeg");
 		}
 
 		/* Get picture */
-		f->picture.size = covr[0].data().size();
-		f->picture.data = (unsigned char *) malloc(f->picture.size);
-		if(f->picture.data == NULL)
+		m->picture.size = covr[0].data().size();
+		m->picture.data = (unsigned char *) malloc(m->picture.size);
+		if(m->picture.data == NULL)
 		{
-			f->picture.size = 0;
+			m->picture.size = 0;
 			return;
 		}
 
 		/* Copy data */
-		memcpy(f->picture.data, covr[0].data().data(), f->picture.size);
+		memcpy(m->picture.data, covr[0].data().data(), m->picture.size);
 	}
 }
 
-struct file_format *file_format_parse(const char *filename, int options)
+struct meta *meta_parse(const char *filename, int options)
 {
 	AudioProperties *prop;
-	struct file_format *f;
+	struct meta *m;
 	FileRef file;
 	Tag *tag;
 
@@ -207,54 +205,54 @@ struct file_format *file_format_parse(const char *filename, int options)
 		return NULL;
 
 	/* Allocate tag structure */
-	f = (struct file_format*) calloc(1, sizeof(struct file_format));
-	if(f == NULL)
+	m = (struct meta *) calloc(1, sizeof(struct meta));
+	if(m == NULL)
 		return NULL;
 
 	tag = file.tag();
 	if(tag != NULL && !tag->isEmpty())
 	{
 		/* Fill structure with values */
-		COPY_STRING(f->title, tag->title().toCString());
-		COPY_STRING(f->artist, tag->artist().toCString());
-		COPY_STRING(f->album, tag->album().toCString());
-		COPY_STRING(f->comment, tag->comment().toCString());
-		COPY_STRING(f->genre, tag->genre().toCString());
-		f->track = tag->track();
-		f->year = tag->year();
+		COPY_STRING(m->title, tag->title().toCString());
+		COPY_STRING(m->artist, tag->artist().toCString());
+		COPY_STRING(m->album, tag->album().toCString());
+		COPY_STRING(m->comment, tag->comment().toCString());
+		COPY_STRING(m->genre, tag->genre().toCString());
+		m->track = tag->track();
+		m->year = tag->year();
 	}
 
 	/* Get file properties */
 	prop = file.audioProperties();
 	if(prop != NULL)
 	{
-		f->length = prop->length();
-		f->bitrate = prop->bitrate();
-		f->samplerate = prop->sampleRate();
-		f->channels = prop->channels();
+		m->length = prop->length();
+		m->bitrate = prop->bitrate();
+		m->samplerate = prop->sampleRate();
+		m->channels = prop->channels();
 	}
 
 	/* Get file type */
 	if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file.file()))
 	{
-		f->type = FILE_FORMAT_MPEG;
-		f->stream_offset = mpeg->firstFrameOffset();
+		m->type = FILE_FORMAT_MPEG;
+		m->stream_offset = mpeg->firstFrameOffset();
 
 		/* Get extended tags */
 		if(options != 0 && mpeg->ID3v2Tag())
-			tag_read_from_id3v2(mpeg->ID3v2Tag(), f, options);
+			tag_read_from_id3v2(mpeg->ID3v2Tag(), m, options);
 	}
 	else if(MP4::File *mp4 = dynamic_cast<MP4::File*>(file.file()))
 	{
-		f->type = FILE_FORMAT_AAC;
+		m->type = FILE_FORMAT_AAC;
 
 		/* Get extended tags */
 		if(options != 0 && mp4->tag())
-			tag_read_from_mp4(mp4->tag(), f, options);
+			tag_read_from_mp4(mp4->tag(), m, options);
 	}
 	else
-		f->type = FILE_FORMAT_UNKNOWN;
+		m->type = FILE_FORMAT_UNKNOWN;
 
-	return f;
+	return m;
 }
 

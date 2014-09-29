@@ -24,10 +24,10 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "file_format.h"
 #include "files_list.h"
 #include "utils.h"
 #include "json.h"
+#include "meta.h"
 
 #define FILES_LIST_DEFAULT_COUNT 25
 
@@ -214,7 +214,7 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	return 0;
 }
 
-static char *files_list_save_cover(struct file_format *format, const char *path,
+static char *files_list_save_cover(struct meta *meta, const char *path,
 				   const char *file)
 {
 	char *file_path;
@@ -224,15 +224,15 @@ static char *files_list_save_cover(struct file_format *format, const char *path,
 	int len;
 
 	/* Calculate hash of image */
-	md5 = md5_encode_str(format->picture.data, format->picture.size);
+	md5 = md5_encode_str(meta->picture.data, meta->picture.size);
 	if(md5 == NULL || *md5 == '\0')
 	{
-		if(format->artist == NULL && format->album == NULL)
+		if(meta->artist == NULL && meta->album == NULL)
 			cover = strdup(file);
 		else
 			asprintf(&cover , "%s_%s.xxx",
-				 format->artist != NULL ? format->artist : "",
-				 format->album != NULL ? format->album : "");
+				 meta->artist != NULL ? meta->artist : "",
+				 meta->album != NULL ? meta->album : "");
 		if(cover == NULL)
 			goto end;
 		len = strlen(cover) - 4;
@@ -248,12 +248,12 @@ static char *files_list_save_cover(struct file_format *format, const char *path,
 
 	/* Generate file name with extension */
 	cover[len] = '\0';
-	if(format->picture.mime != NULL)
+	if(meta->picture.mime != NULL)
 	{
-		if(strcmp(format->picture.mime, "image/jpeg") == 0 ||
-		   strcmp(format->picture.mime, "image/jpg") == 0)
+		if(strcmp(meta->picture.mime, "image/jpeg") == 0 ||
+		   strcmp(meta->picture.mime, "image/jpg") == 0)
 			strcpy(&cover[len], ".jpg");
-		else if(strcmp(format->picture.mime, "image/png") == 0)
+		else if(strcmp(meta->picture.mime, "image/png") == 0)
 			strcpy(&cover[len], ".png");
 	}
 
@@ -261,12 +261,12 @@ static char *files_list_save_cover(struct file_format *format, const char *path,
 	if(cover[len] =='\0')
 	{
 		/* Guess mime type with picture data */
-		if(format->picture.size >= 2 &&
-		   format->picture.data[0] == 0xFF &&
-		   format->picture.data[1] == 0xD8)
+		if(meta->picture.size >= 2 &&
+		   meta->picture.data[0] == 0xFF &&
+		   meta->picture.data[1] == 0xD8)
 			strcpy(&cover[len], ".jpg");
-		else if(format->picture.size >= 4 &&
-			memcmp(&format->picture.data[1], "PNG", 3) == 0)
+		else if(meta->picture.size >= 4 &&
+			memcmp(&meta->picture.data[1], "PNG", 3) == 0)
 			strcpy(&cover[len], ".png");
 	}
 
@@ -285,7 +285,7 @@ static char *files_list_save_cover(struct file_format *format, const char *path,
 		goto end;
 
 	/* Write data to it */
-	fwrite(format->picture.data, format->picture.size, 1, fp);
+	fwrite(meta->picture.data, meta->picture.size, 1, fp);
 
 	/* Close file */
 	fclose(fp);
@@ -314,8 +314,9 @@ end:
 			 "cover_id='%ld',path_id='%ld',mtime='%ld'" \
 			 "WHERE id='%ld'"
 
-static int64_t files_list_update_sub_table(struct db_handle *db, const char *insert,
-				       const char *select)
+static int64_t files_list_update_sub_table(struct db_handle *db,
+					   const char *insert,
+					   const char *select)
 {
 	struct db_query *query;
 	int64_t id;
@@ -349,7 +350,7 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 				  const char *path, const char *file,
 				  int64_t mtime, int64_t path_id, int64_t id)
 {
-	struct file_format *format = NULL;
+	struct meta *meta = NULL;
 	int64_t artist_id = 0;
 	int64_t album_id = 0;
 	int64_t cover_id = 0;
@@ -367,31 +368,31 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 		return -1;
 
 	/* Get format and tag from file */
-	format = file_format_parse(file_path, TAG_PICTURE);
+	meta = meta_parse(file_path, TAG_PICTURE);
 	free(file_path);
 
 	/* Save format */
-	if(format != NULL && format->picture.data != NULL &&
-	   format->picture.size > 0)
-		cover = files_list_save_cover(format, cover_path, file);
+	if(meta != NULL && meta->picture.data != NULL &&
+	   meta->picture.size > 0)
+		cover = files_list_save_cover(meta, cover_path, file);
 
 	/* Add artist and album to database */
-	if(format != NULL)
+	if(meta != NULL)
 	{
 		/* Process artist */
-		if(format->artist != NULL)
+		if(meta->artist != NULL)
 		{
 			/* Create insert SQL */
 			in_sql = db_mprintf("INSERT OR IGNORE INTO artist "
 					    "(artist) VALUES ('%q')",
-					    format->artist);
+					    meta->artist);
 			if(in_sql == NULL)
 				goto end;
 
 			/* Create select SQL */
 			se_sql = db_mprintf("SELECT artist_id FROM artist "
 					    "WHERE artist='%q'",
-					    format->artist);
+					    meta->artist);
 			if(se_sql == NULL)
 			{
 				db_free(in_sql);
@@ -433,20 +434,20 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 		}
 
 		/* Process album */
-		if(format->album != NULL)
+		if(meta->album != NULL)
 		{
 			/* Create insert SQL */
 			in_sql = db_mprintf("INSERT OR IGNORE INTO album "
 					    "(album,tracks,cover_id) "
 					    "VALUES ('%q','%ld','%ld')",
-					    format->album, format->total_track,
+					    meta->album, meta->total_track,
 					    cover_id);
 			if(in_sql == NULL)
 				goto end;
 
 			/* Create select SQL */
 			se_sql = db_mprintf("SELECT album_id FROM album "
-					    "WHERE album='%q'", format->album);
+					    "WHERE album='%q'", meta->album);
 			if(se_sql == NULL)
 			{
 				db_free(in_sql);
@@ -462,18 +463,18 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 		}
 
 		/* Process genre */
-		if(format->genre != NULL)
+		if(meta->genre != NULL)
 		{
 			/* Create insert SQL */
 			in_sql = db_mprintf("INSERT OR IGNORE INTO genre "
 					    "(genre) VALUES ('%q')",
-					    format->genre);
+					    meta->genre);
 			if(in_sql == NULL)
 				goto end;
 
 			/* Create select SQL */
 			se_sql = db_mprintf("SELECT genre_id FROM genre "
-					    "WHERE genre='%q'", format->genre);
+					    "WHERE genre='%q'", meta->genre);
 			if(se_sql == NULL)
 			{
 				db_free(in_sql);
@@ -508,8 +509,8 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 		}
 	}
 
-#define FMT_STR(n) format != NULL && format->n != NULL ? format->n : ""
-#define FMT_INT(n) format != NULL ? format->n : (long) 0
+#define FMT_STR(n) meta != NULL && meta->n != NULL ? meta->n : ""
+#define FMT_INT(n) meta != NULL ? meta->n : (long) 0
 
 	/* Prepare SQL request */
 	str = db_mprintf(id > 0 ? FILES_SQL_UPDATE : FILES_SQL_INSERT,
@@ -532,9 +533,9 @@ end:
 	if(str != NULL)
 		db_free(str);
 
-	/* Free format */
-	if(format != NULL)
-		file_format_free(format);
+	/* Free meta */
+	if(meta != NULL)
+		meta_free(meta);
 
 	/* Free cover */
 	if(cover != NULL)

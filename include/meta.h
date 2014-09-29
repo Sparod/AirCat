@@ -1,5 +1,5 @@
 /*
- * file_format.h - An Audio File format parser and tag extractor
+ * meta.h - An Audio File format parser and tag extractor
  *
  * Copyright (c) 2014   A. Dilly
  *
@@ -16,8 +16,8 @@
  * along with AirCat.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef _FILE_FORMAT_H
-#define _FILE_FORMAT_H
+#ifndef _META_H
+#define _META_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,7 +47,7 @@ struct tag_picture {
 	int size;
 };
 
-struct file_format {
+struct meta {
 	/* Audio file type */
 	int type;
 	/* String values */
@@ -75,9 +75,9 @@ struct file_format {
 	char *publisher;
 };
 
-extern struct file_format *file_format_parse(const char *filename, int options);
+extern struct meta *meta_parse(const char *filename, int options);
 
-void file_format_free(struct file_format *f);
+void meta_free(struct meta *m);
 
 #ifdef __cplusplus
 }
