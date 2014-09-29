@@ -61,7 +61,8 @@ aircat_CFLAGS = -DMODULES_PATH='"${modules_DIR}"' \
 # C++ support and TagLib support
 aircat_CPPFLAGS = -I$(top_srcdir)/include \
 		  $(libtag_CFLAGS)
-aircat_SOURCES += meta/meta_taglib.cpp
+aircat_SOURCES += meta/meta_taglib.cpp \
+		  meta/meta_taglib_file.cpp
 
 EXTRA_DIST = modules.h \
 	     outputs.h \
@@ -70,6 +71,7 @@ EXTRA_DIST = modules.h \
 	     fs/fs_http.h \
 	     demux_mp3.h \
 	     demux_mp4.h \
+	     meta/meta_taglib_file.h \
 	     decoder_pcm.h \
 	     decoder_aac.h \
 	     decoder_mp3.h \

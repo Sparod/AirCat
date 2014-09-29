@@ -23,11 +23,33 @@
 #include <taglib/tag.h>
 #include <taglib/fileref.h>
 #include <taglib/tbytevector.h>
+
+#include <taglib/asffile.h>
 #include <taglib/mpegfile.h>
+#include <taglib/vorbisfile.h>
+#include <taglib/flacfile.h>
+#include <taglib/oggflacfile.h>
+#include <taglib/mpcfile.h>
 #include <taglib/mp4file.h>
+#include <taglib/wavpackfile.h>
+#include <taglib/speexfile.h>
+#include <taglib/trueaudiofile.h>
+#include <taglib/aifffile.h>
+#include <taglib/wavfile.h>
+#include <taglib/apefile.h>
+
+#if (TAGLIB_MAJOR_VERSION >= 1) &&  (TAGLIB_MINOR_VERSION >= 9)
+#include <taglib/opusfile.h>
+#include <taglib/modfile.h>
+#include <taglib/s3mfile.h>
+#include <taglib/itfile.h>
+#include <taglib/xmfile.h>
+#endif
+
 #include <taglib/id3v2tag.h>
 #include <taglib/attachedpictureframe.h>
 
+#include "meta_taglib_file.h"
 #include "meta.h"
 
 #define COPY_STRING(d, s) if(s != NULL && *s != 0) d = strdup(s);
@@ -195,21 +217,99 @@ static void tag_read_from_mp4(MP4::Tag *tag, struct meta *m, int options)
 struct meta *meta_parse(const char *filename, int options)
 {
 	AudioProperties *prop;
-	struct meta *m;
-	FileRef file;
+	struct meta *m = NULL;
+	File *file;
 	Tag *tag;
 
-	file = FileRef(filename);
+#if (TAGLIB_MAJOR_VERSION >= 1) &&  (TAGLIB_MINOR_VERSION >= 9)
+	/* Open file */
+	std::string strFileName = filename;
+	MetaTaglibFile *stream = new MetaTaglibFile(strFileName, true);
 
-	if(file.isNull())
+	/* File doesn't exist */
+	if(!stream->isOpen())
 		return NULL;
+
+	/* Get file extension */
+	std::string ext;
+	const int pos = strFileName.rfind(".");
+	if(pos != -1)
+		ext = strFileName.substr(pos + 1);
+	std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
+
+	/* Parse file */
+	if(ext == "MP3")
+		file = new MPEG::File(stream, ID3v2::FrameFactory::instance());
+	else if(ext == "OGG")
+		file = new Ogg::Vorbis::File(stream);
+	else if(ext == "OGA")
+	{
+		file = new Ogg::FLAC::File(stream);
+		if(!file->isValid())
+		{
+			delete file;
+			file = new Ogg::Vorbis::File(stream);
+		}
+	}
+	else if(ext == "FLAC")
+		file = new FLAC::File(stream, ID3v2::FrameFactory::instance());
+	else if(ext == "MPC")
+		file = new MPC::File(stream);
+	else if(ext == "WV")
+		file = new WavPack::File(stream);
+	else if(ext == "SPX")
+		file = new Ogg::Speex::File(stream);
+	else if(ext == "OPUS")
+		file = new Ogg::Opus::File(stream);
+	else if(ext == "TTA")
+		file = new TrueAudio::File(stream);
+	else if(ext == "M4A" || ext == "M4R" || ext == "M4B" || ext == "M4P" ||
+	   ext == "MP4" || ext == "3G2")
+		file = new MP4::File(stream);
+	else if(ext == "WMA" || ext == "ASF")
+		file = new ASF::File(stream);
+	else if(ext == "AIF" || ext == "AIFF")
+		file = new RIFF::AIFF::File(stream);
+	else if(ext == "WAV")
+		file = new RIFF::WAV::File(stream);
+	else if(ext == "APE")
+		file = new APE::File(stream);
+	else if(ext == "MOD" || ext == "MODULE" || ext == "NST" || ext == "WOW")
+		file = new Mod::File(stream);
+	else if(ext == "S3M")
+		file = new S3M::File(stream);
+	else if(ext == "IT")
+		file = new IT::File(stream);
+	else if(ext == "XM")
+		file = new XM::File(stream);
+
+	/* File cannot be openned */
+	if(!file)
+		goto end;
+
+	/* Get tags and propeties */
+	tag = file->tag();
+	prop = file->audioProperties();
+#else
+	/* Open file */
+	FileRef f = FileRef(filename);
+
+	/* File doesn't exist */
+	if(f.isNull())
+		return NULL;
+
+	/* Get tags and propeties */
+	tag = f.tag();
+	prop = f.audioProperties();
+	file = f.file();
+#endif
 
 	/* Allocate tag structure */
 	m = (struct meta *) calloc(1, sizeof(struct meta));
 	if(m == NULL)
-		return NULL;
+		goto end;
 
-	tag = file.tag();
+	/* Get tags */
 	if(tag != NULL && !tag->isEmpty())
 	{
 		/* Fill structure with values */
@@ -223,7 +323,6 @@ struct meta *meta_parse(const char *filename, int options)
 	}
 
 	/* Get file properties */
-	prop = file.audioProperties();
 	if(prop != NULL)
 	{
 		m->length = prop->length();
@@ -233,7 +332,7 @@ struct meta *meta_parse(const char *filename, int options)
 	}
 
 	/* Get file type */
-	if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file.file()))
+	if(MPEG::File* mpeg = dynamic_cast<MPEG::File*>(file))
 	{
 		m->type = FILE_FORMAT_MPEG;
 		m->stream_offset = mpeg->firstFrameOffset();
@@ -242,7 +341,7 @@ struct meta *meta_parse(const char *filename, int options)
 		if(options != 0 && mpeg->ID3v2Tag())
 			tag_read_from_id3v2(mpeg->ID3v2Tag(), m, options);
 	}
-	else if(MP4::File *mp4 = dynamic_cast<MP4::File*>(file.file()))
+	else if(MP4::File *mp4 = dynamic_cast<MP4::File*>(file))
 	{
 		m->type = FILE_FORMAT_AAC;
 
@@ -253,6 +352,13 @@ struct meta *meta_parse(const char *filename, int options)
 	else
 		m->type = FILE_FORMAT_UNKNOWN;
 
+end:
+#if (TAGLIB_MAJOR_VERSION >= 1) &&  (TAGLIB_MINOR_VERSION >= 9)
+	if(file)
+		delete file;
+	if(stream)
+		delete stream;
+#endif
 	return m;
 }
 
