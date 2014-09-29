@@ -9,6 +9,7 @@ aircat_SOURCES = main.c \
 		 fs/fs.c \
 		 fs/fs_posix.c \
 		 fs/fs_http.c \
+		 fs/fs_smb.c\
 		 stream.c \
 		 demux.c \
 		 demux_mp3.c \
@@ -43,6 +44,7 @@ aircat_LDADD = $(libssl_LIBS) \
 	       $(libjsonc_LIBS) \
 	       $(libtag_LIBS) \
 	       $(libsqlite_LIBS) \
+	       $(libsmbclient_LIBS) \
 	       -lpthread
 
 aircat_LDFLAGS = -export-dynamic
@@ -56,6 +58,7 @@ aircat_CFLAGS = -DMODULES_PATH='"${modules_DIR}"' \
 		 $(libmicrohttpd_CFLAGS) \
 		 $(libjsonc_CFLAGS) \
 		 $(libsqlite_CFLAGS) \
+		 $(libsmbclient_CFLAGS) \
 		 -Wall
 
 # C++ support and TagLib support
@@ -69,6 +72,7 @@ EXTRA_DIST = modules.h \
 	     output_alsa.h \
 	     fs/fs_posix.h \
 	     fs/fs_http.h \
+	     fs/fs_smb.h \
 	     demux_mp3.h \
 	     demux_mp4.h \
 	     meta/meta_taglib_file.h \

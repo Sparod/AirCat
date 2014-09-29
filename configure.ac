@@ -61,6 +61,16 @@ PKG_CHECK_MODULES(libtag, taglib >= 1.7, [
 # Check for sqlite3 for database support
 PKG_CHECK_MODULES(libsqlite, sqlite3 >= 3.6.19)
 
+# Check for libsmbclient for samba support
+use_samba=no
+PKG_CHECK_MODULES(libsmbclient, smbclient >= 3.6.6, [use_samba=yes], [
+	AC_CHECK_LIB([smbclient], [main], [
+		use_samba=yes;libsmbclient_LIBS="-lsmbclient"])
+])
+if test "x$use_samba" != "xno"; then
+	AC_DEFINE([HAVE_LIBSMBCLIENT], 1, [Use libsmbclient])
+fi
+
 # Init the Libtool
 LT_INIT([dlopen])
 

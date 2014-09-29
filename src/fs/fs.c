@@ -20,8 +20,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "fs_posix.h"
 #include "fs_http.h"
+#include "fs_smb.h"
 #include "fs.h"
 
 void fs_init(void)
@@ -29,11 +34,17 @@ void fs_init(void)
 	/* Initialize all file system */
 	fs_posix_init();
 	fs_http_init();
+#ifdef HAVE_LIBSMBCLIENT
+	fs_smb_init();
+#endif
 }
 
 void fs_free(void)
 {
 	/* Free all file system */
+#ifdef HAVE_LIBSMBCLIENT
+	fs_smb_free();
+#endif
 	fs_http_free();
 	fs_posix_free();
 }
@@ -43,11 +54,18 @@ static struct fs_handle *fs_find_filesystem(const char *url)
 	struct fs_handle *h = NULL;
 
 	/* Process URL */
-	if(strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 7) == 0)
+	if(strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0)
 	{
 		/* HTTP(S) fs */
 		h = &fs_http;
 	}
+#ifdef HAVE_LIBSMBCLIENT
+	else if(strncmp(url, "smb://", 6) == 0)
+	{
+		/* SMB fs (Windows file sharing) */
+		h = &fs_smb;
+	}
+#endif
 	else if(strstr(url, "://") == NULL)
 	{
 		/* POSIX fs */
