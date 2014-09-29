@@ -29,7 +29,7 @@ struct fs_dirent {
 	off_t offset;
 	unsigned char type;
 	/* Custom values */
-	char *comment_len;
+	unsigned int comment_len;
 	char *comment;
 	/* Stat on entry */
 	off_t size;

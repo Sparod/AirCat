@@ -34,7 +34,8 @@ void fs_posix_free(void)
 	return;
 }
 
-static int fs_posix_open(struct fs_file *f, const char *url, int flags, mode_t mode)
+static int fs_posix_open(struct fs_file *f, const char *url, int flags,
+			 mode_t mode)
 {
 	/* Open file */
 	f->fd = open(url, flags, mode);
@@ -159,6 +160,7 @@ static int fs_posix_opendir(struct fs_dir *d, const char *url)
 	d->data = opendir(url);
 	if(d->data == NULL)
 		return -1;
+	d->fd = dirfd(d->data);
 
 	return 0;
 }
