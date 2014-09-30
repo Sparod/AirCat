@@ -187,8 +187,11 @@ static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 	d->c_dirent.name_len = dir->d_reclen;
 	strcpy(d->c_dirent.name, dir->d_name);
 
+	/* Generate path */
+	strncpy(&d->url[d->url_len], dir->d_name, dir->d_reclen);
+
 	/* Stat directory */
-	if(fstat(d->fd, &st) == 0)
+	if(stat(d->url, &st) == 0)
 	{
 		/* Fill stat part */
 		d->c_dirent.size = st.st_size;

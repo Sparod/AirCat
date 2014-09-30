@@ -260,6 +260,7 @@ struct fs_dir *fs_opendir(const char *url)
 {
 	struct fs_handle *h;
 	struct fs_dir *d;
+	int len;
 
 	/* Get file system from URL */
 	h = fs_find_filesystem(url);
@@ -278,6 +279,17 @@ struct fs_dir *fs_opendir(const char *url)
 		/* Free directory */
 		free(d);
 		return NULL;
+	}
+
+	/* Copy URL with allocated space for name */
+	len = strlen(url);
+	d->url = malloc(len + 256 + 2);
+	if(d->url != NULL)
+	{
+		d->url_len = len + 1;
+		memcpy(d->url, url, len);
+		d->url[len] = '/';
+		d->url[len+1] = '\0';
 	}
 
 	return d;
@@ -306,6 +318,10 @@ void fs_closedir(struct fs_dir *d)
 
 	/* Close directory */
 	d->handle->closedir(d);
+
+	/* Free URL */
+	if(d->url)
+		free(d->url);
 
 	/* Free handle */
 	free(d);

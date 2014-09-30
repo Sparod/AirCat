@@ -207,8 +207,12 @@ static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 	d->c_dirent.name_len = dir->namelen;
 	strncpy(d->c_dirent.name, dir->name, 256);
 
+	/* Generate path */
+	strncpy(&d->url[d->url_len], dir->name, dir->namelen);
+	d->url[d->url_len+dir->namelen] = '\0';
+
 	/* Stat directory */
-	if(smbc_fstat(d->fd, &st) == 0)
+	if(smbc_stat(d->url, &st) == 0)
 	{
 		/* Fill stat part */
 		d->c_dirent.size = st.st_size;

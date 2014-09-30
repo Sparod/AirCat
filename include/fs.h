@@ -54,6 +54,10 @@ struct fs_dir {
 	/* Data */
 	int fd;
 	void *data;
+	/* URL with allocated space for name */
+	char *url;
+	size_t url_len;
+	/* Current dirent */
 	struct fs_dirent c_dirent;
 	/* Filesystem handle */
 	struct fs_handle *handle;
