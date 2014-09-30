@@ -26,8 +26,8 @@ aircat_SOURCES = main.c \
 	 	 decoder/decoder_aac.c \
 		 decoder/decoder_mp3.c \
 		 decoder/decoder_alac.c \
-		 outputs.c \
-		 output_alsa.c \
+		 outputs/outputs.c \
+		 outputs/output_alsa.c \
 		 resample.c \
 		 cache.c \
 		 db.c \
@@ -68,8 +68,8 @@ aircat_SOURCES += meta/meta_taglib.cpp \
 		  meta/meta_taglib_file.cpp
 
 EXTRA_DIST = modules.h \
-	     outputs.h \
-	     output_alsa.h \
+	     outputs/outputs.h \
+	     outputs/output_alsa.h \
 	     fs/fs_posix.h \
 	     fs/fs_http.h \
 	     fs/fs_smb.h \

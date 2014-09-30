@@ -19,7 +19,7 @@
 #ifndef _MODULES_H
 #define _MODULES_H
 
-#include "outputs.h"
+#include "outputs/outputs.h"
 #include "timers.h"
 #include "module.h"
 

@@ -22,8 +22,8 @@
 #include <getopt.h>
 #include <signal.h>
 
+#include "outputs/outputs.h"
 #include "config_file.h"
-#include "outputs.h"
 #include "timers.h"
 #include "avahi.h"
 #include "httpd.h"
