@@ -11,9 +11,10 @@ aircat_SOURCES = main.c \
 		 fs/fs_http.c \
 		 fs/fs_smb.c\
 		 stream.c \
-		 demux.c \
-		 demux_mp3.c \
-		 demux_mp4.c \
+		 demux/demux.c \
+		 demux/demux_mp3.c \
+		 demux/demux_mp4.c \
+		 demux/id3.c \
 		 file.c \
 		 meta/meta.c \
 		 shoutcast.c \
@@ -30,7 +31,6 @@ aircat_SOURCES = main.c \
 		 resample.c \
 		 cache.c \
 		 db.c \
-		 id3.c \
 		 timers.c \
 		 utils.c
 
@@ -73,13 +73,14 @@ EXTRA_DIST = modules.h \
 	     fs/fs_posix.h \
 	     fs/fs_http.h \
 	     fs/fs_smb.h \
-	     demux_mp3.h \
-	     demux_mp4.h \
+	     demux/demux_mp3.h \
+	     demux/demux_mp4.h \
+	     demux/id3.h \
 	     meta/meta_taglib_file.h \
 	     decoder/decoder_pcm.h \
 	     decoder/decoder_aac.h \
 	     decoder/decoder_mp3.h \
 	     decoder/decoder_alac.h \
-	     timers.h \
-	     id3.h
+	     timers.h
+
 
