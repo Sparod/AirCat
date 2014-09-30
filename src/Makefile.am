@@ -20,11 +20,11 @@ aircat_SOURCES = main.c \
 		 rtsp.c \
 		 rtp.c \
 		 sdp.c \
-		 decoder.c \
-		 decoder_pcm.c \
-	 	 decoder_aac.c \
-		 decoder_mp3.c \
-		 decoder_alac.c \
+		 decoder/decoder.c \
+		 decoder/decoder_pcm.c \
+	 	 decoder/decoder_aac.c \
+		 decoder/decoder_mp3.c \
+		 decoder/decoder_alac.c \
 		 outputs.c \
 		 output_alsa.c \
 		 resample.c \
@@ -76,10 +76,10 @@ EXTRA_DIST = modules.h \
 	     demux_mp3.h \
 	     demux_mp4.h \
 	     meta/meta_taglib_file.h \
-	     decoder_pcm.h \
-	     decoder_aac.h \
-	     decoder_mp3.h \
-	     decoder_alac.h \
+	     decoder/decoder_pcm.h \
+	     decoder/decoder_aac.h \
+	     decoder/decoder_mp3.h \
+	     decoder/decoder_alac.h \
 	     timers.h \
 	     id3.h
 
