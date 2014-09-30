@@ -20,6 +20,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <errno.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -31,18 +32,19 @@
 
 #include "fs_smb.h"
 
-#define SMB_TIMEOUT 10
+#define FS_SMB_TIMEOUT 10
 
 static void fs_smb_get_auth(const char *srv, const char *shr,
 			    char *wg, int wglen, char *un, int unlen,
 			    char *pw, int pwlen)
 {
+	/* Authentication is done directly in URL */
 	return;
 }
 
 void fs_smb_init(void)
 {
-	/* Init */
+	/* Initialize smbclient */
 	smbc_init(fs_smb_get_auth, 0);
 
 	return;
@@ -74,28 +76,84 @@ static int fs_smb_creat(struct fs_file *f, const char *url, mode_t mode)
 	return 0;
 }
 
+static ssize_t fs_smb_read(struct fs_file *f, void *buf, size_t count)
+{
+	ssize_t len;
+
+	/* Wait until data or error */
+	while((len = smbc_read(f->fd, buf, count)) < 0)
+	{
+		/* Skip timeout */
+		if(errno != EAGAIN)
+			break;
+	}
+
+	return len;
+}
+
 static ssize_t fs_smb_read_to(struct fs_file *f, void *buf, size_t count,
 				long timeout)
 {
-	/* Timeout not yet implemented */
-	return smbc_read(f->fd, buf, count);
+	ssize_t len;
+
+	/* No timeout */
+	if(timeout == -1)
+		return fs_smb_read(f, buf, count);
+
+	/* Wait timeout */
+	do {
+		/* Attempt to read */
+		len = smbc_read(f->fd, buf, count);
+		if(len < 0)
+		{
+			if(errno == EAGAIN)
+				len = 0;
+			break;
+		}
+		timeout -= FS_SMB_TIMEOUT;
+	} while(timeout > 0);
+
+	return len;
 }
 
-static ssize_t fs_smb_read(struct fs_file *f, void *buf, size_t count)
+static ssize_t fs_smb_write(struct fs_file *f, const void *buf, size_t count)
 {
-	return smbc_read(f->fd, buf, count);
+	ssize_t len;
+
+	/* Wait until data or error */
+	while((len = smbc_write(f->fd, buf, count)) < 0)
+	{
+		/* Skip timeout */
+		if(errno != EAGAIN)
+			break;
+	}
+
+	return len;
 }
 
 static ssize_t fs_smb_write_to(struct fs_file *f, const void *buf,
 				 size_t count, long timeout)
 {
-	/* Timeout not yet implemented */
-	return smbc_write(f->fd, buf, count);
-}
+	ssize_t len;
 
-static ssize_t fs_smb_write(struct fs_file *f, const void *buf, size_t count)
-{
-	return smbc_write(f->fd, buf, count);
+	/* No timeout */
+	if(timeout == -1)
+		return fs_smb_write(f, buf, count);
+
+	/* Wait timeout */
+	do {
+		/* Attempt to write */
+		len = smbc_write(f->fd, buf, count);
+		if(len < 0)
+		{
+			if(errno == EAGAIN)
+				len = 0;
+			break;
+		}
+		timeout -= FS_SMB_TIMEOUT;
+	} while(timeout > 0);
+
+	return len;
 }
 
 static off_t fs_smb_lseek(struct fs_file *f, off_t offset, int whence)

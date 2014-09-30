@@ -27,6 +27,7 @@
 #include "timers.h"
 #include "avahi.h"
 #include "httpd.h"
+#include "fs.h"
 
 #include "modules.h"
 
@@ -158,6 +159,9 @@ int main(int argc, char* argv[])
 	/* Parse options */
 	parse_opt(argc, argv);
 
+	/* Init file system */
+	fs_init();
+
 	/* Set configuration filename */
 	if(config_file == NULL)
 		config_file = strdup(CONFIG_PATH "/aircat.conf");
@@ -266,6 +270,9 @@ int main(int argc, char* argv[])
 	if(config_file != NULL)
 		free(config_file);
 	config_close(config);
+
+	/* Free file system */
+	fs_free();
 
 	return EXIT_SUCCESS;
 }
