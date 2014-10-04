@@ -88,6 +88,7 @@ struct fs_handle {
 	int (*chmod)(const char *, mode_t);
 	/* Directory I/O */
 	int (*opendir)(struct fs_dir *, const char *);
+	int (*mount)(struct fs_dir *);
 	struct fs_dirent *(*readdir)(struct fs_dir *);
 	void (*closedir)(struct fs_dir *);
 	off_t (*telldir)(struct fs_dir *);
@@ -124,6 +125,7 @@ int fs_chmod(const char *url, mode_t mode);
 
 /* Directory I/O */
 struct fs_dir *fs_opendir(const char *url);
+struct fs_dir *fs_mount(const char *url);
 struct fs_dirent *fs_readdir(struct fs_dir *d);
 off_t fs_telldir(struct fs_dir *d);
 void fs_closedir(struct fs_dir *d);

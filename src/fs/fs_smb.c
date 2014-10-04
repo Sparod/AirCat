@@ -185,6 +185,11 @@ static int fs_smb_opendir(struct fs_dir *d, const char *url)
 	return 0;
 }
 
+static int fs_smb_mount(struct fs_dir *d)
+{
+	return fs_smb_opendir(d, "smb://");
+}
+
 static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 {
 	struct smbc_dirent *dir;
@@ -277,6 +282,7 @@ struct fs_handle fs_smb = {
 	.rename = smbc_rename,
 	.chmod = smbc_chmod,
 	.opendir = fs_smb_opendir,
+	.mount = fs_smb_mount,
 	.readdir = fs_smb_readdir,
 	.telldir = fs_smb_telldir,
 	.closedir = fs_smb_closedir,

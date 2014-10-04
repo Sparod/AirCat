@@ -237,6 +237,12 @@ static int fs_http_opendir(struct fs_dir *d, const char *url)
 	return 0;
 }
 
+static int fs_http_mount(struct fs_dir *d)
+{
+	/* No mount or network scan */
+	return 0;
+}
+
 static struct fs_dirent *fs_http_readdir(struct fs_dir *d)
 {
 	/* Directory not yet implemented */
@@ -314,6 +320,7 @@ struct fs_handle fs_http = {
 	.rename = (void*)fs_http_fake,
 	.chmod = (void*)fs_http_fake,
 	.opendir = fs_http_opendir,
+	.mount = fs_http_mount,
 	.readdir = fs_http_readdir,
 	.telldir = fs_http_telldir,
 	.closedir = fs_http_closedir,

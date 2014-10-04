@@ -295,6 +295,45 @@ struct fs_dir *fs_opendir(const char *url)
 	return d;
 }
 
+struct fs_dir *fs_mount(const char *url)
+{
+	struct fs_handle *h;
+	struct fs_dir *d;
+	int len;
+
+	/* Get file system from URL */
+	h = fs_find_filesystem(url);
+	if(h == NULL)
+		return NULL;
+
+	/* Allocate directory */
+	d = malloc(sizeof(struct fs_dir));
+	if(d == NULL)
+		return NULL;
+	d->handle = h;
+
+	/* List mount/network */
+	if(h->mount(d) != 0)
+	{
+		/* Free directory */
+		free(d);
+		return NULL;
+	}
+
+	/* Copy URL with allocated space for name */
+	len = strlen(url);
+	d->url = malloc(len + 256 + 2);
+	if(d->url != NULL)
+	{
+		d->url_len = len + 1;
+		memcpy(d->url, url, len);
+		d->url[len] = '/';
+		d->url[len+1] = '\0';
+	}
+
+	return d;
+}
+
 struct fs_dirent *fs_readdir(struct fs_dir *d)
 {
 	if(d == NULL)

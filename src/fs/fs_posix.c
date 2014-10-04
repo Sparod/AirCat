@@ -166,12 +166,59 @@ static int fs_posix_opendir(struct fs_dir *d, const char *url)
 	return 0;
 }
 
+static int fs_posix_mount(struct fs_dir *d)
+{
+	/* Open mount table */
+	d->data = setmntent("/etc/mtab", "r");
+	if(d->data == NULL)
+		return -1;
+	d->fd = -1;
+
+	return 0;
+}
+
 static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 {
 	struct dirent *dir;
+	struct mntent mnt;
 
 	if(d->data == NULL)
 		return NULL;
+
+	/* Read mount table entry */
+	if(d->fd == -1)
+	{
+		/* Get next entry */
+		while(getmntent_r(d->data, &mnt, d->c_dirent.name, 256) == NULL)
+		{
+			/* Check file system */
+			if(strcmp(mnt.mnt_type, "rootfs") == 0 ||
+			   strcmp(mnt.mnt_type, "sysfs") == 0 ||
+			   strcmp(mnt.mnt_type, "proc") == 0 ||
+			   strcmp(mnt.mnt_type, "devtmpfs") == 0 ||
+			   strcmp(mnt.mnt_type, "devpts") == 0 ||
+			   strcmp(mnt.mnt_type, "tmpfs") == 0 ||
+			   strcmp(mnt.mnt_type, "rpc_pipefs") == 0 ||
+			   strcmp(mnt.mnt_type, "nfsd") == 0 ||
+			   strcmp(mnt.mnt_type, "binfmt_misc") == 0)
+				continue;
+
+			/* Fill directory entry */
+			d->c_dirent.inode = 0;
+			d->c_dirent.offset = 0;
+			d->c_dirent.type = FS_DSK;
+			d->c_dirent.comment_len = 0;
+			d->c_dirent.comment = NULL;
+			d->c_dirent.name_len = strlen(mnt.mnt_dir);
+			if(d->c_dirent.name_len > 255)
+				d->c_dirent.name_len = 255;
+			strncpy(d->c_dirent.name, mnt.mnt_dir, 256);
+
+			return &d->c_dirent;
+		}
+
+		return NULL;
+	}
 
 	/* Read directory entry */
 	dir = readdir(d->data);
@@ -213,7 +260,7 @@ static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 
 static off_t fs_posix_telldir(struct fs_dir *d)
 {
-	if(d->data == NULL)
+	if(d->data == NULL || d->fd == -1)
 		return -1;
 
 	return telldir(d->data);
@@ -223,6 +270,13 @@ static void fs_posix_closedir(struct fs_dir *d)
 {
 	if(d->data == NULL)
 		return;
+
+	/* Close mount table */
+	if(d->fd == -1)
+	{
+		endmntent(d->data);
+		return;
+	}
 
 	/* Close directory */
 	closedir(d->data);
@@ -254,6 +308,7 @@ struct fs_handle fs_posix = {
 	.rename = rename,
 	.chmod = chmod,
 	.opendir = fs_posix_opendir,
+	.mount = fs_posix_mount,
 	.readdir = fs_posix_readdir,
 	.telldir = fs_posix_telldir,
 	.closedir = fs_posix_closedir,
