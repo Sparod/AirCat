@@ -188,7 +188,6 @@ static int fs_smb_opendir(struct fs_dir *d, const char *url)
 static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 {
 	struct smbc_dirent *dir;
-	struct stat st;
 
 	if(d->fd < SMBC_BASE_FD)
 		return NULL;
@@ -201,26 +200,36 @@ static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 	/* Fill dirent */
 	d->c_dirent.inode = 0;
 	d->c_dirent.offset = 0;
-	d->c_dirent.type = dir->smbc_type == SMBC_FILE ? DT_REG : DT_DIR;
 	d->c_dirent.comment_len = dir->commentlen;
 	d->c_dirent.comment = dir->comment;
 	d->c_dirent.name_len = dir->namelen;
 	strncpy(d->c_dirent.name, dir->name, 256);
+
+	/* Get type */
+	switch(dir->smbc_type)
+	{
+		case SMBC_FILE:
+			d->c_dirent.type = FS_REG;
+			break;
+		case SMBC_LINK:
+			d->c_dirent.type = FS_LNK;
+			break;
+		case SMBC_WORKGROUP:
+			d->c_dirent.type = FS_NET;
+			break;
+		case SMBC_SERVER:
+			d->c_dirent.type = FS_SRV;
+			break;
+		default:
+			d->c_dirent.type = FS_DIR;
+	}
 
 	/* Generate path */
 	strncpy(&d->url[d->url_len], dir->name, dir->namelen);
 	d->url[d->url_len+dir->namelen] = '\0';
 
 	/* Stat directory */
-	if(smbc_stat(d->url, &st) == 0)
-	{
-		/* Fill stat part */
-		d->c_dirent.size = st.st_size;
-		d->c_dirent.mode = st.st_mode;
-		d->c_dirent.atime = st.st_atime;
-		d->c_dirent.mtime = st.st_mtime;
-		d->c_dirent.ctime = st.st_ctime;
-	}
+	smbc_stat(d->url, &d->c_dirent.stat);
 
 	return &d->c_dirent;
 }

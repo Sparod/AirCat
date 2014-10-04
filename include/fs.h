@@ -23,20 +23,26 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
+enum fs_type {
+	FS_UNKNOWN,
+	FS_REG,
+	FS_DIR,
+	FS_LNK,
+	FS_NET,
+	FS_SRV,
+	FS_DSK,
+};
+
 struct fs_dirent {
 	/* Basic values */
 	ino_t inode;
 	off_t offset;
-	unsigned char type;
+	enum fs_type type;
 	/* Custom values */
 	unsigned int comment_len;
 	char *comment;
 	/* Stat on entry */
-	off_t size;
-	mode_t mode;
-	time_t atime;
-	time_t mtime; 
-	time_t ctime;
+	struct stat stat;
 	/* Name */
 	unsigned int name_len;
 	char name[256];

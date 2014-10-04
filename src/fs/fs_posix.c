@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <mntent.h>
 
 #include "fs_posix.h"
 
@@ -168,7 +169,6 @@ static int fs_posix_opendir(struct fs_dir *d, const char *url)
 static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 {
 	struct dirent *dir;
-	struct stat st;
 
 	if(d->data == NULL)
 		return NULL;
@@ -181,25 +181,32 @@ static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 	/* Fill dirent */
 	d->c_dirent.inode = dir->d_ino;
 	d->c_dirent.offset = dir->d_off;
-	d->c_dirent.type = dir->d_type;
 	d->c_dirent.comment_len = 0;
 	d->c_dirent.comment = NULL;
 	d->c_dirent.name_len = dir->d_reclen;
 	strcpy(d->c_dirent.name, dir->d_name);
 
+	/* Get type */
+	switch(dir->d_type)
+	{
+		case DT_REG:
+			d->c_dirent.type = FS_REG;
+			break;
+		case DT_DIR:
+			d->c_dirent.type = FS_DIR;
+			break;
+		case DT_LNK:
+			d->c_dirent.type = FS_LNK;
+			break;
+		default:
+			d->c_dirent.type = FS_UNKNOWN;
+	}
+
 	/* Generate path */
 	strncpy(&d->url[d->url_len], dir->d_name, dir->d_reclen);
 
 	/* Stat directory */
-	if(stat(d->url, &st) == 0)
-	{
-		/* Fill stat part */
-		d->c_dirent.size = st.st_size;
-		d->c_dirent.mode = st.st_mode;
-		d->c_dirent.atime = st.st_atime;
-		d->c_dirent.mtime = st.st_mtime;
-		d->c_dirent.ctime = st.st_ctime;
-	}
+	stat(d->url, &d->c_dirent.stat);
 
 	return &d->c_dirent;
 }
