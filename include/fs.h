@@ -136,5 +136,24 @@ int fs_fstat(struct fs_file *f, struct stat *buf);
 int fs_statvfs(const char *url, struct statvfs *buf);
 int fs_fstatvfs(struct fs_file *f, struct statvfs *buf);
 
+/* Custom alphasort function */
+int fs_alphasort(const struct fs_dirent **a, const struct fs_dirent **b);
+int fs_alphasort_reverse(const struct fs_dirent **a,
+			 const struct fs_dirent **b);
+
+/* Custom alphasort function: folder are first in list */
+int fs_alphasort_first(const struct fs_dirent **a, const struct fs_dirent **b);
+int fs_alphasort_last(const struct fs_dirent **a, const struct fs_dirent **b);
+
+/* Custom selector function: select only regular files or only folders */
+int fs_file_only(const struct fs_dirent *d);
+int fs_dir_only(const struct fs_dirent *d);
+
+/* Custom scandir function */
+int fs_scandir(const char *path, struct fs_dirent ***list,
+	       int (*selector)(const struct fs_dirent *),
+	       int (*compar)(const struct fs_dirent **,
+			     const struct fs_dirent **));
+
 #endif
 

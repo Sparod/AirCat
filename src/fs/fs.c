@@ -408,3 +408,102 @@ int fs_fstatvfs(struct fs_file *f, struct statvfs *buf)
 	return f->handle->fstatvfs(f, buf);
 }
 
+int fs_alphasort(const struct fs_dirent **a, const struct fs_dirent **b)
+{
+	return strcoll((*a)->name, (*b)->name);
+}
+
+int fs_alphasort_reverse(const struct fs_dirent **a, const struct fs_dirent **b)
+{
+	return strcoll((*b)->name, (*a)->name);
+}
+
+int fs_alphasort_first(const struct fs_dirent **a, const struct fs_dirent **b)
+{
+	if(((*a)->stat.st_mode & S_IFMT) != ((*b)->stat.st_mode & S_IFMT))
+		return ((*a)->stat.st_mode & S_IFDIR) ? 0 : 1;
+
+	return strcoll((*a)->name, (*b)->name);
+}
+
+int fs_alphasort_last(const struct fs_dirent **a, const struct fs_dirent **b)
+{
+	if(((*a)->stat.st_mode & S_IFMT) != ((*b)->stat.st_mode & S_IFMT))
+		return ((*b)->stat.st_mode & S_IFDIR) ? 0 : 1;
+
+	return strcoll((*b)->name, (*a)->name);
+}
+
+int fs_file_only(const struct fs_dirent *d)
+{
+	return d->stat.st_mode & S_IFREG ? 1 : 0;
+}
+
+int fs_dir_only(const struct fs_dirent *d)
+{
+	return d->stat.st_mode & S_IFDIR ? 1 : 0;
+}
+
+int fs_scandir(const char *path, struct fs_dirent ***list,
+	       int (*selector)(const struct fs_dirent *),
+	       int (*compar)(const struct fs_dirent **,
+			     const struct fs_dirent **))
+{
+	struct fs_dirent **_list = NULL;
+	struct fs_dirent **new;
+	struct fs_dirent *d;
+	struct fs_dir *dir;
+	size_t count = 0;
+	size_t size = 0;
+
+	/* Open directory */
+	dir = fs_opendir(path);
+	if (dir == NULL)
+		return -1;
+
+	/* List all files */
+	while((d = fs_readdir(dir)) != NULL)
+	{
+		/* Skip . and .. */
+		if(d->name[0] == '.' && (d->name[1] == '\0' ||
+		   (d->name[1] == '.' && d->name[2] == '\0')))
+			continue;
+
+		/* Check if entry will be added */
+		if(selector != NULL && selector(d) == 0)
+			continue;
+
+		/* Reallocate list */
+		if(count == size)
+		{
+			if(size == 0)
+				size = 10;
+			else
+				size *= 2;
+			new = realloc(_list, size * sizeof(struct fs_dirent *));
+			if(new == NULL)
+				break;
+			_list = new;
+		}
+
+		/* Allocate new entry */
+		_list[count] = malloc(sizeof(struct fs_dirent));
+		if(_list[count] == NULL)
+			break;
+
+		/* Copy data */
+		memcpy(_list[count], d, sizeof(struct fs_dirent));
+		count++;
+	}
+
+	/* Close directory */
+	fs_closedir(dir);
+
+	/* Sort list */
+	qsort(_list, count, sizeof(struct fs_dirent *), (__compar_fn_t) compar);
+
+	/* Return values */
+	*list = _list;
+	return count;
+}
+
