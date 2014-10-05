@@ -56,8 +56,7 @@ void files_list_init(struct db_handle *db, const char *path)
 			 " media_id INTEGER PRIMARY KEY,"
 			 " name TEXT,"
 			 " path TEXT,"
-			 " uuid TEXT,"
-			 " UNIQUE (uuid)"
+			 " UNIQUE (path)"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS path ("
 			 " path_id INTEGER PRIMARY KEY,"
@@ -132,8 +131,8 @@ void files_list_init(struct db_handle *db, const char *path)
 	db_free(sql);
 
 	/* Add default path */
-	sql = db_mprintf("INSERT OR REPLACE INTO media (media_id,path) "
-			 "VALUES (1,'%q')",
+	sql = db_mprintf("INSERT OR REPLACE INTO media (media_id,name,path) "
+			 "VALUES (1,'Local','%q')",
 			 path);
 	if(sql == NULL)
 		return;
@@ -863,8 +862,6 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	   != 0)
 		goto end;
 
-	
-
 	/* Select sort algorithm */
 	if(sort >= FILES_LIST_SORT_TITLE)
 	{
@@ -1098,6 +1095,163 @@ end:
 	/* Free path */
 	if(real_path != NULL)
 		free(real_path);
+
+	return str;
+}
+
+static int files_list_update_media(struct db_handle *db, struct json *list,
+				   const char *name, const char *path)
+{
+	struct db_query *query;
+	struct json *tmp;
+	char *sql = NULL;
+	int up = 0;
+
+retry:
+	/* Prepare SQL request */
+	sql = db_mprintf("SELECT media_id,name,path FROM media "
+			 "WHERE path='%q'", path);
+	if(sql == NULL)
+		return -1;
+
+	/* Prepare request */
+	query = db_prepare(db, sql, -1);
+	if(query == NULL)
+	{
+		free(sql);
+		return -1;
+	}
+
+	/* Media not present in database */
+	if(db_step(query) != 0 && !up)
+	{
+		/* Finalize request */
+		db_finalize(query);
+		db_free(sql);
+
+		/* Prepare SQL request */
+		sql = db_mprintf("INSERT INTO media (name,path) "
+				 "VALUES ('%q','%q')", name, path);
+		if(sql == NULL)
+			return -1;
+
+		/* Add entry in database */
+		db_exec(db, sql, NULL, NULL);
+		db_free(sql);
+
+		/* Retry SQL request */
+		up = 1;
+		goto retry;
+	}
+
+	/* Create a new JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		goto end;
+
+	/* Fill JSON object */
+	json_set_int64(tmp, "id", db_column_int64(query, 0));
+	json_set_string(tmp, "name", db_column_text(query, 1));
+	json_set_string(tmp, "path", db_column_text(query, 2));
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+end:
+	/* Finalize request */
+	db_finalize(query);
+	db_free(sql);
+
+	return 0;
+}
+
+char *files_list_media(struct db_handle *db, const char *path,
+		       const char *mount_path)
+{
+	struct json *root, *list;
+	struct fs_dirent *d;
+	struct fs_dir *dir;
+	char *name;
+	char *str;
+	int len;
+
+	/* Create a new JSON object */
+	root = json_new();
+	if(root == NULL)
+		return NULL;
+
+	/* Create local media list */
+	list = json_new_array();
+	if(list == NULL)
+		goto end;
+
+	/* Add main media source */
+	files_list_update_media(db, list, "Local", path);
+
+	/* Get local media sources */
+	dir = fs_mount("/");
+	if(dir != NULL)
+	{
+		/* Get len of mount path */
+		len = strlen(mount_path);
+
+		/* Process all medias */
+		while((d = fs_readdir(dir)) != NULL)
+		{
+			/* Add media to list */
+			if(strncmp(d->name, mount_path, len) == 0)
+			{
+				/* Get folder name */
+				str = strrchr(d->name, '/');
+				if(str == NULL)
+					str = d->name;
+				else
+					str++;
+
+				/* Update media database */
+				files_list_update_media(db, list, str, d->name);
+			}
+		}
+
+		/* Close list */
+		fs_closedir(dir);
+	}
+
+	/* Add list to JSON object */
+	json_add(root, "local", list);
+
+	/* Create network media list */
+	list = json_new_array();
+	if(list == NULL)
+		goto end;
+
+#ifdef NETWORK_TEST
+	/* Get discoverable media sources */
+	dir = fs_mount("smb://");
+	if(dir != NULL)
+	{
+		/* Process all medias */
+		while((d = fs_readdir(dir)) != NULL)
+		{
+			/* Add media to list */
+			files_list_update_media(db, list, d->name, d->name);
+		}
+
+		/* Close list */
+		fs_closedir(dir);
+	}
+#endif
+
+	/* Add list to JSON object */
+	json_add(root, "network", list);
+
+end:
+	/* Get output */
+	str = strdup(json_export(root));
+
+	/* Free JSON object */
+	json_free(root);
 
 	return str;
 }

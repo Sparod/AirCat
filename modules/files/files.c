@@ -1275,6 +1275,21 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 	return 200;
 }
 
+static int files_httpd_media(void *user_data, struct httpd_req *req,
+			     struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	char *list = NULL;
+
+	/* Get media list */
+	list = files_list_media(h->db, h->path, h->mount_path);
+	if(list == NULL)
+		return 500;
+
+	*res = httpd_new_response(list, 1, 0);
+	return 200;
+}
+
 #define HTTPD_PG HTTPD_PUT | HTTPD_GET
 
 static struct url_table files_url[] = {
@@ -1300,6 +1315,7 @@ static struct url_table files_url[] = {
 	{"/info/",            HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{"/scan",             0,             HTTPD_PG,  0, &files_httpd_scan},
+	{"/media",            0,             HTTPD_GET, 0, &files_httpd_media},
 	{0, 0, 0}
 };
 
