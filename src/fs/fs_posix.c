@@ -189,7 +189,7 @@ static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 	if(d->fd == -1)
 	{
 		/* Get next entry */
-		while(getmntent_r(d->data, &mnt, d->c_dirent.name, 256) == NULL)
+		while(getmntent_r(d->data, &mnt, d->c_dirent.name, 256) != NULL)
 		{
 			/* Check file system */
 			if(strcmp(mnt.mnt_type, "rootfs") == 0 ||
