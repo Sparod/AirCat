@@ -48,24 +48,36 @@ enum files_list_display {
 	FILES_LIST_DISPLAY_GENRE,
 };
 
-void files_list_init(struct db_handle *db);
+/* Init database */
+void files_list_init(struct db_handle *db, const char *path);
+
+/* Get file info */
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
-			     const char *path, const char *uri);
+			     uint64_t media_id, const char *uri);
+
+/* List files */
 char *files_list_files(struct db_handle *db, const char *cover_path,
-		       const char *path, const char *uri, unsigned long page,
+		       uint64_t media_id, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort,
 		       enum files_list_display display, uint64_t artist_id,
 		       uint64_t album_id, uint64_t genre_id,
 		       const char *filter);
+
+/* List/scan Media storage (local or network) */
+char *files_list_get_media(struct db_handle *db, uint64_t media_id);
+
+/* Scan files */
 int files_list_scan(struct db_handle *db, const char *cover_path,
-		    const char *path, int recursive);
+		    uint64_t media_id, int recursive);
 char *files_list_get_scan(void);
 int files_list_is_scanning(void);
 
-typedef int (*files_list_fn)(void *, const char *);
+/* List files with callback */
+typedef int (*files_list_fn)(void *, uint64_t, const char *, int, int);
 int files_list_list(struct db_handle *db, const char *uri, files_list_fn fn,
 		    void *user_data);
 
+/* File extension */
 extern char *files_ext[];
 static inline int files_ext_check(const char *name)
 {

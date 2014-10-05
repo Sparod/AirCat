@@ -29,6 +29,7 @@
 #include "module.h"
 #include "utils.h"
 #include "file.h"
+#include "fs.h"
 
 #define PLAYLIST_ALLOC_SIZE 32
 
@@ -62,6 +63,7 @@ struct files_handle {
 	int stop;
 	/* Configuration */
 	char *cover_path;
+	char *mount_path;
 	char *path;
 };
 
@@ -97,6 +99,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 	h->playlist_cur = -1;
 	h->stop = 0;
 	h->cover_path = NULL;
+	h->mount_path = NULL;
 	h->path = NULL;
 
 	/* Allocate playlist */
@@ -110,7 +113,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 	files_set_config(h, attr->config);
 
 	/* Init database */
-	files_list_init(h->db);
+	files_list_init(h->db, h->path);
 
 	/* Init thread */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -259,7 +262,8 @@ static inline void files_free_playlist(struct files_playlist *p)
 		json_free(p->tag);
 }
 
-static int files_add(struct files_handle *h, const char *file_path)
+static int files_add(struct files_handle *h, unsigned long media_id,
+		     const char *file_path, int path_len)
 {
 	struct files_playlist *p;
 	int len;
@@ -291,8 +295,8 @@ static int files_add(struct files_handle *h, const char *file_path)
 	/* Fill the new playlist entry */
 	p = &h->playlist[h->playlist_len];
 	p->filename = strdup(file_path);
-	p->tag = files_list_file(h->db, h->cover_path, h->path,
-				 file_path+strlen(h->path)+1);
+	p->tag = files_list_file(h->db, h->cover_path, media_id,
+				 file_path+path_len);
 
 	/* Increment playlist len */
 	h->playlist_len++;
@@ -303,40 +307,35 @@ static int files_add(struct files_handle *h, const char *file_path)
 	return h->playlist_len - 1;
 }
 
-static int files_file_only(const struct dirent *d, const struct stat *s)
+static int files_file_only(const struct fs_dirent *d)
 {
-	return (s->st_mode & S_IFREG) && files_ext_check(d->d_name) ? 1 : 0;
+	return (d->stat.st_mode & S_IFREG) && files_ext_check(d->name) ? 1 : 0;
 }
 
-static int files_add_from_db(void *user_data, const char *file)
+static int files_add_from_db(void *user_data, uint64_t media_id,
+			     const char *file, int media_len, int path_len)
 {
 	struct files_add_from_db_data *d = user_data;
-	char *file_path;
 	int idx;
 
-	/* Generate complete file path */
-	if(asprintf(&file_path, "%s/%s", d->h->path, file) < 0)
-		return -1;
-
 	/* Add file to playlist */
-	idx = files_add(d->h, file_path);
+	idx = files_add(d->h, media_id, file, media_len);
 	if(d->first_idx == -1 && idx >= 0)
 		d->first_idx = idx;
-
-	/* Free path */
-	free(file_path);
 
 	return 0;
 }
 
 static int files_add_multiple(struct files_handle *h, const char *resource,
-			      int play)
+			      int64_t media_id, int play)
 {
 	struct files_add_from_db_data d;
-	struct _dirent **list = NULL;
+	struct fs_dirent **list = NULL;
 	struct stat st;
 	char *f_path;
+	char *m_path;
 	char *path;
+	int path_len;
 	int count;
 	int idx;
 	int i;
@@ -363,13 +362,23 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 		return 0;
 	}
 
-	/* Make complete path */
-	if(asprintf(&path, "%s/%s", h->path, resource) < 0)
+	/* Get media path associated to media_id */
+	m_path = files_list_get_media(h->db, media_id);
+	if(m_path == NULL)
 		return -1;
+	path_len = strlen(m_path);
+
+	/* Make complete path */
+	if(asprintf(&path, "%s/%s", m_path, resource) < 0)
+	{
+		free(m_path);
+		return -1;
+	}
 
 	/* Stat file */
 	if(stat(path, &st) != 0)
 	{
+		free(m_path);
 		free(path);
 		return -1;
 	}
@@ -378,7 +387,7 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 	if(st.st_mode & S_IFDIR)
 	{
 		/* Scan folder */
-		count = _scandir(path, &list, files_file_only, _alphasort);
+		count = fs_scandir(path, &list, files_file_only, fs_alphasort);
 
 		/* Add all files in folder */
 		for(i = 0; i < count; i++)
@@ -388,7 +397,7 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 				goto next;
 
 			/* Add file to playlist */
-			idx = files_add(h, f_path);
+			idx = files_add(h, media_id, f_path, path_len);
 
 			/* Play first file */
 			if(i == 0 && play && idx >= 0)
@@ -407,7 +416,7 @@ next:
 	else if(st.st_mode & S_IFREG)
 	{
 		/* Add file to playlist */
-		idx = files_add(h, path);
+		idx = files_add(h, media_id, path, path_len);
 
 		/* Play first file */
 		if(play && idx >= 0)
@@ -415,6 +424,7 @@ next:
 	}
 
 	/* Free path */
+	free(m_path);
 	free(path);
 
 	return 0;
@@ -738,6 +748,7 @@ static char *files_get_json_playlist(struct files_handle *h)
 static int files_set_config(struct files_handle *h, const struct json *c)
 {
 	const char *cover_path;
+	const char *mount_path;
 	const char *path;
 
 	if(h == NULL)
@@ -746,9 +757,12 @@ static int files_set_config(struct files_handle *h, const struct json *c)
 	/* Free previous values */
 	if(h->path != NULL)
 		free(h->path);
+	if(h->mount_path != NULL)
+		free(h->mount_path);
 	if(h->cover_path != NULL)
 		free(h->cover_path);
 	h->cover_path = NULL;
+	h->mount_path = NULL;
 	h->path = NULL;
 
 	/* Parse configuration */
@@ -759,6 +773,11 @@ static int files_set_config(struct files_handle *h, const struct json *c)
 		if(path != NULL)
 			h->path = strdup(path);
 
+		/* Get mount path */
+		mount_path = json_get_string(c, "mount_path");
+		if(mount_path != NULL)
+			h->mount_path = strdup(mount_path);
+
 		/* Get cover path */
 		cover_path = json_get_string(c, "cover_path");
 		if(cover_path != NULL)
@@ -768,6 +787,8 @@ static int files_set_config(struct files_handle *h, const struct json *c)
 	/* Set default values */
 	if(h->path == NULL)
 		h->path = strdup("/var/aircat/files/media");
+	if(h->mount_path == NULL)
+		h->mount_path = strdup("/media");
 	if(h->cover_path == NULL)
 		h->cover_path = strdup("/var/aircat/files/cover");
 
@@ -785,6 +806,7 @@ static struct json *files_get_config(struct files_handle *h)
 
 	/* Set current files path */
 	json_set_string(c, "path", h->path);
+	json_set_string(c, "mount_path", h->mount_path);
 	json_set_string(c, "cover_path", h->cover_path);
 
 	return c;
@@ -813,6 +835,8 @@ static int files_close(struct files_handle *h)
 	/* Free files path */
 	if(h->path != NULL)
 		free(h->path);
+	if(h->mount_path != NULL)
+		free(h->mount_path);
 	if(h->cover_path != NULL)
 		free(h->cover_path);
 
@@ -903,9 +927,15 @@ static int files_httpd_add_play(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *list;
-	const char *path;
+	const char *path, *value;
+	unsigned long media_id = 1;
 	int play = 0;
 	int i, count;
+
+	/* Get media_id */
+	value = httpd_get_query(req, "media_id");
+	if(value != NULL)
+		media_id = strtoul(value, NULL, 10);
 
 	/* Set play */
 	if(req->url[11] == '/' || req->url[11] == '\0')
@@ -923,7 +953,7 @@ static int files_httpd_add_play(void *user_data, struct httpd_req *req,
 				continue;
 
 			/* Add file to playlist */
-			if(files_add_multiple(h, path, play) == 0)
+			if(files_add_multiple(h, path, media_id, play) == 0)
 				play = 0;
 		}
 
@@ -931,7 +961,7 @@ static int files_httpd_add_play(void *user_data, struct httpd_req *req,
 	}
 
 	/* Add file to playlist */
-	if(files_add_multiple(h, req->resource, play) < 0)
+	if(files_add_multiple(h, req->resource, media_id, play) < 0)
 	{
 		*res = httpd_new_response("File is not supported", 0, 0);
 		return 406;
@@ -1038,10 +1068,17 @@ static int files_httpd_info(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *info = NULL;
+	unsigned long media_id = 1;
+	const char *value;
 	char *str;
 
+	/* Get media_id */
+	value = httpd_get_query(req, "media_id");
+	if(value != NULL)
+		media_id = strtoul(value, NULL, 10);
+
 	/* Get file */
-	info = files_list_file(h->db, h->cover_path, h->path, req->resource);
+	info = files_list_file(h->db, h->cover_path, media_id, req->resource);
 	if(info == NULL)
 	{
 		*res = httpd_new_response("Bad file", 0, 0);
@@ -1063,6 +1100,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	unsigned long page = 0, count = 0;
+	unsigned long media_id = 1;
 	int display = FILES_LIST_DISPLAY_DEFAULT;
 	int sort = FILES_LIST_SORT_DEFAULT;
 	const char *filter = NULL;
@@ -1071,7 +1109,6 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	int artist_id = 0;
 	int album_id = 0;
 	int genre_id = 0;
-	int library = 0;
 
 	/* Get page */
 	value = httpd_get_query(req, "page");
@@ -1083,10 +1120,15 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	if(value != NULL)
 		count = strtoul(value, NULL, 10);
 
+	/* Get media for browsing */
+	value = httpd_get_query(req, "media_id");
+	if(value != NULL)
+		media_id = strtoul(value, NULL, 10);
+
 	/* Flag which specify library listting */
 	value = httpd_get_query(req, "type");
 	if(value != NULL && strcmp(value, "library") == 0)
-		library = 1;
+		media_id = 0;
 
 	/* Get display mode */
 	value = httpd_get_query(req, "display");
@@ -1155,8 +1197,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	filter = httpd_get_query(req, "filter");
 
 	/* Get file list */
-	list = files_list_files(h->db, h->cover_path,
-				library != 0 ? NULL : h->path, req->resource,
+	list = files_list_files(h->db, h->cover_path, media_id, req->resource,
 				page, count, sort, display,
 				(uint64_t) artist_id, (uint64_t) album_id,
 				(uint64_t) genre_id, filter);
@@ -1175,6 +1216,8 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *j;
+	unsigned long media_id = 1;
+	const char *value;
 	char *status;
 
 	if(req->method == HTTPD_PUT)
@@ -1187,8 +1230,13 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 			return 503;
 		}
 
+		/* Get media for scanning */
+		value = httpd_get_query(req, "media_id");
+		if(value != NULL)
+			media_id = strtoul(value, NULL, 10);
+
 		/* Scan all music folder */
-		if(files_list_scan(h->db, h->cover_path, h->path, 1) != 0)
+		if(files_list_scan(h->db, h->cover_path, media_id, 1) != 0)
 		{
 			*res = httpd_new_response("Scan failed", 0, 0);
 			return 500;

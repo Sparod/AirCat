@@ -28,6 +28,7 @@
 #include "utils.h"
 #include "json.h"
 #include "meta.h"
+#include "fs.h"
 
 #define FILES_LIST_DEFAULT_COUNT 25
 
@@ -37,23 +38,33 @@ static int scan_len = 0;
 static int scanning = 0;
 
 char *files_ext[] = {
-	".mp3", ".m4a", ".mp4",	".aac",	".ogg",	".wav",
+	".mp3", ".m4a", ".mp4", ".aac", ".ogg", ".wav",
 	NULL
 };
 
 static int files_list_recursive_scan(struct db_handle *db,
-				     const char *cover_path, const char *path,
-				     int len, int recursive, int update_status);
+				     const char *cover_path, uint64_t media_id,
+				     const char *path, int len, int recursive,
+				     int update_status);
 
-void files_list_init(struct db_handle *db)
+void files_list_init(struct db_handle *db, const char *path)
 {
 	char *sql;
 
 	/* Prepare SQL */
-	sql = db_mprintf("CREATE TABLE IF NOT EXISTS path ("
+	sql = db_mprintf("CREATE TABLE IF NOT EXISTS media ("
+			 " media_id INTEGER PRIMARY KEY,"
+			 " name TEXT,"
+			 " path TEXT,"
+			 " uuid TEXT,"
+			 " UNIQUE (uuid)"
+			 ");"
+			 "CREATE TABLE IF NOT EXISTS path ("
 			 " path_id INTEGER PRIMARY KEY,"
 			 " path TEXT,"
 			 " mtime INTEGER,"
+			 " media_id INTEGER,"
+			 " FOREIGN KEY (media_id) REFERENCES media,"
 			 " UNIQUE (path)"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS artist ("
@@ -119,15 +130,29 @@ void files_list_init(struct db_handle *db)
 	/* Create tables */
 	db_exec(db, sql, NULL, NULL);
 	db_free(sql);
+
+	/* Add default path */
+	sql = db_mprintf("INSERT OR REPLACE INTO media (media_id,path) "
+			 "VALUES (1,'%q')",
+			 path);
+	if(sql == NULL)
+		return;
+
+	/* Update database */
+	db_exec(db, sql, NULL, NULL);
+	db_free(sql);
+
 }
 
-static int files_list_get_path(struct db_handle *db, const char *path,
-			       int64_t *id, time_t *mtime)
+static int files_list_get_path(struct db_handle *db, uint64_t media_id,
+			       const char *path, char **c_path, int64_t *id,
+			       time_t *mtime)
 {
 	struct db_query *q;
 	char *gpath = NULL;
 	char last = '/';
 	char *sql;
+	int up = 0;
 	int len;
 	int i, j;
 
@@ -152,9 +177,12 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 		gpath[j] = '\0';
 	}
 
+retry:
 	/* Generate SQL */
-	sql = db_mprintf("SELECT path_id,mtime FROM path WHERE path='%q'",
-			 gpath != NULL ? gpath : "");
+	sql = db_mprintf("SELECT p.path_id,p.path,m.path FROM path AS p "
+			 "LEFT JOIN media AS m using (media_id) "
+			 "WHERE p.path='%q' AND media_id='%ld'",
+			 gpath != NULL ? gpath : "", media_id);
 	if(sql == NULL)
 	{
 		if(gpath != NULL)
@@ -166,15 +194,16 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 	q = db_prepare(db, sql, -1);
 
 	/* Do request */
-	if(db_step(q) != 0)
+	if(db_step(q) != 0 && !up)
 	{
 		/* Not found: insert a new line */
 		db_finalize(q);
 		db_free(sql);
 
 		/* Generate SQL */
-		sql = db_mprintf("INSERT INTO path (path,mtime) "
-				 "VALUES ('%q',0)", gpath != NULL ? gpath : "");
+		sql = db_mprintf("INSERT INTO path (path,mtime,media_id) "
+				 "VALUES ('%q',0,'%ld')",
+				 gpath != NULL ? gpath : "", media_id);
 		if(sql == NULL)
 		{
 			if(gpath != NULL)
@@ -186,22 +215,20 @@ static int files_list_get_path(struct db_handle *db, const char *path,
 		db_exec(db, sql, NULL, NULL);
 		db_free(sql);
 
-		/* Get last rowid */
-		*id = db_get_last_id(db);
-		if(mtime != NULL)
-			*mtime = 0;
-
-		/* Free good path */
-		if(gpath != NULL)
-			free(gpath);
-
-		return 0;
+		/* Redo select */
+		up = 1;
+		goto retry;
 	}
 
 	/* Get values */
 	*id = db_column_int64(q, 0);
 	if(mtime != NULL)
 		*mtime = db_column_int64(q, 1);
+
+	/* Generate complete path */
+	if(c_path != NULL)
+		asprintf(c_path, "%s/%s", db_column_text(q, 2),
+			 gpath != NULL ? gpath : "");
 
 	/* Finalize request */
 	db_finalize(q);
@@ -722,7 +749,7 @@ static int files_list_add_genre(void *user_data, int col_count, char **values,
 }
 
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
-			     const char *path, const char *uri)
+			     uint64_t media_id, const char *uri)
 {
 	struct json *root = NULL;
 	struct stat st;
@@ -746,25 +773,21 @@ struct json *files_list_file(struct db_handle *db, const char *cover_path,
 	else
 		file = (char*) uri;
 
-	/* Get complete file path */
-	asprintf(&real_path, "%s/%s", path, uri_path != NULL ? uri_path : "");
-	if(real_path == NULL)
-		goto end;
-
-	/* Get file stat */
-	asprintf(&file_path, "%s/%s", path, uri);
-	if(file_path == NULL)
-		goto end;
-	if(stat(file_path, &st) != 0)
-		goto end;
-
 	/* Create JSON object */
 	root = json_new();
 	if(root == NULL)
 		goto end;
 
 	/* Get path_id */
-	if(files_list_get_path(db, uri_path, &path_id, 0) != 0)
+	if(files_list_get_path(db, media_id, uri_path, &real_path, &path_id, 0)
+	   != 0)
+		goto end;
+
+	/* Get file stat */
+	asprintf(&file_path, "%s/%s", real_path, file);
+	if(file_path == NULL)
+		goto end;
+	if(stat(file_path, &st) != 0)
 		goto end;
 
 	/* Fill JSON object */
@@ -785,34 +808,24 @@ end:
 	return root;
 }
 
-static int files_list_filter(const struct dirent *d, const struct stat *s)
+static int files_list_filter(const struct fs_dirent *d)
 {
 	/* Check file ext */
-	if(s->st_mode & S_IFREG)
-		return files_ext_check(d->d_name);
+	if(d->stat.st_mode & S_IFREG)
+		return files_ext_check(d->name);
 
 	return 1;
 }
 
-static int files_list_filter_dir(const struct dirent *d, const struct stat *s)
-{
-	/* Check file ext */
-	if(s->st_mode & S_IFDIR)
-		return 1;
-
-	return 0;
-}
-
 char *files_list_files(struct db_handle *db, const char *cover_path,
-		       const char *path, const char *uri, unsigned long page,
+		       uint64_t media_id, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort,
 		       enum files_list_display display, uint64_t artist_id,
 		       uint64_t album_id, uint64_t genre_id, const char *filter)
 {
-	int (*_sort)(const struct _dirent **, const struct _dirent **);
-	int (*_filter)(const struct dirent *, const struct stat *) =
-							      files_list_filter;
-	struct _dirent **list_dir = NULL;
+	int (*_sort)(const struct fs_dirent **, const struct fs_dirent **);
+	int (*_filter)(const struct fs_dirent *) = files_list_filter;
+	struct fs_dirent **list_dir = NULL;
 	struct json *root, *tmp;
 	char *real_path = NULL;
 	char *str = NULL;
@@ -837,7 +850,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	offset = (page-1) * count;
 
 	/* Skip directory scan */
-	if(path == NULL)
+	if(media_id == 0)
 	{
 		if(sort < FILES_LIST_SORT_TITLE)
 			sort = FILES_LIST_SORT_TITLE;
@@ -845,29 +858,27 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 		goto do_sql;
 	}
 
-	/* Generate path from URI */
-	asprintf(&real_path, "%s/%s", path, uri != NULL ? uri : "");
-	if(real_path == NULL)
+	/* Get path id and time in database */
+	if(files_list_get_path(db, media_id, uri, &real_path, &path_id, &mtime)
+	   != 0)
 		goto end;
 
-	/* Get path id and time in database */
-	if(files_list_get_path(db, uri, &path_id, &mtime) != 0)
-		goto end;
+	
 
 	/* Select sort algorithm */
 	if(sort >= FILES_LIST_SORT_TITLE)
 	{
-		_sort = _alphasort;
+		_sort = fs_alphasort;
 		only_dir = 1;
 	}
 	else if(sort == FILES_LIST_SORT_REVERSE)
-		_sort = _alphasort_last;
+		_sort = fs_alphasort_last;
 	else if(sort == FILES_LIST_SORT_ALPHA)
-		_sort = _alphasort;
+		_sort = fs_alphasort;
 	else if(sort == FILES_LIST_SORT_ALPHA_REVERSE)
-		_sort = _alphasort_reverse;
+		_sort = fs_alphasort_reverse;
 	else
-		_sort = _alphasort_first;
+		_sort = fs_alphasort_first;
 
 	/* Scan entire folder for tag sort */
 	if(only_dir || display != FILES_LIST_DISPLAY_DEFAULT ||
@@ -878,18 +889,18 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 
 		/* Reverse sort */
 		if(sort >= FILES_LIST_SORT_TITLE_REVERSE)
-			_sort = _alphasort_reverse;
+			_sort = fs_alphasort_reverse;
 
 		/* Set filter to only folder */
-		_filter = files_list_filter_dir;
+		_filter = fs_dir_only;
 
 		/* Scan all directory not recursively */
-		files_list_recursive_scan(db, cover_path, real_path,
-					  strlen(path), 0, 0);
+		files_list_recursive_scan(db, cover_path, media_id, real_path,
+					  strlen(real_path)-strlen(uri), 0, 0);
 	}
 
 	/* Scan folder in alphabetic order */
-	list_count = _scandir(real_path, &list_dir, _filter, _sort);
+	list_count = fs_scandir(real_path, &list_dir, _filter, _sort);
 	if(list_count < 0)
 		goto end;
 
@@ -897,7 +908,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	for(i = offset; i < list_count && count > 0; i++)
 	{
 		/* Process entry */
-		if(list_dir[i]->mode & S_IFDIR)
+		if(list_dir[i]->stat.st_mode & S_IFDIR)
 		{
 			/* Create a new JSON object */
 			tmp = json_new();
@@ -913,7 +924,7 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 
 			count--;
 		}
-		else if(!only_dir && list_dir[i]->mode & S_IFREG)
+		else if(!only_dir && list_dir[i]->stat.st_mode & S_IFREG)
 		{
 			/* Create a new JSON object */
 			tmp = json_new();
@@ -926,7 +937,8 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 			/* Add meta to JSON if available */
 			files_list_add_meta(db, tmp, real_path,
 					    list_dir[i]->name, path_id,
-					    list_dir[i]->mtime, 0, NULL);
+					    list_dir[i]->stat.st_mtime, 0,
+					    NULL);
 
 			/* Add to array */
 			if(json_array_add(root, tmp) != 0)
@@ -999,7 +1011,7 @@ do_sql:
 				 "album LIKE '%%%q%%' OR "
 				 "artist LIKE '%%%q%%') \n"
 				 "ORDER BY %s %s LIMIT %ld, %ld",
-				 path == NULL ? "--" : "AND", path_id,
+				 media_id == 0 ? "--" : "AND", path_id,
 				 album_id == 0 ? "--" : "AND", album_id,
 				 artist_id == 0 ? "--" : "AND", artist_id,
 				 genre_id == 0 ? "--" : "AND", genre_id,
@@ -1090,9 +1102,40 @@ end:
 	return str;
 }
 
+char *files_list_get_media(struct db_handle *db, uint64_t media_id)
+{
+	struct db_query *q;
+	char *str = NULL;
+	char *sql;
+
+	/* Generate SQL request */
+	sql = db_mprintf("SELECT path FROM media WHERE media_id='%ld'",
+			 media_id);
+	if(sql == NULL)
+		return NULL;
+
+	/* Prepare request */
+	q = db_prepare(db, sql, -1);
+
+	/* Do request */
+	if(db_step(q) == 0)
+	{
+		str = (char*) db_column_text(q, 0);
+		if(str != NULL)
+			str = strdup(str);
+	}
+
+	/* Finalize request */
+	db_finalize(q);
+	db_free(sql);
+
+	return str;
+}
+
 static int files_list_recursive_scan(struct db_handle *db,
-				     const char *cover_path, const char *path,
-				     int len, int recursive, int update_status)
+				     const char *cover_path, uint64_t media_id,
+				     const char *path, int len, int recursive,
+				     int update_status)
 {
 	struct dirent *dir = NULL;
 	int64_t path_id;
@@ -1104,7 +1147,8 @@ static int files_list_recursive_scan(struct db_handle *db,
 	DIR *dp;
 
 	/* Get path id and time in database */
-	if(files_list_get_path(db, path+len, &path_id, &mtime) != 0)
+	if(files_list_get_path(db, media_id, path+len, NULL, &path_id, &mtime)
+	   != 0)
 		return -1;
 
 	/* Open directory */
@@ -1166,8 +1210,9 @@ static int files_list_recursive_scan(struct db_handle *db,
 			}
 
 			/* Scan sub_folder */
-			files_list_recursive_scan(db, cover_path, r_path, len,
-						  recursive, update_status);
+			files_list_recursive_scan(db, cover_path, media_id,
+						  r_path, len, recursive,
+						  update_status);
 		}
 		else if(s.st_mode & S_IFREG && files_ext_check(dir->d_name))
 		{
@@ -1187,12 +1232,10 @@ static int files_list_recursive_scan(struct db_handle *db,
 }
 
 int files_list_scan(struct db_handle *db, const char *cover_path,
-		    const char *path, int recursive)
+		    uint64_t media_id, int recursive)
 {
+	char *path;
 	int ret;
-
-	if(path == NULL)
-		return -1;
 
 	/* Lock scan access */
 	pthread_mutex_lock(&scan_mutex);
@@ -1209,9 +1252,17 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 	/* Unlock scan access */
 	pthread_mutex_unlock(&scan_mutex);
 
+	/* Get media path */
+	path = files_list_get_media(db, media_id);
+	if(path == NULL)
+		return -1;
+
 	/* Scan directory with status */
-	ret = files_list_recursive_scan(db, cover_path, path, strlen(path),
-					recursive, 1);
+	ret = files_list_recursive_scan(db, cover_path, media_id, path,
+					strlen(path), recursive, 1);
+
+	/* Free path */
+	free(path);
 
 	/* Lock scan status access */
 	pthread_mutex_lock(&scan_mutex);
@@ -1276,11 +1327,13 @@ static int files_list_sql(void *user_data, int col_count, char **values,
 	char *file_path;
 
 	/* Generate complete path */
-	if(asprintf(&file_path, "%s/%s", values[0], values[1]) < 0)
+	if(asprintf(&file_path, "%s/%s/%s", values[0], values[1], values[2])
+	   < 0)
 		return 0;
 
 	/* Call function */
-	d->fn(d->data, file_path);
+	d->fn(d->data, strtoul(values[3], NULL, 10), file_path,
+	      strlen(values[0]) + 1, strlen(values[1]) + 1);
 
 	/* Free path */
 	free(file_path);
@@ -1319,8 +1372,9 @@ int files_list_list(struct db_handle *db, const char *uri, files_list_fn fn,
 		return -1;
 
 	/* Prepare SQL request */
-	sql = db_mprintf("SELECT path,file FROM song "
+	sql = db_mprintf("SELECT m.path,path,file,media_id FROM song "
 			 "LEFT JOIN path USING (path_id) "
+			 "LEFT JOIN media AS m USING (media_id) "
 			 "WHERE %s_id='%ld' "
 			 "ORDER BY %s ASC",
 			 type, id, sort);
