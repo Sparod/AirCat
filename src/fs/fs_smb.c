@@ -21,6 +21,9 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
+#include <pthread.h>
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -58,8 +61,16 @@ void fs_smb_free(void)
 static int fs_smb_open(struct fs_file *f, const char *url, int flags,
 		       mode_t mode)
 {
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Open file */
 	f->fd = smbc_open(url, flags, mode);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	/* Bad file descriptor */
 	if(f->fd < SMBC_BASE_FD)
 		return -1;
 
@@ -68,8 +79,16 @@ static int fs_smb_open(struct fs_file *f, const char *url, int flags,
 
 static int fs_smb_creat(struct fs_file *f, const char *url, mode_t mode)
 {
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Create file */
 	f->fd = smbc_creat(url, mode);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	/* Bad file descriptor */
 	if(f->fd < SMBC_BASE_FD)
 		return -1;
 
@@ -80,6 +99,9 @@ static ssize_t fs_smb_read(struct fs_file *f, void *buf, size_t count)
 {
 	ssize_t len;
 
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Wait until data or error */
 	while((len = smbc_read(f->fd, buf, count)) < 0)
 	{
@@ -87,6 +109,9 @@ static ssize_t fs_smb_read(struct fs_file *f, void *buf, size_t count)
 		if(errno != EAGAIN)
 			break;
 	}
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
 
 	return len;
 }
@@ -99,6 +124,9 @@ static ssize_t fs_smb_read_to(struct fs_file *f, void *buf, size_t count,
 	/* No timeout */
 	if(timeout == -1)
 		return fs_smb_read(f, buf, count);
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
 
 	/* Wait timeout */
 	do {
@@ -113,12 +141,18 @@ static ssize_t fs_smb_read_to(struct fs_file *f, void *buf, size_t count,
 		timeout -= FS_SMB_TIMEOUT;
 	} while(timeout > 0);
 
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
 	return len;
 }
 
 static ssize_t fs_smb_write(struct fs_file *f, const void *buf, size_t count)
 {
 	ssize_t len;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
 
 	/* Wait until data or error */
 	while((len = smbc_write(f->fd, buf, count)) < 0)
@@ -127,6 +161,9 @@ static ssize_t fs_smb_write(struct fs_file *f, const void *buf, size_t count)
 		if(errno != EAGAIN)
 			break;
 	}
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
 
 	return len;
 }
@@ -139,6 +176,9 @@ static ssize_t fs_smb_write_to(struct fs_file *f, const void *buf,
 	/* No timeout */
 	if(timeout == -1)
 		return fs_smb_write(f, buf, count);
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
 
 	/* Wait timeout */
 	do {
@@ -153,17 +193,42 @@ static ssize_t fs_smb_write_to(struct fs_file *f, const void *buf,
 		timeout -= FS_SMB_TIMEOUT;
 	} while(timeout > 0);
 
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
 	return len;
 }
 
 static off_t fs_smb_lseek(struct fs_file *f, off_t offset, int whence)
 {
-	return smbc_lseek(f->fd, offset, whence);
+	off_t ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Lseek */
+	ret = smbc_lseek(f->fd, offset, whence);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 static int fs_smb_ftruncate(struct fs_file *f, off_t length)
 {
-	return smbc_ftruncate(f->fd, length);
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Ftruncate */
+	ret = smbc_ftruncate(f->fd, length);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 static void fs_smb_close(struct fs_file *f)
@@ -171,14 +236,108 @@ static void fs_smb_close(struct fs_file *f)
 	if(f->fd < SMBC_BASE_FD)
 		return;
 
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Close file */
 	smbc_close(f->fd);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+}
+
+static int fs_smb_mkdir(const char *url, mode_t mode)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Mkdir */
+	ret = smbc_mkdir(url, mode);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int fs_smb_unlink(const char *url)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Unlink */
+	ret = smbc_unlink(url);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int fs_smb_rmdir(const char *url)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Rmdir */
+	ret = smbc_rmdir(url);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int fs_smb_rename(const char *oldurl, const char *newurl)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Rename */
+	ret = smbc_rename(oldurl, newurl);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int fs_smb_chmod(const char *url, mode_t mode)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Chmod */
+	ret = smbc_chmod(url, mode);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 static int fs_smb_opendir(struct fs_dir *d, const char *url)
 {
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Open directory */
 	d->fd = smbc_opendir(url);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	/* Bad file descriptor */
 	if(d->fd < SMBC_BASE_FD)
 		return -1;
 
@@ -197,10 +356,17 @@ static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 	if(d->fd < SMBC_BASE_FD)
 		return NULL;
 
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
 	/* Read directory entry */
 	dir = smbc_readdir(d->fd);
 	if(dir == NULL)
+	{
+		/* Unlock libsmbclient access */
+		pthread_mutex_unlock(&mutex);
 		return NULL;
+	}
 
 	/* Fill dirent */
 	d->c_dirent.inode = 0;
@@ -236,15 +402,29 @@ static struct fs_dirent *fs_smb_readdir(struct fs_dir *d)
 	/* Stat directory */
 	smbc_stat(d->url, &d->c_dirent.stat);
 
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
 	return &d->c_dirent;
 }
 
 static off_t fs_smb_telldir(struct fs_dir *d)
 {
+	off_t ret;
+
 	if(d->fd < SMBC_BASE_FD)
 		return -1;
 
-	return smbc_telldir(d->fd);
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Telldir */
+	ret = smbc_telldir(d->fd);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 static void fs_smb_closedir(struct fs_dir *d)
@@ -256,14 +436,68 @@ static void fs_smb_closedir(struct fs_dir *d)
 	smbc_closedir(d->fd);
 }
 
+static int fs_smb_stat(const char *url, struct stat *buf)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Stat file */
+	ret = smbc_stat(url, buf);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
 static int fs_smb_fstat(struct fs_file *f, struct stat *buf)
 {
-	return smbc_fstat(f->fd, buf);
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Fstat file */
+	ret = smbc_fstat(f->fd, buf);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
+}
+
+static int fs_smb_statvfs(const char *url, struct statvfs *buf)
+{
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Statvfs file */
+	ret = smbc_statvfs((char*)url, buf);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 static int fs_smb_fstatvfs(struct fs_file *f, struct statvfs *buf)
 {
-	return smbc_fstatvfs(f->fd, buf);
+	int ret;
+
+	/* Lock libsmbclient access */
+	pthread_mutex_lock(&mutex);
+
+	/* Fstatvfs file */
+	ret = smbc_fstatvfs(f->fd, buf);
+
+	/* Unlock libsmbclient access */
+	pthread_mutex_unlock(&mutex);
+
+	return ret;
 }
 
 struct fs_handle fs_smb = {
@@ -276,19 +510,19 @@ struct fs_handle fs_smb = {
 	.lseek = fs_smb_lseek,
 	.ftruncate = fs_smb_ftruncate,
 	.close = fs_smb_close,
-	.mkdir = smbc_mkdir,
-	.unlink = smbc_unlink,
-	.rmdir = smbc_rmdir,
-	.rename = smbc_rename,
-	.chmod = smbc_chmod,
+	.mkdir = fs_smb_mkdir,
+	.unlink = fs_smb_unlink,
+	.rmdir = fs_smb_rmdir,
+	.rename = fs_smb_rename,
+	.chmod = fs_smb_chmod,
 	.opendir = fs_smb_opendir,
 	.mount = fs_smb_mount,
 	.readdir = fs_smb_readdir,
 	.telldir = fs_smb_telldir,
 	.closedir = fs_smb_closedir,
-	.stat = smbc_stat,
+	.stat = fs_smb_stat,
 	.fstat = fs_smb_fstat,
-	.statvfs = (void *) smbc_statvfs,
+	.statvfs = fs_smb_statvfs,
 	.fstatvfs = fs_smb_fstatvfs,
 };
 
