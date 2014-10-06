@@ -52,7 +52,7 @@
 #include "meta_taglib_file.h"
 #include "meta.h"
 
-#define COPY_STRING(d, s) if(s != NULL && *s != 0) d = strdup(s);
+#define COPY_STRING(d, s) str = s; if(str != NULL && *str != 0) d = strdup(str);
 
 #define ID3V2_PIC_TYPES 21
 
@@ -103,12 +103,13 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct meta *m, int options)
 	ID3v2::FrameList::Iterator i;
 	ByteVector picture;
 	int type, i_pref = -1;
+	const char *str;
 
 #define SET(opt, key, dest) if(options & opt) \
     { \
         list = tag->frameListMap()[key]; \
         if(!list.isEmpty()) \
-            COPY_STRING(dest, (*list.begin())->toString().toCString(true)); \
+            COPY_STRING(dest, (*list.begin())->toString().to8Bit().c_str()); \
     }
 
 	SET(TAG_COPYRIGHT, "TCOP", m->copyright);
@@ -161,11 +162,11 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct meta *m, int options)
 
 		/* Get mime type */
 		COPY_STRING(m->picture.mime,
-			    pic->mimeType().toCString(true));
+			    pic->mimeType().to8Bit().c_str());
 
 		/* Get description */
 		COPY_STRING(m->picture.description,
-			    pic->description().toCString(true));
+			    pic->description().to8Bit().c_str());
 
 		/* Get picture */
 		picture = pic->picture();
@@ -185,6 +186,7 @@ static void tag_read_from_id3v2(ID3v2::Tag *tag, struct meta *m, int options)
 static void tag_read_from_mp4(MP4::Tag *tag, struct meta *m, int options)
 {
 	MP4::CoverArtList covr;
+	const char *str;
 
 	if(tag->itemListMap().contains("covr"))
 	{
@@ -218,6 +220,7 @@ struct meta *meta_parse(const char *filename, int options)
 {
 	AudioProperties *prop;
 	struct meta *m = NULL;
+	const char *str;
 	File *file;
 	Tag *tag;
 
@@ -313,11 +316,11 @@ struct meta *meta_parse(const char *filename, int options)
 	if(tag != NULL && !tag->isEmpty())
 	{
 		/* Fill structure with values */
-		COPY_STRING(m->title, tag->title().toCString());
-		COPY_STRING(m->artist, tag->artist().toCString());
-		COPY_STRING(m->album, tag->album().toCString());
-		COPY_STRING(m->comment, tag->comment().toCString());
-		COPY_STRING(m->genre, tag->genre().toCString());
+		COPY_STRING(m->title, tag->title().to8Bit().c_str());
+		COPY_STRING(m->artist, tag->artist().to8Bit().c_str());
+		COPY_STRING(m->album, tag->album().to8Bit().c_str());
+		COPY_STRING(m->comment, tag->comment().to8Bit().c_str());
+		COPY_STRING(m->genre, tag->genre().to8Bit().c_str());
 		m->track = tag->track();
 		m->year = tag->year();
 	}
