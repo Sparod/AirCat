@@ -58,7 +58,7 @@ void files_list_init(struct db_handle *db, const char *path)
 			 " name TEXT,"
 			 " path TEXT,"
 			 " s_path TEXT,"
-			 " p_media_id INTEGER,"
+			 " p_media_id INTEGER DEFAULT -1,"
 			 " UNIQUE (path)"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS path ("
@@ -212,7 +212,7 @@ static int files_list_get_path(struct db_handle *db, uint64_t media_id,
 
 	/* Media is a shortcut */
 	p_media_id = db_column_int64(q, 1);
-	if(p_media_id != 0 && p_media_id != media_id)
+	if(p_media_id > 0 && p_media_id != media_id)
 	{
 		/* Set root main */
 		media_id = p_media_id;
@@ -1337,7 +1337,7 @@ char *files_list_media(struct db_handle *db, const char *path,
 
 	/* Add user media source */
 	str = db_mprintf("SELECT media_id,name,path FROM media "
-			 "WHERE p_media_id<>0 AND p_media_id<>media_id");
+			 "WHERE p_media_id>=0");
 	if(str != NULL)
 	{
 		/* Get user media */
@@ -1366,8 +1366,9 @@ int files_list_add_media(struct db_handle *db, const char *name,
 	char *sql;
 	int ret;
 
-	/* Don't accept a slash at end */
-	if(path == NULL || (*path != '\0' && path[strlen(path)-1] == '/'))
+	/* Don't accept a slash at end or local shortcut */
+	if(path == NULL || (*path != '\0' && path[strlen(path)-1] == '/') ||
+	   (media_id == 0 && strstr(path, "://") == NULL))
 		return -1;
 
 	/* Get media path */
@@ -1383,7 +1384,7 @@ int files_list_add_media(struct db_handle *db, const char *name,
 		q = db_prepare(db, sql, -1);
 
 		/* Media not present in database or already a shortcut */
-		if(db_step(q) != 0 || db_column_int64(q, 1) != 0)
+		if(db_step(q) != 0 || db_column_int64(q, 1) > 0)
 		{
 			db_finalize(q);
 			db_free(sql);
@@ -1408,8 +1409,8 @@ int files_list_add_media(struct db_handle *db, const char *name,
 	else
 	{
 		/* Prepare insert request */
-		sql = db_mprintf("INSERT INTO media (name,path) "
-				 "VALUES ('%q','%q')",
+		sql = db_mprintf("INSERT INTO media (name,path,p_media_id) "
+				 "VALUES ('%q','%q', 0)",
 				 name, path);
 	}
 
