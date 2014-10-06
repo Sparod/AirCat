@@ -312,7 +312,7 @@ static int files_file_only(const struct fs_dirent *d)
 	return (d->stat.st_mode & S_IFREG) && files_ext_check(d->name) ? 1 : 0;
 }
 
-static int files_add_from_db(void *user_data, uint64_t media_id,
+static int files_add_from_db(void *user_data, int64_t media_id,
 			     const char *file, int media_len, int path_len)
 {
 	struct files_add_from_db_data *d = user_data;
@@ -928,14 +928,14 @@ static int files_httpd_add_play(void *user_data, struct httpd_req *req,
 	struct files_handle *h = user_data;
 	struct json *list;
 	const char *path, *value;
-	unsigned long media_id = 1;
+	long media_id = 1;
 	int play = 0;
 	int i, count;
 
 	/* Get media_id */
 	value = httpd_get_query(req, "media_id");
 	if(value != NULL)
-		media_id = strtoul(value, NULL, 10);
+		media_id = strtol(value, NULL, 10);
 
 	/* Set play */
 	if(req->url[11] == '/' || req->url[11] == '\0')
@@ -1068,14 +1068,14 @@ static int files_httpd_info(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *info = NULL;
-	unsigned long media_id = 1;
+	long media_id = 1;
 	const char *value;
 	char *str;
 
 	/* Get media_id */
 	value = httpd_get_query(req, "media_id");
 	if(value != NULL)
-		media_id = strtoul(value, NULL, 10);
+		media_id = strtol(value, NULL, 10);
 
 	/* Get file */
 	info = files_list_file(h->db, h->cover_path, media_id, req->resource);
@@ -1100,15 +1100,15 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	unsigned long page = 0, count = 0;
-	unsigned long media_id = 1;
 	int display = FILES_LIST_DISPLAY_DEFAULT;
 	int sort = FILES_LIST_SORT_DEFAULT;
 	const char *filter = NULL;
 	const char *value;
 	char *list = NULL;
-	int artist_id = 0;
-	int album_id = 0;
-	int genre_id = 0;
+	long artist_id = 0;
+	long album_id = 0;
+	long genre_id = 0;
+	long media_id = 1;
 
 	/* Get page */
 	value = httpd_get_query(req, "page");
@@ -1123,7 +1123,7 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	/* Get media for browsing */
 	value = httpd_get_query(req, "media_id");
 	if(value != NULL)
-		media_id = strtoul(value, NULL, 10);
+		media_id = strtol(value, NULL, 10);
 
 	/* Flag which specify library listting */
 	value = httpd_get_query(req, "type");
@@ -1145,17 +1145,17 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	/* Artist ID */
 	value = httpd_get_query(req, "artist_id");
 	if(value != NULL)
-		artist_id = strtoul(value, NULL, 10);;
+		artist_id = strtol(value, NULL, 10);;
 
 	/* Album ID */
 	value = httpd_get_query(req, "album_id");
 	if(value != NULL)
-		album_id = strtoul(value, NULL, 10);
+		album_id = strtol(value, NULL, 10);
 
 	/* Genre ID */
 	value = httpd_get_query(req, "genre_id");
 	if(value != NULL)
-		genre_id = strtoul(value, NULL, 10);
+		genre_id = strtol(value, NULL, 10);
 
 	/* Get sort */
 	value = httpd_get_query(req, "sort");
@@ -1199,8 +1199,8 @@ static int files_httpd_list(void *user_data, struct httpd_req *req,
 	/* Get file list */
 	list = files_list_files(h->db, h->cover_path, media_id, req->resource,
 				page, count, sort, display,
-				(uint64_t) artist_id, (uint64_t) album_id,
-				(uint64_t) genre_id, filter);
+				(int64_t) artist_id, (int64_t) album_id,
+				(int64_t) genre_id, filter);
 	if(list == NULL)
 	{
 		*res = httpd_new_response("Bad directory", 0, 0);
@@ -1216,9 +1216,9 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 {
 	struct files_handle *h = user_data;
 	struct json *j;
-	unsigned long media_id = 1;
 	const char *value;
 	char *status;
+	long media_id = 1;
 
 	if(req->method == HTTPD_PUT)
 	{
@@ -1233,7 +1233,7 @@ static int files_httpd_scan(void *user_data, struct httpd_req *req,
 		/* Get media for scanning */
 		value = httpd_get_query(req, "media_id");
 		if(value != NULL)
-			media_id = strtoul(value, NULL, 10);
+			media_id = strtol(value, NULL, 10);
 
 		/* Scan all music folder */
 		if(files_list_scan(h->db, h->cover_path, media_id, 1) != 0)
@@ -1315,13 +1315,13 @@ static int files_httpd_rm_media(void *user_data, struct httpd_req *req,
 				struct httpd_res **res)
 {
 	struct files_handle *h = user_data;
-	unsigned long id;
+	long id;
 
 	/* Get id from URL */
-	id = strtoul(req->resource, NULL, 10);
+	id = strtol(req->resource, NULL, 10);
 
 	/* Remove media from list */
-	if(files_list_delete_media(h->db, (uint64_t)id) != 0)
+	if(files_list_delete_media(h->db, (int64_t)id) != 0)
 		return 500;
 
 	return 200;

@@ -43,7 +43,7 @@ char *files_ext[] = {
 };
 
 static int files_list_recursive_scan(struct db_handle *db,
-				     const char *cover_path, uint64_t media_id,
+				     const char *cover_path, int64_t media_id,
 				     const char *path, int len, int recursive,
 				     int update_status);
 
@@ -156,7 +156,7 @@ void files_list_init(struct db_handle *db, const char *path)
 
 }
 
-static int files_list_get_path(struct db_handle *db, uint64_t media_id,
+static int files_list_get_path(struct db_handle *db, int64_t media_id,
 			       const char *path, char **c_path, int64_t *id,
 			       time_t *mtime)
 {
@@ -166,7 +166,7 @@ static int files_list_get_path(struct db_handle *db, uint64_t media_id,
 	char last = '/';
 	char *m, *s, *g;
 	char *sql;
-	uint64_t p_media_id;
+	int64_t p_media_id;
 	int ret = -1;
 	int up = 0;
 	int len;
@@ -802,7 +802,7 @@ static int files_list_add_genre(void *user_data, int col_count, char **values,
 }
 
 struct json *files_list_file(struct db_handle *db, const char *cover_path,
-			     uint64_t media_id, const char *uri)
+			     int64_t media_id, const char *uri)
 {
 	struct json *root = NULL;
 	struct stat st;
@@ -871,10 +871,10 @@ static int files_list_filter(const struct fs_dirent *d)
 }
 
 char *files_list_files(struct db_handle *db, const char *cover_path,
-		       uint64_t media_id, const char *uri, unsigned long page,
+		       int64_t media_id, const char *uri, unsigned long page,
 		       unsigned long count, enum files_list_sort sort,
-		       enum files_list_display display, uint64_t artist_id,
-		       uint64_t album_id, uint64_t genre_id, const char *filter)
+		       enum files_list_display display, int64_t artist_id,
+		       int64_t album_id, int64_t genre_id, const char *filter)
 {
 	int (*_sort)(const struct fs_dirent **, const struct fs_dirent **);
 	int (*_filter)(const struct fs_dirent *) = files_list_filter;
@@ -1359,7 +1359,7 @@ end:
 }
 
 int files_list_add_media(struct db_handle *db, const char *name,
-			 const char *path, uint64_t media_id)
+			 const char *path, int64_t media_id)
 {
 	struct db_query *q;
 	const char *p;
@@ -1421,7 +1421,7 @@ int files_list_add_media(struct db_handle *db, const char *name,
 	return ret;
 }
 
-int files_list_delete_media(struct db_handle *db, uint64_t media_id)
+int files_list_delete_media(struct db_handle *db, int64_t media_id)
 {
 	char *sql;
 	int ret;
@@ -1440,7 +1440,7 @@ int files_list_delete_media(struct db_handle *db, uint64_t media_id)
 	return ret;
 }
 
-char *files_list_get_media(struct db_handle *db, uint64_t media_id)
+char *files_list_get_media(struct db_handle *db, int64_t media_id)
 {
 	struct db_query *q;
 	char *str = NULL;
@@ -1474,7 +1474,7 @@ char *files_list_get_media(struct db_handle *db, uint64_t media_id)
 }
 
 static int files_list_recursive_scan(struct db_handle *db,
-				     const char *cover_path, uint64_t media_id,
+				     const char *cover_path, int64_t media_id,
 				     const char *path, int len, int recursive,
 				     int update_status)
 {
@@ -1573,7 +1573,7 @@ static int files_list_recursive_scan(struct db_handle *db,
 }
 
 int files_list_scan(struct db_handle *db, const char *cover_path,
-		    uint64_t media_id, int recursive)
+		    int64_t media_id, int recursive)
 {
 	char *path;
 	int ret;
