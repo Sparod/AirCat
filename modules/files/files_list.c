@@ -57,6 +57,8 @@ void files_list_init(struct db_handle *db, const char *path)
 			 " media_id INTEGER PRIMARY KEY,"
 			 " name TEXT,"
 			 " path TEXT,"
+			 " s_path TEXT,"
+			 " p_media_id INTEGER,"
 			 " UNIQUE (path)"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS path ("
@@ -159,9 +161,13 @@ static int files_list_get_path(struct db_handle *db, uint64_t media_id,
 			       time_t *mtime)
 {
 	struct db_query *q;
+	char *mpath = NULL;
 	char *gpath = NULL;
 	char last = '/';
+	char *m, *s, *g;
 	char *sql;
+	uint64_t p_media_id;
+	int ret = -1;
 	int up = 0;
 	int len;
 	int i, j;
@@ -187,18 +193,52 @@ static int files_list_get_path(struct db_handle *db, uint64_t media_id,
 		gpath[j] = '\0';
 	}
 
+	/* Check if media is shortcut */
+	sql = db_mprintf("SELECT s_path,p_media_id FROM media "
+			 "WHERE media_id='%ld'", media_id);
+	if(sql == NULL)
+		return -1;
+
+	/* Prepare SQL */
+	q = db_prepare(db, sql, -1);
+
+	/* Do request */
+	if(db_step(q) != 0)
+	{
+		db_finalize(q);
+		db_free(sql);
+		goto end;
+	}
+
+	/* Media is a shortcut */
+	p_media_id = db_column_int64(q, 1);
+	if(p_media_id != 0 && p_media_id != media_id)
+	{
+		/* Set root main */
+		media_id = p_media_id;
+
+		/* Add missing path */
+		mpath = (char*)db_column_text(q, 0);
+		if(mpath != NULL)
+			mpath = strdup(mpath);
+	}
+
+	/* Finalize request */
+	db_finalize(q);
+	db_free(sql);
+
+	/* Prepare strings */
+	m = mpath != NULL ? mpath : "";
+	s = mpath != NULL && gpath != NULL && *gpath != '\0' ? "/" : "";
+	g = gpath != NULL ? gpath : "";
 retry:
 	/* Generate SQL */
 	sql = db_mprintf("SELECT p.path_id,p.path,m.path FROM path AS p "
 			 "LEFT JOIN media AS m using (media_id) "
-			 "WHERE p.path='%q' AND media_id='%ld'",
-			 gpath != NULL ? gpath : "", media_id);
+			 "WHERE p.path='%q%q%q' AND media_id='%ld'",
+			 m, s, g, media_id);
 	if(sql == NULL)
-	{
-		if(gpath != NULL)
-			free(gpath);
-		return -1;
-	}
+		goto end;
 
 	/* Prepare request */
 	q = db_prepare(db, sql, -1);
@@ -212,20 +252,16 @@ retry:
 
 		/* Generate SQL */
 		sql = db_mprintf("INSERT INTO path (path,mtime,media_id) "
-				 "VALUES ('%q',0,'%ld')",
-				 gpath != NULL ? gpath : "", media_id);
+				 "VALUES ('%q%q%q',0,'%ld')",
+				  m, s, g, media_id);
 		if(sql == NULL)
-		{
-			if(gpath != NULL)
-				free(gpath);
-			return -1;
-		}
+			goto end;
 
 		/* Add entry in database */
 		if(db_exec(db, sql, NULL, NULL) != 0)
 		{
 			db_free(sql);
-			return -1;
+			goto end;
 		}
 		db_free(sql);
 
@@ -241,18 +277,21 @@ retry:
 
 	/* Generate complete path */
 	if(c_path != NULL)
-		asprintf(c_path, "%s/%s", db_column_text(q, 2),
-			 gpath != NULL ? gpath : "/");
+		asprintf(c_path, "%s/%s%s%s", db_column_text(q, 2), m, s, g);
 
 	/* Finalize request */
 	db_finalize(q);
 	db_free(sql);
+	ret = 0;
 
+end:
 	/* Free good path */
 	if(gpath != NULL)
 		free(gpath);
+	if(mpath != NULL)
+		free(mpath);
 
-	return 0;
+	return ret;
 }
 
 static char *files_list_save_cover(struct meta *meta, const char *path,
@@ -1202,6 +1241,29 @@ end:
 	return 0;
 }
 
+static int files_list_user_media(void *user_data, int col_count, char **values,
+				 char **names)
+{
+	struct json *list = user_data;
+	struct json *tmp;
+
+	/* Create JSON object */
+	tmp = json_new();
+	if(tmp == NULL)
+		return -1;
+
+	/* Fill JSON object */
+	json_set_int64(tmp, "id", strtoul(values[0], NULL, 10));
+	json_set_string(tmp, "name", values[1]);
+	json_set_string(tmp, "path", values[2]);
+
+	/* Add object to array */
+	if(json_array_add(list, tmp) != 0)
+		json_free(tmp);
+
+	return 0;
+}
+
 char *files_list_media(struct db_handle *db, const char *path,
 		       const char *mount_path)
 {
@@ -1262,11 +1324,29 @@ char *files_list_media(struct db_handle *db, const char *path,
 	if(list == NULL)
 		goto end;
 
-	/* Add main media source */
+	/* Add network media source */
 	files_list_update_media(db, list, "Samba", "smb://");
 
 	/* Add list to JSON object */
 	json_add(root, "network", list);
+
+	/* Create user media list */
+	list = json_new_array();
+	if(list == NULL)
+		goto end;
+
+	/* Add user media source */
+	str = db_mprintf("SELECT media_id,name,path FROM media "
+			 "WHERE p_media_id<>0 AND p_media_id<>media_id");
+	if(str != NULL)
+	{
+		/* Get user media */
+		db_exec(db, str, files_list_user_media, list);
+		db_free(str);
+	}
+
+	/* Add list to JSON object */
+	json_add(root, "user", list);
 
 end:
 	/* Get output */
@@ -1276,6 +1356,87 @@ end:
 	json_free(root);
 
 	return str;
+}
+
+int files_list_add_media(struct db_handle *db, const char *name,
+			 const char *path, uint64_t media_id)
+{
+	struct db_query *q;
+	const char *p;
+	char *sql;
+	int ret;
+
+	/* Don't accept a slash at end */
+	if(path == NULL || (*path != '\0' && path[strlen(path)-1] == '/'))
+		return -1;
+
+	/* Get media path */
+	if(media_id > 0)
+	{
+		/* Prepare SQL request */
+		sql = db_mprintf("SELECT path,p_media_id FROM media "
+				 "WHERE media_id='%ld'", media_id);
+		if(sql == NULL)
+			return -1;
+
+		/* Prepare request */
+		q = db_prepare(db, sql, -1);
+
+		/* Media not present in database or already a shortcut */
+		if(db_step(q) != 0 || db_column_int64(q, 1) != 0)
+		{
+			db_finalize(q);
+			db_free(sql);
+			return -1;
+		}
+
+		/* Get path */
+		p = db_column_text(q, 0);
+
+		/* Free request */
+		db_free(sql);
+
+		/* Prepare insert request */
+		sql = db_mprintf("INSERT INTO media (name,path,s_path,"
+				 "p_media_id) "
+				 "VALUES ('%q','%q/%q','%q','%ld')",
+				 name, p, path, path, media_id);
+
+		/* Finalize request */
+		db_finalize(q);
+	}
+	else
+	{
+		/* Prepare insert request */
+		sql = db_mprintf("INSERT INTO media (name,path) "
+				 "VALUES ('%q','%q')",
+				 name, path);
+	}
+
+	/* Insert media */
+	ret = db_exec(db, sql, NULL, NULL);
+	db_free(sql);
+
+	return ret;
+}
+
+int files_list_delete_media(struct db_handle *db, uint64_t media_id)
+{
+	char *sql;
+	int ret;
+
+	/* Get path length */
+	if(media_id < 2)
+		return -1;
+
+	/* Prepare delete request */
+	sql = db_mprintf("DELETE FROM media WHERE media_id='%ld'", media_id);
+
+	/* Insert media */
+	ret = db_exec(db, sql, NULL, NULL);
+	db_free(sql);
+
+	return ret;
 }
 
 char *files_list_get_media(struct db_handle *db, uint64_t media_id)

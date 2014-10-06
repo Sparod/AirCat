@@ -66,6 +66,9 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 /* List/scan Media storage (local or network) */
 char *files_list_media(struct db_handle *db, const char *path,
 		       const char *mount_path);
+int files_list_add_media(struct db_handle *db, const char *name,
+			 const char *path, uint64_t media_id);
+int files_list_delete_media(struct db_handle *db, uint64_t media_id);
 char *files_list_get_media(struct db_handle *db, uint64_t media_id);
 
 /* Scan files */

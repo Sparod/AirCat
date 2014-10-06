@@ -1290,6 +1290,43 @@ static int files_httpd_media(void *user_data, struct httpd_req *req,
 	return 200;
 }
 
+static int files_httpd_add_media(void *user_data, struct httpd_req *req,
+				 struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	const char *name, *path;
+	unsigned long id;
+
+	/* Get name and path */
+	name = json_get_string(req->json, "name");
+	path = json_get_string(req->json, "path");
+	id = json_get_int64(req->json, "id");
+	if(name == NULL || path == NULL)
+		return 400;
+
+	/* Get media list */
+	if(files_list_add_media(h->db, name, path, id) != 0)
+		return 500;
+
+	return 200;
+}
+
+static int files_httpd_rm_media(void *user_data, struct httpd_req *req,
+				struct httpd_res **res)
+{
+	struct files_handle *h = user_data;
+	unsigned long id;
+
+	/* Get id from URL */
+	id = strtoul(req->resource, NULL, 10);
+
+	/* Remove media from list */
+	if(files_list_delete_media(h->db, (uint64_t)id) != 0)
+		return 500;
+
+	return 200;
+}
+
 #define HTTPD_PG HTTPD_PUT | HTTPD_GET
 
 static struct url_table files_url[] = {
@@ -1315,6 +1352,10 @@ static struct url_table files_url[] = {
 	{"/info/",            HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_info},
 	{"/list",             HTTPD_EXT_URL, HTTPD_GET, 0, &files_httpd_list},
 	{"/scan",             0,             HTTPD_PG,  0, &files_httpd_scan},
+	{"/media/add",        0,             HTTPD_PUT, HTTPD_JSON,
+							&files_httpd_add_media},
+	{"/media/remove/",    HTTPD_EXT_URL, HTTPD_PUT, 0,
+							 &files_httpd_rm_media},
 	{"/media",            0,             HTTPD_GET, 0, &files_httpd_media},
 	{0, 0, 0}
 };
