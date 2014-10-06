@@ -376,7 +376,7 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 	}
 
 	/* Stat file */
-	if(stat(path, &st) != 0)
+	if(fs_stat(path, &st) != 0)
 	{
 		free(m_path);
 		free(path);

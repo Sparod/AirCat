@@ -51,8 +51,9 @@ void files_list_init(struct db_handle *db, const char *path)
 {
 	char *sql;
 
-	/* Prepare SQL */
-	sql = db_mprintf("CREATE TABLE IF NOT EXISTS media ("
+	/* Prepare SQL with new tables and enable foreign keys constraint */
+	sql = db_mprintf("PRAGMA foreign_keys = ON;"
+			 "CREATE TABLE IF NOT EXISTS media ("
 			 " media_id INTEGER PRIMARY KEY,"
 			 " name TEXT,"
 			 " path TEXT,"
@@ -63,8 +64,8 @@ void files_list_init(struct db_handle *db, const char *path)
 			 " path TEXT,"
 			 " mtime INTEGER,"
 			 " media_id INTEGER,"
-			 " FOREIGN KEY (media_id) REFERENCES media,"
-			 " UNIQUE (path)"
+			 " UNIQUE (path,media_id),"
+			 " FOREIGN KEY (media_id) REFERENCES media"
 			 ");"
 			 "CREATE TABLE IF NOT EXISTS artist ("
 			 " artist_id INTEGER PRIMARY KEY,"
@@ -130,9 +131,19 @@ void files_list_init(struct db_handle *db, const char *path)
 	db_exec(db, sql, NULL, NULL);
 	db_free(sql);
 
-	/* Add default path */
+	/* Add default path and values */
 	sql = db_mprintf("INSERT OR REPLACE INTO media (media_id,name,path) "
-			 "VALUES (1,'Local','%q')",
+			 "VALUES (1,'Local','%q');"
+			 "INSERT OR REPLACE INTO artist (artist_id,artist) "
+			 "VALUES (1,'');"
+			 "INSERT OR REPLACE INTO cover (cover_id,cover) "
+			 "VALUES (1,'');"
+			 "INSERT OR REPLACE INTO album (album_id,album,"
+			 "cover_id) VALUES (1,'', 1);"
+			 "INSERT OR REPLACE INTO artist_album (artist_id,"
+			 "album_id) VALUES (1,1);"
+			 "INSERT OR REPLACE INTO genre (genre_id,genre) "
+			 "VALUES (1,'');",
 			 path);
 	if(sql == NULL)
 		return;
@@ -211,7 +222,11 @@ retry:
 		}
 
 		/* Add entry in database */
-		db_exec(db, sql, NULL, NULL);
+		if(db_exec(db, sql, NULL, NULL) != 0)
+		{
+			db_free(sql);
+			return -1;
+		}
 		db_free(sql);
 
 		/* Redo select */
@@ -227,7 +242,7 @@ retry:
 	/* Generate complete path */
 	if(c_path != NULL)
 		asprintf(c_path, "%s/%s", db_column_text(q, 2),
-			 gpath != NULL ? gpath : "");
+			 gpath != NULL ? gpath : "/");
 
 	/* Finalize request */
 	db_finalize(q);
@@ -377,10 +392,10 @@ static int files_list_update_file(struct db_handle *db, const char *cover_path,
 				  int64_t mtime, int64_t path_id, int64_t id)
 {
 	struct meta *meta = NULL;
-	int64_t artist_id = 0;
-	int64_t album_id = 0;
-	int64_t cover_id = 0;
-	int64_t genre_id = 0;
+	int64_t artist_id = 1;
+	int64_t album_id = 1;
+	int64_t cover_id = 1;
+	int64_t genre_id = 1;
 	char *cover = NULL;
 	char *file_path;
 	char *in_sql = NULL;
@@ -786,7 +801,7 @@ struct json *files_list_file(struct db_handle *db, const char *cover_path,
 	asprintf(&file_path, "%s/%s", real_path, file);
 	if(file_path == NULL)
 		goto end;
-	if(stat(file_path, &st) != 0)
+	if(fs_stat(file_path, &st) != 0)
 		goto end;
 
 	/* Fill JSON object */
@@ -847,6 +862,8 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	if(count == 0)
 		count = FILES_LIST_DEFAULT_COUNT;
 	offset = (page-1) * count;
+	if(!media_id)
+		media_id = 1;
 
 	/* Skip directory scan */
 	if(media_id == 0)
@@ -905,7 +922,9 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 	for(i = offset; i < list_count && count > 0; i++)
 	{
 		/* Process entry */
-		if(list_dir[i]->stat.st_mode & S_IFDIR)
+		if(list_dir[i]->stat.st_mode & S_IFDIR ||
+		   list_dir[i]->type == FS_DIR || list_dir[i]->type == FS_NET ||
+		   list_dir[i]->type == FS_SRV)
 		{
 			/* Create a new JSON object */
 			tmp = json_new();
@@ -914,6 +933,12 @@ char *files_list_files(struct db_handle *db, const char *cover_path,
 
 			/* Add folder name */
 			json_set_string(tmp, "folder", list_dir[i]->name);
+			if(list_dir[i]->type == FS_NET)
+				json_set_string(tmp, "type", "network");
+			else if(list_dir[i]->type == FS_SRV)
+				json_set_string(tmp, "type", "server");
+			else
+				json_set_string(tmp, "type", "directory");
 
 			/* Add to array */
 			if(json_array_add(root, tmp) != 0)
@@ -1104,13 +1129,23 @@ static int files_list_update_media(struct db_handle *db, struct json *list,
 {
 	struct db_query *query;
 	struct json *tmp;
+	char *gpath = NULL;
 	char *sql = NULL;
 	int up = 0;
+	int len;
+
+	/* Remove second '/' if path is "xxx://" */
+	len = strlen(path);
+	if(len > 3 && strcmp(&path[len-3], "://") == 0)
+	{
+		gpath = strdup(path);
+		gpath[len-1] = '\0';
+	}
 
 retry:
 	/* Prepare SQL request */
-	sql = db_mprintf("SELECT media_id,name,path FROM media "
-			 "WHERE path='%q'", path);
+	sql = db_mprintf("SELECT media_id,name FROM media "
+			 "WHERE path='%q'", gpath != NULL ? gpath : path);
 	if(sql == NULL)
 		return -1;
 
@@ -1131,7 +1166,8 @@ retry:
 
 		/* Prepare SQL request */
 		sql = db_mprintf("INSERT INTO media (name,path) "
-				 "VALUES ('%q','%q')", name, path);
+				 "VALUES ('%q','%q')", name,
+				 gpath != NULL ? gpath : path);
 		if(sql == NULL)
 			return -1;
 
@@ -1152,7 +1188,7 @@ retry:
 	/* Fill JSON object */
 	json_set_int64(tmp, "id", db_column_int64(query, 0));
 	json_set_string(tmp, "name", db_column_text(query, 1));
-	json_set_string(tmp, "path", db_column_text(query, 2));
+	json_set_string(tmp, "path", path);
 
 	/* Add object to array */
 	if(json_array_add(list, tmp) != 0)
@@ -1226,22 +1262,8 @@ char *files_list_media(struct db_handle *db, const char *path,
 	if(list == NULL)
 		goto end;
 
-#ifdef NETWORK_TEST
-	/* Get discoverable media sources */
-	dir = fs_mount("smb://");
-	if(dir != NULL)
-	{
-		/* Process all medias */
-		while((d = fs_readdir(dir)) != NULL)
-		{
-			/* Add media to list */
-			files_list_update_media(db, list, d->name, d->name);
-		}
-
-		/* Close list */
-		fs_closedir(dir);
-	}
-#endif
+	/* Add main media source */
+	files_list_update_media(db, list, "Samba", "smb://");
 
 	/* Add list to JSON object */
 	json_add(root, "network", list);
@@ -1261,6 +1283,9 @@ char *files_list_get_media(struct db_handle *db, uint64_t media_id)
 	struct db_query *q;
 	char *str = NULL;
 	char *sql;
+
+	if(media_id == 0)
+		media_id = 1;
 
 	/* Generate SQL request */
 	sql = db_mprintf("SELECT path FROM media WHERE media_id='%ld'",
@@ -1324,7 +1349,7 @@ static int files_list_recursive_scan(struct db_handle *db,
 			continue;
 
 		/* Get entry stat */
-		if(stat(r_path, &s) != 0)
+		if(fs_stat(r_path, &s) != 0)
 		{
 			free(r_path);
 			continue;
@@ -1390,6 +1415,9 @@ int files_list_scan(struct db_handle *db, const char *cover_path,
 {
 	char *path;
 	int ret;
+
+	if(media_id == 0)
+		media_id = 1;
 
 	/* Lock scan access */
 	pthread_mutex_lock(&scan_mutex);
