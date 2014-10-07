@@ -91,7 +91,7 @@ static inline int files_ext_check(const char *name)
 
 	for(i = 0; files_ext[i] != NULL; i++)
 	{
-		if(strcmp(&name[len-4], files_ext[i]) == 0)
+		if(strcasecmp(&name[len-4], files_ext[i]) == 0)
 			return 1;
 	}
 
