@@ -212,6 +212,7 @@ static void resample_free(struct resample_handle *h)
 	/* Close libsoxr */
 	if(h->soxr != NULL)
 		soxr_delete(h->soxr);
+	h->soxr = NULL;
 
 	/* Free specs for down/up-mixing */
 	if(h->out_specs != NULL)
