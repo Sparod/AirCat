@@ -81,8 +81,9 @@ int decoder_aac_open(struct decoder **decoder, const unsigned char *dec_config,
 	dec->pcm_remain = 0;
 
 	/* Check if ADTS or ADIF header */
-	if((dec_config[0] == 0xFF && (dec_config[1] & 0xF6) == 0xF0) ||
-	   memcmp(dec_config, "ADIF", 4) == 0)
+	if(dec_config != NULL &&
+	  ((dec_config[0] == 0xFF && (dec_config[1] & 0xF6) == 0xF0) ||
+	   memcmp(dec_config, "ADIF", 4) == 0))
 	{
 		/* Init decoder from frame */
 		ret = NeAACDecInit(dec->hDec, (unsigned char *) dec_config,
