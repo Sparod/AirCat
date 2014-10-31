@@ -109,6 +109,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 
 	/* Set options */
 	http_set_option(h->http, HTTP_EXTRA_HEADER, "Icy-MetaData: 1\r\n", 0);
+	http_set_option(h->http, HTTP_FOLLOW_REDIRECT, NULL, 1);
 
 	/* Connect and get header from server */
 	code = http_get(h->http, url);
