@@ -20,5 +20,6 @@ EXTRA_DIST = config_file.h \
 	     utils.h \
 	     module.h \
 	     db.h \
+	     vring.h \
 	     json.h
 

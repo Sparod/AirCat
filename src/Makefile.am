@@ -32,6 +32,7 @@ aircat_SOURCES = main.c \
 		 cache.c \
 		 db.c \
 		 timers.c \
+		 vring.c \
 		 utils.c
 
 aircat_LDADD = $(libssl_LIBS) \
