@@ -27,12 +27,24 @@
 #include "config.h"
 #endif
 
+/**
+ * MAD needs at least two complete MP3 frames to decode a frame, so an internal
+ * buffer is used to copy temporarly frames.
+ * This use one memcpy() call at each new input frame and a memmove() at each
+ * frame decode.
+ * Size is twice biggest possible frame size (MPEG 2.5 Layer II with 8kHz and
+ * 160kbps) and MAD_BUFFER_GUARD of 8 bytes size.
+ */
+#define BUFFER_SIZE 2881 * 2 + MAD_BUFFER_GUARD
+
 struct decoder {
 	struct mad_stream Stream;
 	struct mad_frame Frame;
 	struct mad_synth Synth;
 	/* Output cursor */
 	unsigned long pcm_remain;
+	unsigned char buffer[BUFFER_SIZE];
+	size_t buffer_len;
 };
 
 int decoder_mp3_open(struct decoder **decoder, const unsigned char *config,
@@ -47,9 +59,10 @@ int decoder_mp3_open(struct decoder **decoder, const unsigned char *config,
 	if(*decoder == NULL)
 		return -1;
 	dec = *decoder;
-	
+
 	/* Init structure */
 	dec->pcm_remain = 0;
+	dec->buffer_len = 0;
 
 	/* Initialize mad */
 	mad_stream_init(&dec->Stream);
@@ -167,8 +180,14 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 	if(in_size == 0)
 		return 0;
 
+	/* Copy data to internal buffer */
+	if(in_size > BUFFER_SIZE-dec->buffer_len)
+		in_size = BUFFER_SIZE-dec->buffer_len;
+	memcpy(dec->buffer+dec->buffer_len, in_buffer, in_size);
+	dec->buffer_len += in_size;
+
 	/* Add frame to stream */
-	mad_stream_buffer(&dec->Stream, in_buffer, in_size);
+	mad_stream_buffer(&dec->Stream, dec->buffer, dec->buffer_len);
 
 	/* Decode a new frame */
 	while(mad_frame_decode(&dec->Frame, &dec->Stream))
@@ -181,7 +200,7 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 		else
 		{
 			/* Update buffer */
-			info->used = dec->Stream.next_frame - dec->Stream.buffer;
+			info->used = in_size;
 			info->remaining = 0;
 
 			if(dec->Stream.error == MAD_ERROR_BUFLEN)
@@ -191,6 +210,10 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 		}
 	}
 
+	/* Move remaining data to buffer start */
+	dec->buffer_len -= dec->Stream.next_frame - dec->Stream.buffer;
+	memmove(dec->buffer, dec->Stream.next_frame, dec->buffer_len);
+
 	/* Synthethise PCM */
 	mad_synth_frame(&dec->Synth, &dec->Frame);
 
@@ -199,7 +222,7 @@ int decoder_mp3_decode(struct decoder *dec, unsigned char *in_buffer,
 	size = decoder_mp3_fill_output(dec, out_buffer, out_size);
 
 	/* Update buffer */
-	info->used = dec->Stream.next_frame - dec->Stream.buffer;
+	info->used = in_size;
 	info->remaining = dec->pcm_remain;
 	info->samplerate = dec->Frame.header.samplerate;
 	info->channels = MAD_NCHANNELS(&dec->Frame.header);
