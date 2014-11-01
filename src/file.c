@@ -26,7 +26,6 @@
 #include <pthread.h>
 
 #include "decoder.h"
-#include "stream.h"
 #include "demux.h"
 #include "file.h"
 
@@ -34,18 +33,11 @@
 #include "config.h"
 #endif
 
-#define BUFFER_SIZE 8192
-
 struct file_handle {
-	/* Stream */
-	struct stream_handle *stream;
 	/* Demuxer */
 	struct demux_handle *demux;
 	/* Audio decoder */
 	struct decoder_handle *dec;
-	/* Input buffer used for stream/demux/decoder */
-	unsigned char in_buffer[BUFFER_SIZE];
-	unsigned long in_size;
 	/* Stream status */
 	uint64_t pcm_pos;
 	unsigned long pcm_pos_off;
@@ -78,8 +70,6 @@ int file_open(struct file_handle **handle, const char *uri)
 	h = *handle;
 
 	/* Init structure */
-	h->in_size = BUFFER_SIZE;
-	h->stream = NULL;
 	h->demux = NULL;
 	h->dec = NULL;
 	h->pcm_pos = 0;
@@ -89,12 +79,8 @@ int file_open(struct file_handle **handle, const char *uri)
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
 
-	/* Open stream */
-	if(stream_open(&h->stream, uri, h->in_buffer, h->in_size) != 0)
-		return -1;
-
 	/* Open demuxer */
-	if(demux_open(&h->demux, h->stream, &samplerate, &channels) != 0)
+	if(demux_open(&h->demux, uri, &samplerate, &channels, 8192*2) != 0)
 		return -1;
 
 	/* Get decoder configuration from demuxer (useful for MP4) */
@@ -193,7 +179,7 @@ int file_get_status(struct file_handle *h)
 	if(h == NULL)
 		return FILE_NULL;
 
-	if(h->stream == NULL)
+	if(h->demux == NULL)
 		return FILE_CLOSED;
 
 /*	if(feof(h->fp))
@@ -207,9 +193,10 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 {
 	struct file_handle *h = (struct file_handle *) user_data;
 	struct decoder_info info;
+	unsigned char *frame = NULL;
 	int total_samples = 0;
+	ssize_t len = 0;
 	int samples;
-	int len = 0;
 
 	if(h == NULL)
 		return -1;
@@ -249,19 +236,26 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	/* Fill output buffer */
 	while(total_samples < size)
 	{
-		/* Get next frame */
-		len = demux_next_frame(h->demux);
+		/* Get frame */
+		len = demux_get_frame(h->demux, &frame);
+		if(len <= 0)
+			break;
 
 		/* Decode next frame */
-		samples = decoder_decode(h->dec, h->in_buffer,
+		samples = decoder_decode(h->dec, frame,
 					 len > 0 ? len : 0,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
+		{
+			/* Set used bytes in frame */
+			if(len > 0 && info.used > 0)
+				demux_set_used_frame(h->demux, info.used);
 			break;
+		}
 
 		/* Update used data in frame */
-		demux_set_used(h->demux, info.used);
+		demux_set_used_frame(h->demux, info.used);
 
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
@@ -311,10 +305,6 @@ void file_close(struct file_handle *h)
 	/* Close demuxer */
 	if(h->demux != NULL)
 		demux_close(h->demux);
-
-	/* Close stream */
-	if(h->stream != NULL)
-		stream_close(h->stream);
 
 	/* Free handle */
 	free(h);

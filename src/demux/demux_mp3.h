@@ -21,6 +21,6 @@
 
 #include "demux.h"
 
-struct demux_handle demux_mp3;
+extern struct demux_module demux_mp3;
 
 #endif

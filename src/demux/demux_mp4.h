@@ -21,6 +21,6 @@
 
 #include "demux.h"
 
-struct demux_handle demux_mp4;
+extern struct demux_module demux_mp4;
 
 #endif

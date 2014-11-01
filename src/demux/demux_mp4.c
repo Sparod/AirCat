@@ -29,7 +29,12 @@
 #include "demux.h"
 #include "id3.h"
 
-#define ATOM_CHECK(b, a) memcmp(&b[4], a, 4)
+/**
+ * Internal buffer size for proper read.
+ */
+#define BUFFER_SIZE 8192
+
+#define ATOM_CHECK(b, a) memcmp(&(b)[4], a, 4)
 #define ATOM_READ16(b) ((b)[0] << 8) | (b)[1]
 #define ATOM_READ32(b) ((b)[0] << 24) | ((b)[1] << 16) | ((b)[2] << 8) | \
 		       (b)[3]
@@ -44,9 +49,9 @@
 #define ATOM_LEN(b) (ATOM_READ32(b))
 
 struct demux {
-	/* Stream */
-	struct stream_handle *stream;
-	const unsigned char *buffer;
+	/* Internal buffer */
+	struct fs_file *file;
+	unsigned char *buffer;
 	unsigned long buffer_size;
 	unsigned long size;
 	/* Stream meta */
@@ -186,7 +191,7 @@ static void demux_mp4_parse_mdhd(struct demux *d)
 	size = ATOM_LEN(d->buffer);
 
 	/* Get Version */
-	stream_read(d->stream, 4);
+	fs_read(d->file, d->buffer, 4);
 	version = ATOM_READ32(d->buffer);
 
 	/* Go to first entry */
@@ -194,19 +199,21 @@ static void demux_mp4_parse_mdhd(struct demux *d)
 
 	if(version == 1)
 	{
-		stream_read(d->stream, 28);
+		fs_read(d->file, d->buffer, 28);
 		d->mdhd_time_scale = ATOM_READ32(&d->buffer[16]);
 		d->mdhd_duration = ATOM_READ64(&d->buffer[20]);
+		size -= 28;
 	}
 	else
 	{
-		stream_read(d->stream, 16);
+		fs_read(d->file, d->buffer, 16);
 		d->mdhd_time_scale = ATOM_READ32(&d->buffer[8]);
 		d->mdhd_duration = ATOM_READ32(&d->buffer[12]);
+		size -= 16;
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static uint32_t demux_mp4_read_len(struct demux *d, unsigned long *count)
@@ -216,7 +223,7 @@ static uint32_t demux_mp4_read_len(struct demux *d, unsigned long *count)
 
 	for(i = 0; b & 0x80 && i < 4; i++)
 	{
-		stream_read(d->stream, 1);
+		fs_read(d->file, d->buffer, 1);
 		(*count) -= 1;
 		b = d->buffer[0];
 		len = (len << 7) | (b & 0x7F);
@@ -234,11 +241,11 @@ static int demux_mp4_parse_esds(struct demux *d)
 	atom_size = ATOM_LEN(d->buffer);
 
 	/* Skip version and flags */
-	stream_seek(d->stream, 12, SEEK_CUR);
+	fs_lseek(d->file, 4, SEEK_CUR);
 	atom_size -= 12;
 
 	/* Check ES_DescrTag */
-	stream_read(d->stream, 1);
+	fs_read(d->file, d->buffer, 1);
 	tag = d->buffer[0];
 	atom_size--;
 	if(tag == 0x03)
@@ -248,18 +255,18 @@ static int demux_mp4_parse_esds(struct demux *d)
 			goto end;
 
 		/* Skip 3 bytes */
-		stream_read(d->stream, 3);
+		fs_read(d->file, d->buffer, 3);
 		atom_size -= 3;
 	}
 	else
 	{
 		/* Skip 2 bytes */
-		stream_read(d->stream, 2);
+		fs_read(d->file, d->buffer, 2);
 		atom_size -= 2;
 	}
 
 	/* Check DecoderConfigDescrTab */
-	stream_read(d->stream, 1);
+	fs_read(d->file, d->buffer, 1);
 	atom_size--;
 	if(d->buffer[0] != 0x04)
 		goto end;
@@ -269,7 +276,7 @@ static int demux_mp4_parse_esds(struct demux *d)
 		goto end;
 
 	/* Get esds properties */
-	stream_read(d->stream, 14);
+	fs_read(d->file, d->buffer, 14);
 	atom_size -= 14;
 	d->esds_audio_type = d->buffer[0];
 	d->esds_max_bitrate = ATOM_READ32(&d->buffer[5]);
@@ -289,8 +296,9 @@ static int demux_mp4_parse_esds(struct demux *d)
 	if(d->esds_buffer != NULL)
 	{
 		/* Read coder config */
-		stream_read(d->stream, d->esds_size);
+		fs_read(d->file, d->buffer, d->esds_size);
 		memcpy(d->esds_buffer, d->buffer, d->esds_size);
+		atom_size -= d->esds_size;
 	}
 	else
 	{
@@ -299,7 +307,7 @@ static int demux_mp4_parse_esds(struct demux *d)
 
 end:
 	/* Go to next atom */
-	stream_seek(d->stream, atom_size, SEEK_CUR);
+	fs_lseek(d->file, atom_size, SEEK_CUR);
 	return 0;
 }
 
@@ -310,7 +318,8 @@ static void demux_mp4_parse_mp4a(struct demux *d)
 
 	/* Get size */
 	atom_size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 28);
+	fs_read(d->file, d->buffer, 28);
+	atom_size -= 36;
 
 	/* Get track properties */
 	d->mp4a_channel_count = ATOM_READ16(&d->buffer[16]);
@@ -320,22 +329,20 @@ static void demux_mp4_parse_mp4a(struct demux *d)
 	/* Set track found flag */
 	d->track_found = 1;
 
-	/* Skip reserved bytes */
-	atom_size -= 36;
-
 	/* Get size of sub-atom */
-	stream_read(d->stream, 8);
+	fs_read(d->file, d->buffer, 8);
 	size = ATOM_LEN(d->buffer);
+	atom_size -= 8;
 
 	/* Parse "esds" atom */
 	if(ATOM_CHECK(d->buffer, "esds") == 0)
 	{
 		demux_mp4_parse_esds(d);
-		atom_size -= size;
+		atom_size -= size-8;
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, atom_size, SEEK_CUR);
+	fs_lseek(d->file, atom_size, SEEK_CUR);
 }
 
 static int demux_mp4_parse_stsd(struct demux *d)
@@ -348,7 +355,7 @@ static int demux_mp4_parse_stsd(struct demux *d)
 
 	/* Get size */
 	atom_size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
+	fs_read(d->file, d->buffer, 8);
 
 	/* Count entries */
 	count = ATOM_READ32(&d->buffer[4]);
@@ -360,7 +367,7 @@ static int demux_mp4_parse_stsd(struct demux *d)
 	for(i = 0; i < count; i++)
 	{
 		/* Get size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -372,13 +379,13 @@ static int demux_mp4_parse_stsd(struct demux *d)
 		}
 		else
 		{
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		atom_size -= size;
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, atom_size, SEEK_CUR);
+	fs_lseek(d->file, atom_size, SEEK_CUR);
 
 	return is_mp4a;
 }
@@ -390,7 +397,7 @@ static void demux_mp4_parse_stts(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
+	fs_read(d->file, d->buffer, 8);
 
 	/* Get count */
 	d->stts_entry_count = ATOM_READ32(&d->buffer[4]);
@@ -410,7 +417,7 @@ static void demux_mp4_parse_stts(struct demux *d)
 		if(count > d->stts_entry_count - i)
 			count = d->stts_entry_count - i;
 
-		stream_read(d->stream, count*8);
+		fs_read(d->file, d->buffer, count*8);
 		for(j = 0; j < count; j++)
 		{
 			d->stts_sample_count[i+j] = ATOM_READ32(
@@ -423,7 +430,7 @@ static void demux_mp4_parse_stts(struct demux *d)
 	size -= 8 * d->stts_entry_count;
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_stsc(struct demux *d)
@@ -433,7 +440,7 @@ static void demux_mp4_parse_stsc(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
+	fs_read(d->file, d->buffer, 8);
 
 	/* Get chunk count */
 	d->stsc_entry_count = ATOM_READ32(&d->buffer[4]);
@@ -455,7 +462,7 @@ static void demux_mp4_parse_stsc(struct demux *d)
 		if(count > d->stsc_entry_count - i)
 			count = d->stsc_entry_count - i;
 
-		stream_read(d->stream, count*12);
+		fs_read(d->file, d->buffer, count*12);
 		for(j = 0; j < count; j++)
 		{
 			d->stsc_first_chunk[i+j] = ATOM_READ32(
@@ -469,7 +476,7 @@ static void demux_mp4_parse_stsc(struct demux *d)
 	size -= 12 * d->stsc_entry_count;
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_stsz(struct demux *d)
@@ -479,7 +486,7 @@ static void demux_mp4_parse_stsz(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 12);
+	fs_read(d->file, d->buffer, 12);
 
 	/* Get sample size and sample count */
 	d->stsz_sample_size = ATOM_READ32(&d->buffer[4]);
@@ -500,7 +507,7 @@ static void demux_mp4_parse_stsz(struct demux *d)
 			if(count > d->stsz_sample_count - i)
 				count = d->stsz_sample_count - i;
 
-			stream_read(d->stream, count*4);
+			fs_read(d->file, d->buffer, count*4);
 			for(j = 0; j < count; j++)
 			{
 				d->stsz_table[i+j] = ATOM_READ32(
@@ -511,7 +518,7 @@ static void demux_mp4_parse_stsz(struct demux *d)
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_stco(struct demux *d)
@@ -521,7 +528,7 @@ static void demux_mp4_parse_stco(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
+	fs_read(d->file, d->buffer, 8);
 
 	/* Get chunk offset count */
 	d->stco_entry_count = ATOM_READ32(&d->buffer[4]);
@@ -539,7 +546,7 @@ static void demux_mp4_parse_stco(struct demux *d)
 		if(count > d->stco_entry_count - i)
 			count = d->stco_entry_count - i;
 
-		stream_read(d->stream, count*4);
+		fs_read(d->file, d->buffer, count*4);
 		for(j = 0; j < count; j++)
 		{
 			d->stco_chunk_offset[i+j] = ATOM_READ32(
@@ -549,7 +556,7 @@ static void demux_mp4_parse_stco(struct demux *d)
 	size -= 4 * d->stco_entry_count;
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_track(struct demux *d)
@@ -566,7 +573,7 @@ static void demux_mp4_parse_track(struct demux *d)
 	while(count < atom_size)
 	{
 		/* Size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -610,13 +617,13 @@ static void demux_mp4_parse_track(struct demux *d)
 		else
 		{
 			/* Ignore other sub-atoms */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		count += size;
 	}
 
 	/* Finish atom reading */
-	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+	fs_lseek(d->file, atom_size-count, SEEK_CUR);
 }
 
 static void demux_mp4_parse_txt(struct demux *d, char **str)
@@ -628,8 +635,8 @@ static void demux_mp4_parse_txt(struct demux *d, char **str)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
-	size -= 8;
+	fs_read(d->file, d->buffer, 8);
+	size -= 16;
 
 	/* Check sub-atom */
 	if(ATOM_CHECK(d->buffer, "data") == 0)
@@ -638,8 +645,8 @@ static void demux_mp4_parse_txt(struct demux *d, char **str)
 		len = ATOM_LEN(d->buffer) - 16;
 
 		/* Skip version and flags */
-		stream_read(d->stream, 8);
-		size -= 16;
+		fs_read(d->file, d->buffer, 8);
+		size -= 8;
 
 		/* Free previous string */
 		if(*str != NULL)
@@ -655,7 +662,7 @@ static void demux_mp4_parse_txt(struct demux *d, char **str)
 				count = d->buffer_size;
 				if(count > len)
 					count = len;
-				count = stream_read(d->stream, count);
+				count = fs_read(d->file, d->buffer, count);
 				memcpy(*str + pos, d->buffer, count);
 				pos += count;
 				len -= count;
@@ -665,7 +672,7 @@ static void demux_mp4_parse_txt(struct demux *d, char **str)
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_trkn(struct demux *d)
@@ -674,27 +681,25 @@ static void demux_mp4_parse_trkn(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
-	size -= 8;
+	fs_read(d->file, d->buffer, 8);
+	size -= 16;
 
 	/* Check sub-atom */
 	if(ATOM_CHECK(d->buffer, "data") == 0 && ATOM_LEN(d->buffer) == 24)
 	{
 		/* Skip version and flags */
-		stream_read(d->stream, 10);
-		size -= 20;
+		fs_read(d->file, d->buffer, 14);
+		size -= 14;
 
 		/* Read track */
-		stream_read(d->stream, 2);
-		d->track = ATOM_READ16(d->buffer);
+		d->track = ATOM_READ16(&d->buffer[10]);
 
 		/* Read total tack */
-		stream_read(d->stream, 2);
-		d->total_track = ATOM_READ16(d->buffer);
+		d->total_track = ATOM_READ16(&d->buffer[12]);
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_gnre(struct demux *d)
@@ -704,19 +709,16 @@ static void demux_mp4_parse_gnre(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
-	size -= 8;
+	fs_read(d->file, d->buffer, 8);
+	size -= 16;
 
 	/* Check sub-atom */
 	if(ATOM_CHECK(d->buffer, "data") == 0 && ATOM_LEN(d->buffer) == 18)
 	{
-		/* Skip version and flags */
-		stream_read(d->stream, 8);
-		size -= 16;
-
 		/* Read genre index */
-		stream_read(d->stream, 2);
-		genre = ATOM_READ16(d->buffer);
+		fs_read(d->file, d->buffer, 10);
+		genre = ATOM_READ16(&d->buffer[8]);
+		size -= 10;
 
 		/* Check genre */
 		if(genre > 0 || genre <= ID3v1_genres_count)
@@ -731,7 +733,7 @@ static void demux_mp4_parse_gnre(struct demux *d)
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_covr(struct demux *d)
@@ -744,8 +746,8 @@ static void demux_mp4_parse_covr(struct demux *d)
 
 	/* Get size */
 	size = ATOM_LEN(d->buffer);
-	stream_read(d->stream, 8);
-	size -= 8;
+	fs_read(d->file, d->buffer, 8);
+	size -= 16;
 
 	/* Check sub-atom */
 	if(ATOM_CHECK(d->buffer, "data") == 0)
@@ -754,7 +756,7 @@ static void demux_mp4_parse_covr(struct demux *d)
 		len =  ATOM_LEN(d->buffer) - 16;
 
 		/* Get flags for type */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		flags = ATOM_READ32(d->buffer);
 		size -= 8;
 
@@ -779,7 +781,7 @@ static void demux_mp4_parse_covr(struct demux *d)
 				count = d->buffer_size;
 				if(count > len)
 					count = len;
-				count = stream_read(d->stream, count);
+				count = fs_read(d->file, d->buffer, count);
 				memcpy(d->pic + pos, d->buffer, count);
 				pos += count;
 				len -= count;
@@ -795,7 +797,7 @@ static void demux_mp4_parse_covr(struct demux *d)
 	}
 
 	/* Go to next atom */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(d->file, size, SEEK_CUR);
 }
 
 static void demux_mp4_parse_ilst(struct demux *d)
@@ -811,7 +813,7 @@ static void demux_mp4_parse_ilst(struct demux *d)
 	while(count < atom_size)
 	{
 		/* Size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -836,13 +838,13 @@ static void demux_mp4_parse_ilst(struct demux *d)
 		else
 		{
 			/* Ignore other sub-atoms */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		count += size;
 	}
 
 	/* Finish atom reading */
-	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+	fs_lseek(d->file, atom_size-count, SEEK_CUR);
 }
 
 static void demux_mp4_parse_meta(struct demux *d)
@@ -855,13 +857,13 @@ static void demux_mp4_parse_meta(struct demux *d)
 	atom_size = ATOM_LEN(d->buffer);
 
 	/* Skip version and flags */
-	stream_read(d->stream, 4);
+	fs_read(d->file, d->buffer, 4);
 
 	/* Get all children atoms */
 	while(count < atom_size)
 	{
 		/* Size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -873,13 +875,13 @@ static void demux_mp4_parse_meta(struct demux *d)
 		else
 		{
 			/* Ignore other sub-atoms */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		count += size;
 	}
 
 	/* Finish atom reading */
-	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+	fs_lseek(d->file, atom_size-count, SEEK_CUR);
 }
 
 static void demux_mp4_parse_udta(struct demux *d)
@@ -895,7 +897,7 @@ static void demux_mp4_parse_udta(struct demux *d)
 	while(count < atom_size)
 	{
 		/* Size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -907,13 +909,13 @@ static void demux_mp4_parse_udta(struct demux *d)
 		else
 		{
 			/* Ignore other sub-atoms */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		count += size;
 	}
 
 	/* Finish atom reading */
-	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+	fs_lseek(d->file, atom_size-count, SEEK_CUR);
 }
 
 static void demux_mp4_parse_moov(struct demux *d)
@@ -925,12 +927,11 @@ static void demux_mp4_parse_moov(struct demux *d)
 	/* Get atom size */
 	atom_size = ATOM_LEN(d->buffer);
 
-
 	/* Get all children atoms */
 	while(count < atom_size)
 	{
 		/* Size of sub-atom */
-		stream_read(d->stream, 8);
+		fs_read(d->file, d->buffer, 8);
 		size = ATOM_LEN(d->buffer);
 
 		/* Process sub-atom */
@@ -947,33 +948,30 @@ static void demux_mp4_parse_moov(struct demux *d)
 		else
 		{
 			/* Ignore other sub-atoms */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(d->file, size-8, SEEK_CUR);
 		}
 		count += size;
 	}
 
 	/* Finish atom reading */
-	stream_seek(d->stream, atom_size-count, SEEK_CUR);
+	fs_lseek(d->file, atom_size-count, SEEK_CUR);
 }
 
-int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
+int demux_mp4_open(struct demux **demux, struct fs_file *file, size_t file_size,
 		   unsigned long *samplerate, unsigned char *channels)
 {
 	struct demux *d;
-	const unsigned char *buffer;
+	unsigned char buffer[BUFFER_SIZE];
 	unsigned long mdat_pos = 0;
 	unsigned long moov_pos = 0;
 	unsigned long count = 0;
 	unsigned long size;
 
-	if(stream == NULL)
+	if(file == NULL)
 		return -1;
 
-	/* Get stream buffer */
-	buffer = stream_get_buffer(stream);
-
 	/* Read 8 first bytes for first atom header */
-	if(stream_read(stream, 8) != 8)
+	if(fs_read(file, buffer, 8) != 8)
 		return -1;
 
 	/* Check "ftyp" atom */
@@ -990,23 +988,23 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 
 	/* Init demux structure */
 	memset(d, 0, sizeof(struct demux));
-	d->stream = stream;
+	d->file = file;
 	d->buffer = buffer;
-	d->buffer_size = stream_get_buffer_size(stream);
-	d->size = stream_get_size(stream);
+	d->buffer_size = BUFFER_SIZE;
+	d->size = file_size;
 
 	/* Seek to next atom and get next atom header */
-	stream_seek(d->stream, size, SEEK_CUR);
+	fs_lseek(file, size-8, SEEK_CUR);
 
 	/* Read all atom until "mdat" */
-	while(count < d->size)
+	while(count < file_size)
 	{
 		/* Get size of sub-atom */
-		stream_read(d->stream, 8);
-		size = ATOM_LEN(d->buffer);
+		fs_read(d->file, buffer, 8);
+		size = ATOM_LEN(buffer);
 
 		/* Process sub-atom */
-		if(ATOM_CHECK(d->buffer, "moov") == 0)
+		if(ATOM_CHECK(buffer, "moov") == 0)
 		{
 			/* Process "moov" */
 			demux_mp4_parse_moov(d);
@@ -1014,7 +1012,7 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 		}
 		else
 		{
-			if(ATOM_CHECK(d->buffer, "mdat") == 0)
+			if(ATOM_CHECK(buffer, "mdat") == 0)
 			{
 				mdat_pos = count;
 				if(moov_pos > 0)
@@ -1022,7 +1020,7 @@ int demux_mp4_open(struct demux **demux, struct stream_handle *stream,
 			}
 
 			/* Go to next atom */
-			stream_seek(d->stream, size, SEEK_CUR);
+			fs_lseek(file, size-8, SEEK_CUR);
 		}
 		/* Update read bytes count */
 		count += size;
@@ -1085,25 +1083,34 @@ int demux_mp4_get_dec_config(struct demux *d, int *codec,
 	return 0;
 }
 
-ssize_t demux_mp4_next_frame(struct demux *d)
+ssize_t demux_mp4_next_frame(struct demux *d, struct demux_frame *frame,
+			     size_t size)
 {
-	int size;
+	ssize_t len;
 
 	/* End of file */
 	if(d->cur_sample >= d->num_samples)
 		return -1;
 
+	/* Check available size */
+	if(d->cur_sample_size > size)
+		return 0;
+
 	/* Seek to next frame */
-	if(stream_seek(d->stream, d->cur_offset, SEEK_SET) < 0)
+	if(fs_lseek(d->file, d->cur_offset, SEEK_SET) < 0)
 		return -1;
 
 	/* Read frame */
-	size = stream_read(d->stream, d->cur_sample_size);
+	len = fs_read(d->file, frame->data, d->cur_sample_size);
+	if(len < 0)
+		return -1;
+	frame->len = d->cur_sample_size;
+	frame->pos = d->cur_offset;
 
 	/* Update current sample */
 	d->cur_sample++;
 	if(d->cur_sample >= d->num_samples)
-		return size;
+		return frame->len;
 
 	/* Update current sample counter in current chunk */
 	d->cur_chunk_sample++;
@@ -1130,13 +1137,48 @@ ssize_t demux_mp4_next_frame(struct demux *d)
 	else
 		d->cur_sample_size = d->stsz_table[d->cur_sample];
 
-	return size;
+	return frame->len;
 }
 
-void demux_mp4_set_used(struct demux *d, size_t len)
+unsigned long demux_mp4_calc_pos(struct demux *d, unsigned long pos,
+				 off_t *f_pos)
 {
-	if(len <= stream_get_len(d->stream))
-		stream_seek(d->stream, len, SEEK_CUR);
+	unsigned long to_skip = 0;
+	unsigned long chunk, chunk_idx, chunk_sample;
+	unsigned long offset, i;
+	long sample;
+
+	/* Find sample friom time table */
+	sample = demux_mp4_find_sample(d, pos*d->mdhd_time_scale, &to_skip);
+	if(sample < 0)
+		return -1;
+
+	/* Get chunk containing the sample */
+	if(demux_mp4_find_chunk(d, sample, &chunk, &chunk_idx, &chunk_sample)
+	   != 0)
+		return -1;
+
+	/* Get chunk offset */
+	if(chunk >= d->stco_entry_count)
+		return -1;
+	offset = d->stco_chunk_offset[chunk];
+
+	/* Get sample offset in chunk */
+	if(d->stsz_sample_size == 0)
+	{
+		for(i = sample - chunk_sample; i < sample; i++)
+		{
+			offset += d->stsz_table[i];
+		}
+	}
+	else
+		offset += chunk_sample * d->stsz_sample_size;
+
+	/* Set stream position */
+	if(f_pos != NULL)
+		*f_pos = offset;
+
+	return pos - (to_skip / d->mdhd_time_scale);
 }
 
 unsigned long demux_mp4_set_pos(struct demux *d, unsigned long pos)
@@ -1215,13 +1257,12 @@ void demux_mp4_close(struct demux *d)
 	free(d);
 }
 
-struct demux_handle demux_mp4 = {
-	.demux = NULL,
+struct demux_module demux_mp4 = {
 	.open = &demux_mp4_open,
 	.get_meta = &demux_mp4_get_meta,
 	.get_dec_config = &demux_mp4_get_dec_config,
 	.next_frame = &demux_mp4_next_frame,
-	.set_used = &demux_mp4_set_used,
+	.calc_pos = &demux_mp4_calc_pos,
 	.set_pos = &demux_mp4_set_pos,
 	.close = &demux_mp4_close,
 };

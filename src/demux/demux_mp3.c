@@ -28,6 +28,11 @@
 #include "demux.h"
 #include "id3.h"
 
+/**
+ * Internal buffer size for proper read.
+ */
+#define BUFFER_SIZE 8192
+
 unsigned int bitrates[2][3][15] = {
 	{ /* MPEG-1 */
 		{0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384,
@@ -68,12 +73,10 @@ struct mp3_frame {
 };
 
 struct demux {
-	/* Stream */
-	struct stream_handle *stream;
-	const unsigned char *buffer;
 	/* Stream length */
-	unsigned long duration;
+	struct fs_file *file;
 	unsigned long length;
+	unsigned long duration;
 	/* Stream meta */
 	struct meta meta;
 	/* Xing/VBRI specific */
@@ -91,6 +94,13 @@ struct demux {
 	unsigned int toc_frames;
 	/* First frame offset */
 	unsigned long offset;
+	/* Waiting frame */
+	unsigned char waiting_header[4];
+	struct mp3_frame waiting_frame;
+	off_t waiting_header_pos;
+	char waiting_header_read;
+	size_t waiting_read;
+	int waiting;
 	/* Meta data */
 	char *title;
 	char *artist;
@@ -314,43 +324,18 @@ static int demux_mp3_parse_vbri(struct mp3_frame *f,
 
 #define ID3V2_SIZE(b) (((b)[0] << 21) | ((b)[1] << 14) | ((b)[2] << 7) | (b)[3])
 
-static long demux_mp3_parse_id3(struct demux *d)
-{
-	long id3_size = 0;
-
-	/* Read 10 first bytes for ID3 header */
-	if(stream_read(d->stream, 10) != 10)
-		return -1;
-
-	/* Check ID3V2 tag */
-	if(memcmp(d->buffer, "ID3", 3) == 0)
-	{
-		/* Get ID3 size */
-		id3_size = ID3V2_SIZE(&d->buffer[6]);
-		id3_size += 10;
-
-		/* Add footer size */
-		if(d->buffer[5] & 0x20)
-			id3_size += 10;
-
-		/* Skip ID3 in file */
-		stream_seek(d->stream, id3_size, SEEK_CUR);
-	}
-
-	return id3_size;
-}
-
-int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
+int demux_mp3_open(struct demux **demux, struct fs_file *file, size_t file_size,
 		   unsigned long *samplerate, unsigned char *channels)
 {
 	struct demux *d;
-	unsigned long id3_size = 0;
 	struct mp3_frame frame;
+	unsigned char buffer[BUFFER_SIZE];
+	unsigned long id3_size = 0;
 	long first = -1;
-	size_t len;
+	ssize_t len;
 	int i;
 
-	if(stream == NULL)
+	if(file == NULL)
 		return -1;
 
 	/* Allocate structure */
@@ -361,30 +346,55 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 
 	/* Init structure */
 	memset(d, 0, sizeof(struct demux));
-	d->stream = stream;
-	d->buffer = stream_get_buffer(stream);
-	d->length = stream_get_size(stream);
+	d->length = file_size;
+	d->file = file;
 
-	/* Parse ID3v2 tags */
-	id3_size = demux_mp3_parse_id3(d);
+	/* Read 10 first bytes for ID3 header */
+	if(fs_read(d->file, buffer, 10) != 10)
+		return -1;
 
-	/* Complete input buffer */
-	len = stream_complete(stream, 0);
+	/* Check ID3V2 tag */
+	if(memcmp(buffer, "ID3", 3) == 0)
+	{
+		/* Get ID3 size */
+		id3_size = ID3V2_SIZE(&buffer[6]);
+		id3_size += 10;
+
+		/* Add footer size */
+		if(buffer[5] & 0x20)
+			id3_size += 10;
+
+		/* Skip ID3 in file */
+		fs_lseek(file, id3_size, SEEK_SET);
+
+		/* Complete input buffer */
+		len = fs_read(file, buffer, BUFFER_SIZE);
+		if(len < 0)
+			return -1;
+	}
+	else
+	{
+		/* Complete input buffer */
+		len = fs_read(file, &buffer[10], BUFFER_SIZE - 10);
+		if(len < 0)
+			return -1;
+		len += 10;
+	}
 
 	/* Sync to first frame */
 	for(i = 0; i < len - 3; i++)
 	{
-		if(d->buffer[i] == 0xFF && (d->buffer[i+1] & 0xE0) == 0xE0)
+		if(buffer[i] == 0xFF && (buffer[i+1] & 0xE0) == 0xE0)
 		{
 			/* Check header */
-			if(demux_mp3_parse_header(&d->buffer[i], 4, &frame)
+			if(demux_mp3_parse_header(&buffer[i], 4, &frame)
 			   != 0)
 				continue;
 
 			/* Check next frame */
 			if(i + frame.length + 2 > len ||
-			   d->buffer[i+frame.length] != 0xFF ||
-			   (d->buffer[i+frame.length+1] & 0xE0) != 0xE0)
+			   buffer[i+frame.length] != 0xFF ||
+			   (buffer[i+frame.length+1] & 0xE0) != 0xE0)
 				continue;
 
 			first = i + id3_size;
@@ -395,24 +405,25 @@ int demux_mp3_open(struct demux **demux, struct stream_handle *stream,
 		return -1;
 
 	/* Move to first frame */
-	stream_seek(stream, first, SEEK_SET);
-	len = stream_complete(stream, 0);
+	fs_lseek(file, first, SEEK_SET);
+	len = fs_read(file, buffer, BUFFER_SIZE);
+	if(len < 0)
+		return -1;
 
 	/* Parse Xing/Lame/VBRI header */
-	if(demux_mp3_parse_xing(&frame, d->buffer, len, d) == 0 ||
-	   demux_mp3_parse_vbri(&frame, d->buffer, len, d) == 0)
+	if(demux_mp3_parse_xing(&frame, buffer, len, d) == 0 ||
+	   demux_mp3_parse_vbri(&frame, buffer, len, d) == 0)
 	{
 		/* Move to next frame */
 		first += frame.length;
-		stream_seek(stream, first, SEEK_SET);
-
-		/* Complete and get first valid header */
-		stream_complete(stream, 0);
-		demux_mp3_parse_header(d->buffer, 4, &frame);
+		if(frame.length + 4 < len)
+			fs_read(file, buffer+len, frame.length-len+4);
+		demux_mp3_parse_header(buffer+frame.length, 4, &frame);
 	}
 
 	/* Update position of stream */
 	d->offset = first;
+	fs_lseek(file, d->offset, SEEK_SET);
 
 	/* Calculate stream duration */
 	if(d->nb_frame > 0)
@@ -467,24 +478,105 @@ int demux_mp3_get_dec_config(struct demux *d, int *codec,
 	return 0;
 }
 
-ssize_t demux_mp3_next_frame(struct demux *d)
+ssize_t demux_mp3_next_frame(struct demux *d, struct demux_frame *frame,
+			     size_t size)
 {
-	return stream_complete(d->stream, 0);
+	ssize_t len;
+
+	/* Check if header as already read */
+	if(!d->waiting)
+	{
+		/* Read frame header */
+		len = fs_read(d->file, d->waiting_header, 4);
+		if(len <= 0)
+			return len;
+
+		/* Header has been read */
+		d->waiting = 1;
+		d->waiting_read = 0;
+		d->waiting_header_read = len;
+		d->waiting_header_pos = fs_lseek(d->file, 0, SEEK_CUR) - len;
+	}
+
+	/* Synchronize on next frame */
+	do
+	{
+		if(d->waiting_header_read != 4)
+		{
+			/* Read missing data */
+			len = fs_read(d->file,
+				      d->waiting_header+d->waiting_header_read,
+				      4 - d->waiting_header_read);
+			if(len <= 0)
+				return len;
+			d->waiting_header_read += len;
+			d->waiting_header_pos += len;
+
+			/* Check header size */
+			if(d->waiting_header_read != 4)
+				return 0;
+		}
+
+		/* Check header frame */
+		if(demux_mp3_parse_header(d->waiting_header, 4,
+					  &d->waiting_frame) != 0)
+		{
+			/* Find next sync word in 4 bytes */
+			for(len = 1; len < 3; len++)
+			{
+				if(d->waiting_header[len] == 0xFF &&
+				   (d->waiting_header[len+1] & 0xE0) == 0xE0)
+					break;
+			}
+
+			/* No sync word in 4 bytes */
+			if(d->waiting_header[len] != 0xFF)
+			{
+				d->waiting_header_read = 0;
+				continue;
+			}
+
+			/* Go to next sync word */
+			d->waiting_header_read = 4 - len;
+			memmove(d->waiting_header, d->waiting_header + len,
+				d->waiting_header_read);
+			continue;
+		}
+	} while(d->waiting_header_read != 4);
+
+	/* Check available size in buffer */
+	if(size < d->waiting_frame.length)
+		return 0;
+
+	/* Get frame content */
+	while(d->waiting_read < d->waiting_frame.length-4)
+	{
+		len = fs_read(d->file, frame->data + 4 + d->waiting_read,
+			      d->waiting_frame.length-4-d->waiting_read);
+		if(len <= 0)
+			return len;
+		d->waiting_read += len;
+	}
+
+	/* Copy header */
+	memcpy(frame->data, d->waiting_header, 4);
+	frame->len = d->waiting_frame.length;
+	frame->pos = d->waiting_header_pos;
+	d->waiting = 0;
+
+	return frame->len;
 }
 
-void demux_mp3_set_used(struct demux *d, size_t len)
+unsigned long demux_mp3_calc_pos(struct demux *d, unsigned long pos,
+				 off_t *f_pos)
 {
-	if(len <= stream_get_len(d->stream))
-		stream_seek(d->stream, len, SEEK_CUR);
-}
-
-unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
-{
-	unsigned long f_pos;
 	unsigned long f_size;
 	float p, fa, fb, fx;
 	float a, b;
 	int i, j;
+
+	if(f_pos == NULL)
+		return pos;
 
 	/* Calculate new position */
 	if(d->vbri_toc != NULL)
@@ -509,7 +601,7 @@ unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
 			fb = d->nb_bytes;
 		}
 
-		f_pos = fa + ((fb - fa) / (b - a)) * ((float)(pos) - a);
+		*f_pos = fa + ((fb - fa) / (b - a)) * ((float)(pos) - a);
 	}
 	else if(d->toc != NULL)
 	{
@@ -526,21 +618,34 @@ unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
 		/* Get position */
 		f_size = d->nb_bytes > 0 ? d->nb_bytes :
 					   d->length - d->offset;
-		f_pos = (1.0 / 256.0) * fx * f_size;
+		*f_pos = (1.0 / 256.0) * fx * f_size;
 	}
 	else
 	{
 		/* Compute aprox position */
-		f_pos = (d->length - d->offset) * pos / d->duration;
-		if(f_pos > d->length)
+		*f_pos = (d->length - d->offset) * pos / d->duration;
+		if(*f_pos > d->length)
+		{
+			*f_pos = 0;
 			return -1;
+		}
 	}
 
 	/* Add id3_tag offset */
-	f_pos += d->offset;
+	*f_pos += d->offset;
+
+	return pos;
+}
+
+unsigned long demux_mp3_set_pos(struct demux *d, unsigned long pos)
+{
+	off_t f_pos;
+
+	/* Calculate position in stream */
+	pos = demux_mp3_calc_pos(d, pos, &f_pos);
 
 	/* Seek in file */
-	if(stream_seek(d->stream, f_pos, SEEK_SET) != 0)
+	if(fs_lseek(d->file, f_pos, SEEK_SET) != f_pos)
 		return -1;
 
 	return pos;
@@ -572,13 +677,12 @@ void demux_mp3_close(struct demux *d)
 	free(d);
 }
 
-struct demux_handle demux_mp3 = {
-	.demux = NULL,
+struct demux_module demux_mp3 = {
 	.open = &demux_mp3_open,
 	.get_meta = &demux_mp3_get_meta,
 	.get_dec_config = &demux_mp3_get_dec_config,
 	.next_frame = &demux_mp3_next_frame,
-	.set_used = &demux_mp3_set_used,
+	.calc_pos = &demux_mp3_calc_pos,
 	.set_pos = &demux_mp3_set_pos,
 	.close = &demux_mp3_close,
 };

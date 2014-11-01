@@ -9,8 +9,7 @@ aircat_SOURCES = main.c \
 		 fs/fs.c \
 		 fs/fs_posix.c \
 		 fs/fs_http.c \
-		 fs/fs_smb.c\
-		 stream.c \
+		 fs/fs_smb.c \
 		 demux/demux.c \
 		 demux/demux_mp3.c \
 		 demux/demux_mp4.c \
