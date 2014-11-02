@@ -131,11 +131,12 @@ static ssize_t demux_fill_buffer(struct demux_handle *h)
 
 	/* Get writting buffer from ring buffer */
 	size = vring_write(h->ring, (unsigned char**) &frame);
-	if(size <= 0)
+	if(size <= sizeof(struct demux_frame))
 		return 0;
 
 	/* Try to get next frame from stream */
-	len = h->module.next_frame(h->demux, frame, size);
+	len = h->module.next_frame(h->demux, frame,
+				   size - sizeof(struct demux_frame));
 	if(len <= 0)
 		return len;
 
