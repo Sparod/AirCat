@@ -186,9 +186,8 @@ ssize_t vring_write_forward(struct vring_handle *h, size_t len)
 	if(h->write_pos + len > h->buffer_size)
 	{
 		/* Copy data to ring buffer start */
-		rem = h->buffer_size - h->write_pos - len;
-		size = len - rem;
-		memcpy(h->buffer, h->buffer + rem, size);
+		size = len - (h->buffer_size - h->write_pos);
+		memcpy(h->buffer, h->buffer + h->buffer_size, size);
 	}
 	else if(h->write_pos < h->max_rw_size)
 	{
@@ -197,7 +196,7 @@ ssize_t vring_write_forward(struct vring_handle *h, size_t len)
 		size = h->max_rw_size - h->write_pos;
 		if(len < size)
 			size = len;
-		memcpy(h->buffer + rem , h->buffer, size);
+		memcpy(h->buffer + rem, h->buffer + h->write_pos, size);
 	}
 
 	/* Lock access to ring buffer */
