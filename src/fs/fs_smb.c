@@ -113,6 +113,10 @@ static ssize_t fs_smb_read(struct fs_file *f, void *buf, size_t count)
 	/* Unlock libsmbclient access */
 	pthread_mutex_unlock(&mutex);
 
+	/* End of file */
+	if(len == 0)
+		return -1;
+
 	return len;
 }
 
@@ -132,9 +136,13 @@ static ssize_t fs_smb_read_to(struct fs_file *f, void *buf, size_t count,
 	do {
 		/* Attempt to read */
 		len = smbc_read(f->fd, buf, count);
-		if(len < 0)
+		if(len <= 0)
 		{
-			if(errno == EAGAIN)
+			/* End of file */
+			if(len == 0)
+				len = -1;
+			/* Timeout */
+			else if(errno == EAGAIN)
 				len = 0;
 			break;
 		}
@@ -165,6 +173,10 @@ static ssize_t fs_smb_write(struct fs_file *f, const void *buf, size_t count)
 	/* Unlock libsmbclient access */
 	pthread_mutex_unlock(&mutex);
 
+	/* End of file */
+	if(len == 0)
+		return -1;
+
 	return len;
 }
 
@@ -184,9 +196,13 @@ static ssize_t fs_smb_write_to(struct fs_file *f, const void *buf,
 	do {
 		/* Attempt to write */
 		len = smbc_write(f->fd, buf, count);
-		if(len < 0)
+		if(len <= 0)
 		{
-			if(errno == EAGAIN)
+			/* End of file */
+			if(len == 0)
+				len = -1;
+			/* Timeout */
+			else if(errno == EAGAIN)
 				len = 0;
 			break;
 		}

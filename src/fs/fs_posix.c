@@ -93,7 +93,7 @@ static ssize_t fs_posix_read_to(struct fs_file *f, void *buf, size_t count,
 
 static ssize_t fs_posix_read(struct fs_file *f, void *buf, size_t count)
 {
-	return read(f->fd, buf, count);
+	return fs_posix_read_to(f, buf, count, -1);
 }
 
 static ssize_t fs_posix_write_to(struct fs_file *f, const void *buf,
@@ -133,7 +133,7 @@ static ssize_t fs_posix_write_to(struct fs_file *f, const void *buf,
 
 static ssize_t fs_posix_write(struct fs_file *f, const void *buf, size_t count)
 {
-	return write(f->fd, buf, count);
+	return fs_posix_write_to(f, buf, count, -1);
 }
 
 static off_t fs_posix_lseek(struct fs_file *f, off_t offset, int whence)
