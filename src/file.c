@@ -61,6 +61,7 @@ int file_open(struct file_handle **handle, const char *uri)
 	unsigned char dec_channels;
 	unsigned long samplerate;
 	unsigned char channels;
+	int use_thread = 0;
 	int codec = -1;
 
 	/* Alloc structure */
@@ -79,8 +80,13 @@ int file_open(struct file_handle **handle, const char *uri)
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
 
+	/* Check URI: use a thread cache if not a local file system */
+	if(strstr(uri, "://") != NULL)
+		use_thread = 1;
+
 	/* Open demuxer */
-	if(demux_open(&h->demux, uri, &samplerate, &channels, 8192*2) != 0)
+	if(demux_open(&h->demux, uri, &samplerate, &channels, 8192*2,
+		      use_thread) != 0)
 		return -1;
 
 	/* Get decoder configuration from demuxer (useful for MP4) */

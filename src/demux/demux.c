@@ -47,11 +47,18 @@ struct demux_handle {
 	/* Stream position in ring buffer */
 	off_t start_pos;
 	off_t end_pos;
+	/* Demuxer thread */
+	int use_thread;
+	int thread_running;
+	pthread_t thread;
+	pthread_mutex_t mutex;
 };
+
+static void *demux_thread(void *user_data);
 
 int demux_open(struct demux_handle **handle, const char *uri,
 	       unsigned long *samplerate, unsigned char *channels,
-	       size_t cache_size)
+	       size_t cache_size, int use_thread)
 {
 	struct demux_handle *h;
 	struct demux_module *d;
@@ -88,6 +95,7 @@ int demux_open(struct demux_handle **handle, const char *uri,
 	memset(h, 0, sizeof(struct demux_handle));
 	memcpy(&h->module, d, sizeof(struct demux_module));
 	h->file = file;
+	h->use_thread = use_thread;
 
 	/* Get file size */
 	if(fs_fstat(file, &st) == 0)
@@ -101,6 +109,17 @@ int demux_open(struct demux_handle **handle, const char *uri,
 	/* Allocate vring buffer */
 	if(vring_open(&h->ring, cache_size, 8192) != 0)
 		return -1;
+
+	/* Init mutex */
+	pthread_mutex_init(&h->mutex, NULL);
+
+	/* Cache is threaded */
+	if(h->use_thread)
+	{
+		/* Start thread */
+		if(pthread_create(&h->thread, NULL, demux_thread, h) != 0)
+			return -1;
+	}
 
 	return 0;
 }
@@ -149,6 +168,48 @@ static ssize_t demux_fill_buffer(struct demux_handle *h)
 	return len;
 }
 
+static void *demux_thread(void *user_data)
+{
+	struct demux_handle *h = user_data;
+	ssize_t len;
+
+	/* Thread running */
+	h->thread_running = 1;
+
+	/* Get data from demuxer */
+	while(h->use_thread)
+	{
+		/* Lock thread */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Fill buffer */
+		len = demux_fill_buffer(h);
+
+		/* End of stream */
+		if(len < 0)
+		{
+			/* Thread stopped */
+			h->thread_running = 0;
+
+			/* Unlock thread */
+			pthread_mutex_unlock(&h->mutex);
+
+			return NULL;
+		}
+
+		/* Unlock thread */
+		pthread_mutex_unlock(&h->mutex);
+
+		if(len == 0)
+			usleep(10000);
+	}
+
+	/* Thread stopped: close or end of stream */
+	h->thread_running = 0;
+
+	return NULL;
+}
+
 ssize_t demux_get_frame(struct demux_handle *h, unsigned char **buffer)
 {
 	if(h == NULL || buffer == NULL)
@@ -159,7 +220,8 @@ ssize_t demux_get_frame(struct demux_handle *h, unsigned char **buffer)
 		return demux_get_next_frame(h, buffer);
 
 	/* Fill ring buffer */
-	demux_fill_buffer(h);
+	if(!h->use_thread)
+		demux_fill_buffer(h);
 
 	/* Return frame */
 	*buffer = h->frame_data + h->frame_pos;
@@ -181,11 +243,12 @@ void demux_set_used_frame(struct demux_handle *h, ssize_t len)
 ssize_t demux_get_next_frame(struct demux_handle *h, unsigned char **buffer)
 {
 	struct demux_frame *f;
-	ssize_t fill_len;
+	ssize_t fill_len = 0;
 	ssize_t len;
 
 	/* Fill ring buffer */
-	fill_len = demux_fill_buffer(h);
+	if(!h->use_thread)
+		fill_len = demux_fill_buffer(h);
 
 	/* Go to next frame in ring buffer */
 	if(h->frame_len > 0)
@@ -205,7 +268,7 @@ ssize_t demux_get_next_frame(struct demux_handle *h, unsigned char **buffer)
 
 	/* Get new frame */
 	len = vring_read(h->ring, (unsigned char **) &f, 0, 0);
-	if(len == 0 && fill_len < 0)
+	if(len == 0 && (fill_len < 0 || (h->use_thread && !h->thread_running)))
 		return -1;
 	else if(len < sizeof(struct demux_frame))
 		return 0;
@@ -239,6 +302,9 @@ unsigned long demux_set_pos(struct demux_handle *h, unsigned long pos)
 	/* New position is not in ring buffer */
 	if(stream_pos < h->start_pos || stream_pos >= h->end_pos)
 	{
+		/* Lock thread */
+		pthread_mutex_lock(&h->mutex);
+
 		/* Flush ring buffer */
 		vring_read_forward(h->ring, vring_get_length(h->ring));
 		h->frame_data = NULL;
@@ -247,7 +313,24 @@ unsigned long demux_set_pos(struct demux_handle *h, unsigned long pos)
 		h->end_pos = 0;
 
 		/* Go to new position */
-		return h->module.set_pos(h->demux, pos);
+		pos = h->module.set_pos(h->demux, pos);
+
+		/* Restart thread if end of stream has been reached */
+		if(h->use_thread && !h->thread_running)
+		{
+			/* Wait end of thread */
+			pthread_join(h->thread, NULL);
+
+			/* Restart thread */
+			if(pthread_create(&h->thread, NULL, demux_thread, h)
+			   != 0)
+				return -1;
+		}
+
+		/* Unlock thread */
+		pthread_mutex_unlock(&h->mutex);
+
+		return pos;
 	}
 
 	/* Get buffer length */
@@ -284,6 +367,16 @@ void demux_close(struct demux_handle *h)
 {
 	if(h == NULL)
 		return;
+
+	/* Stop thread */
+	if(h->use_thread)
+	{
+		/* Stop thread */
+		h->use_thread = 0;
+
+		/* Wait end of thread */
+		pthread_join(h->thread, NULL);
+	}
 
 	/* Close demuxer */
 	if(h->demux != NULL)

@@ -61,7 +61,7 @@ struct demux_handle;
  */
 int demux_open(struct demux_handle **handle, const char *uri,
 	       unsigned long *samplerate, unsigned char *channels,
-	       size_t cache_size);
+	       size_t cache_size, int use_thread);
 
 /**
  * Get metadata extracted from stream.
