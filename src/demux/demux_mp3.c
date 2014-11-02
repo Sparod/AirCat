@@ -416,7 +416,7 @@ int demux_mp3_open(struct demux **demux, struct fs_file *file, size_t file_size,
 	{
 		/* Move to next frame */
 		first += frame.length;
-		if(frame.length + 4 < len)
+		if(frame.length + 4 > len)
 			fs_read(file, buffer+len, frame.length-len+4);
 		demux_mp3_parse_header(buffer+frame.length, 4, &frame);
 	}
