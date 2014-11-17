@@ -17,6 +17,7 @@ EXTRA_DIST = config_file.h \
 	     sdp.h \
 	     timer.h \
 	     utils.h \
+	     event.h \
 	     module.h \
 	     db.h \
 	     vring.h \

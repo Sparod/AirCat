@@ -57,6 +57,7 @@ static struct avahi_handle *avahi = NULL;
 static struct httpd_handle *httpd = NULL;
 static struct config_handle *config = NULL;
 static struct modules_handle *modules = NULL;
+static struct events_handle *events = NULL;
 static struct timers_handle *timers = NULL;
 
 /* URLs */
@@ -176,6 +177,9 @@ int main(int argc, char* argv[])
 	/* Open Avahi Client */
 	avahi_open(&avahi);
 
+	/* Open event module */
+	events_open(&events);
+
 	/* Open timer module */
 	timers_open(&timers);
 
@@ -207,12 +211,13 @@ int main(int argc, char* argv[])
 	json_free(cfg);
 
 	/* Open all modules */
-	modules_refresh(modules, httpd, avahi, outputs, timers);
+	modules_refresh(modules, httpd, avahi, outputs, events, timers);
 
 	/* Add basic URLs */
 	httpd_add_urls(httpd, "config", config_urls, NULL);
 	httpd_add_urls(httpd, "output", outputs_urls, outputs);
 	httpd_add_urls(httpd, "modules", modules_urls, modules);
+	httpd_add_urls(httpd, "events", events_urls, events);
 	httpd_add_urls(httpd, "timers", timers_urls, timers);
 
 	/* Start HTTP Server */
@@ -239,7 +244,7 @@ int main(int argc, char* argv[])
 		avahi_loop(avahi, 100);
 
 		/* Refresh modules */
-		modules_refresh(modules, httpd, avahi, outputs, timers);
+		modules_refresh(modules, httpd, avahi, outputs, events, timers);
 	}
 
 	/* Unregister all timer events */
@@ -259,6 +264,9 @@ int main(int argc, char* argv[])
 
 	/* Close timer module */
 	timers_close(timers);
+
+	/* Close event module */
+	events_close(events);
 
 	/* Close Avahi Client */
 	avahi_close(avahi);

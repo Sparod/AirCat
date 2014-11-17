@@ -45,6 +45,7 @@ struct module_list {
 	struct module *mod;
 	struct db_handle *db;
 	struct output_handle *out;
+	struct event_handle *event;
 	struct timer_handle *timer;
 	/* Next module in list */
 	struct module_list *next;
@@ -132,6 +133,8 @@ int modules_open(struct modules_handle **handle, struct json *config,
 		l->lib = lib;
 		l->mod = mod;
 		l->handle = NULL;
+		l->event = NULL;
+		l->timer = NULL;
 		l->out = NULL;
 		l->db = NULL;
 
@@ -295,6 +298,7 @@ void modules_free_list(char **list, int count)
 
 void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd, 
 		     struct avahi_handle *avahi, struct outputs_handle *outputs,
+		     struct events_handle *events,
 		     struct timers_handle *timers)
 {
 	struct module_attr attr;
@@ -342,11 +346,16 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			if(l->timer != NULL)
 				timer_close(l->timer);
 
+			/* Close event */
+			if(l->event != NULL)
+				event_close(l->event);
+
 			/* Free output handler */
 			if(l->out != NULL)
 				output_close(l->out);
 
 			l->timer = NULL;
+			l->event = NULL;
 			l->out = NULL;
 			l->db = NULL;
 			l->opened = 0;
@@ -355,6 +364,9 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 		{
 			/* Create an output handler for module */
 			output_open(&l->out, outputs, l->name);
+
+			/* Create an event instance for module */
+			event_open(&l->event, events, l->id);
 
 			/* Create a timer instance for module */
 			timer_open(&l->timer, timers, l->name);
@@ -365,6 +377,7 @@ void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd,
 			/* Prepare attributes */
 			attr.path = l->path;
 			attr.output = l->out;
+			attr.event = l->event;
 			attr.timer = l->timer;
 			attr.avahi = avahi;
 			attr.db = l->db;

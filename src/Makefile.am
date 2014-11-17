@@ -31,6 +31,7 @@ aircat_SOURCES = main.c \
 		 cache.c \
 		 db.c \
 		 timers.c \
+		 events.c \
 		 vring.c \
 		 utils.c
 
@@ -81,6 +82,7 @@ EXTRA_DIST = modules.h \
 	     decoder/decoder_aac.h \
 	     decoder/decoder_mp3.h \
 	     decoder/decoder_alac.h \
+	     events.h \
 	     timers.h
 
 

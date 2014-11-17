@@ -20,6 +20,7 @@
 #define _MODULES_H
 
 #include "outputs/outputs.h"
+#include "events.h"
 #include "timers.h"
 #include "module.h"
 
@@ -43,6 +44,7 @@ void modules_free_list(char **list, int count);
 /* Open or close modules with enabled flag */
 void modules_refresh(struct modules_handle *h, struct httpd_handle *httpd, 
 		     struct avahi_handle *avahi, struct outputs_handle *outputs,
+		     struct events_handle *events,
 		     struct timers_handle *timers);
 
 #endif
