@@ -207,6 +207,7 @@ static int httpd_request(void * user_data, struct MHD_Connection *c,
 			 size_t *upload_data_size, void ** ptr);
 static void httpd_completed(void *user_data, struct MHD_Connection *c,
 			    void **ptr, enum MHD_RequestTerminationCode toe);
+static void httpd_free_session(struct httpd_session *s);
 
 int httpd_open(struct httpd_handle **handle, struct json *config)
 {
@@ -516,7 +517,7 @@ int httpd_close(struct httpd_handle *h)
 	{
 		s = h->sessions;
 		h->sessions = s->next;
-		free(s);
+		httpd_free_session(s);
 	}
 
 	/* Free URLs grouo */

@@ -1186,15 +1186,12 @@ retry:
 	sql = db_mprintf("SELECT media_id,name FROM media "
 			 "WHERE path='%q'", gpath != NULL ? gpath : path);
 	if(sql == NULL)
-		return -1;
+		goto error;
 
 	/* Prepare request */
 	query = db_prepare(db, sql, -1);
 	if(query == NULL)
-	{
-		free(sql);
-		return -1;
-	}
+		goto error;
 
 	/* Media not present in database */
 	if(db_step(query) != 0 && !up)
@@ -1208,7 +1205,7 @@ retry:
 				 "VALUES ('%q','%q')", name,
 				 gpath != NULL ? gpath : path);
 		if(sql == NULL)
-			return -1;
+			goto error;
 
 		/* Add entry in database */
 		db_exec(db, sql, NULL, NULL);
@@ -1237,8 +1234,18 @@ end:
 	/* Finalize request */
 	db_finalize(query);
 	db_free(sql);
+	if(gpath != NULL)
+		free(gpath);
 
 	return 0;
+
+error:
+	if(sql != NULL)
+		db_free(sql);
+	if(gpath != NULL)
+		free(gpath);
+
+	return -1;
 }
 
 static int files_list_user_media(void *user_data, int col_count, char **values,

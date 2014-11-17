@@ -212,7 +212,9 @@ static struct fs_dirent *fs_posix_readdir(struct fs_dir *d)
 			d->c_dirent.name_len = strlen(mnt.mnt_dir);
 			if(d->c_dirent.name_len > 255)
 				d->c_dirent.name_len = 255;
-			strncpy(d->c_dirent.name, mnt.mnt_dir, 256);
+			strncpy(d->c_dirent.name, mnt.mnt_dir,
+				d->c_dirent.name_len);
+			d->c_dirent.name[d->c_dirent.name_len] = '\0';
 
 			return &d->c_dirent;
 		}
