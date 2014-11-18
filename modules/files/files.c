@@ -33,6 +33,13 @@
 
 #define PLAYLIST_ALLOC_SIZE 32
 
+/**
+ * Event defines
+ */
+#define FILES_EVENT_PLAYLIST "playlist"
+#define FILES_EVENT_PLAYER "play"
+#define FILES_EVENT_STATUS "status"
+
 struct files_playlist {
 	char *filename;
 	struct json *tag;
@@ -41,6 +48,8 @@ struct files_playlist {
 struct files_handle {
 	/* Output handle */
 	struct output_handle *output;
+	/* Event handle */
+	struct event_handle *event;
 	/* Database handle */
 	struct db_handle *db;
 	/* Current file player */
@@ -78,6 +87,13 @@ static int files_play(struct files_handle *h, int index);
 static int files_stop(struct files_handle *h);
 static int files_set_config(struct files_handle *h, const struct json *c);
 
+/**
+ * Event notifier
+ */
+static void inline files_event_playlist(struct files_handle *h);
+static void inline files_event_player(struct files_handle *h);
+static void inline files_event_status(struct files_handle *h);
+
 static int files_open(struct files_handle **handle, struct module_attr *attr)
 {
 	struct files_handle *h;
@@ -90,6 +106,7 @@ static int files_open(struct files_handle **handle, struct module_attr *attr)
 
 	/* Init structure */
 	h->output = attr->output;
+	h->event = attr->event;
 	h->db = attr->db;
 	h->file = NULL;
 	h->prev_file = NULL;
@@ -129,6 +146,7 @@ static int files_new_player(struct files_handle *h)
 {
 	unsigned long samplerate;
 	unsigned char channels;
+	struct json *event;
 
 	/* Start new player */
 	if(file_open(&h->file, h->playlist[h->playlist_cur].filename) != 0)
@@ -184,6 +202,9 @@ static void files_play_next(struct files_handle *h)
 
 		break;
 	}
+
+	/* Notify player update */
+	files_event_player(h);
 }
 
 static void files_play_prev(struct files_handle *h)
@@ -216,6 +237,9 @@ static void files_play_prev(struct files_handle *h)
 
 		break;
 	}
+
+	/* Notify player update */
+	files_event_player(h);
 }
 
 static void *files_thread(void *user_data)
@@ -359,6 +383,9 @@ static int files_add_multiple(struct files_handle *h, const char *resource,
 		if(play && d.first_idx >= 0)
 			files_play(h, d.first_idx);
 
+		/* Notify playlist update */
+		files_event_playlist(h);
+
 		return 0;
 	}
 
@@ -423,6 +450,9 @@ next:
 			files_play(h, idx);
 	}
 
+	/* Notify playlist update */
+	files_event_playlist(h);
+
 	/* Free path */
 	free(m_path);
 	free(path);
@@ -461,6 +491,9 @@ static int files_remove(struct files_handle *h, int index)
 		(h->playlist_len - index - 1) * sizeof(struct files_playlist));
 	h->playlist_len--;
 
+	/* Notify playlist update */
+	files_event_playlist(h);
+
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
@@ -482,6 +515,9 @@ static void files_flush(struct files_handle *h)
 	}
 	h->playlist_len = 0;
 	h->playlist_cur = -1;
+
+	/* Notify playlist update */
+	files_event_playlist(h);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
@@ -507,15 +543,22 @@ static int files_play(struct files_handle *h, int index)
 	h->playlist_cur = index;
 	if(files_new_player(h) != 0)
 	{
-		/* Unlock playlist */
-		pthread_mutex_unlock(&h->mutex);
-
+		/* Update playlist */
 		h->playlist_cur = -1;
 		h->is_playing = 0;
+
+		/* Notify player update */
+		files_event_player(h);
+
+		/* Unlock playlist */
+		pthread_mutex_unlock(&h->mutex);
 		return -1;
 	}
 
 	h->is_playing = 1;
+
+	/* Notify player update */
+	files_event_player(h);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
@@ -544,6 +587,9 @@ static int files_pause(struct files_handle *h)
 			output_pause_stream(h->output, h->stream);
 		}
 	}
+
+	/* Notify status update */
+	files_event_status(h);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
@@ -578,6 +624,9 @@ static int files_stop(struct files_handle *h)
 
 	/* Rreset playlist position */
 	h->playlist_cur = -1;
+
+	/* Notify player update */
+	files_event_player(h);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
@@ -656,24 +705,55 @@ static int files_seek(struct files_handle *h, unsigned long pos)
 	/* Play stream */
 	output_play_stream(h->output, h->stream);
 
+	/* Notify status update */
+	files_event_status(h);
+
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
 
 	return 0;
 }
 
-static char *files_get_json_status(struct files_handle *h)
+static struct json *files_json_status(struct files_handle *h, int tags)
 {
 	unsigned long played;
+	struct json *status;
+
+	/* Create basic JSON object */
+	status = json_new();
+	if(status == NULL)
+		return NULL;
+
+	/* Add filename */
+	json_set_string(status, "file",
+			basename(h->playlist[h->playlist_cur].filename));
+
+	/* Add tags */
+	if(tags)
+		json_add(status, "tag",
+			 json_copy(h->playlist[h->playlist_cur].tag));
+
+	/* Get curent postion in output stream  */
+	played = output_get_status_stream(h->output, h->stream,
+					  OUTPUT_STREAM_PLAYED) / 1000;
+	json_set_int(status, "pos", played + h->pos);
+
+	/* Add stream length */
+	json_set_int(status, "length", file_get_length(h->file));
+
+	return status;
+}
+
+static char *files_get_json_status(struct files_handle *h)
+{
 	struct json *tmp;
 	char *str = NULL;
-	int idx;
 
 	/* Lock playlist */
 	pthread_mutex_lock(&h->mutex);
 
-	idx = h->playlist_cur;
-	if(idx < 0)
+	/* Check if a file is playing */
+	if(h->playlist_cur < 0)
 	{
 		/* Unlock playlist */
 		pthread_mutex_unlock(&h->mutex);
@@ -681,17 +761,8 @@ static char *files_get_json_status(struct files_handle *h)
 		return strdup("{ \"file\": null }");
 	}
 
-	/* Create basic JSON object */
-	str = basename(h->playlist[idx].filename);
-	tmp = json_copy(h->playlist[idx].tag);
-	if(tmp != NULL)
-	{
-		/* Add curent postion and audio file length */
-		played = output_get_status_stream(h->output, h->stream,
-						  OUTPUT_STREAM_PLAYED) / 1000;
-		json_set_int(tmp, "pos", played + h->pos);
-		json_set_int(tmp, "length", file_get_length(h->file));
-	}
+	/* Create status object */
+	tmp = files_json_status(h, 1);
 
 	/* Unlock playlist */
 	pthread_mutex_unlock(&h->mutex);
@@ -843,6 +914,60 @@ static int files_close(struct files_handle *h)
 	free(h);
 
 	return 0;
+}
+
+static void inline files_event_playlist(struct files_handle *h)
+{
+	if(h->event == NULL)
+		return;
+
+	/* Update event */
+	event_add(h->event, FILES_EVENT_PLAYLIST, 0, NULL);
+}
+
+static void inline files_event_player(struct files_handle *h)
+{
+	struct json *status;
+
+	if(h->event == NULL)
+		return;
+
+	/* End of playlist */
+	if(h->playlist_cur == -1)
+	{
+		/* Update event */
+		event_add(h->event, FILES_EVENT_PLAYER, 0, NULL);
+		event_remove(h->event, FILES_EVENT_STATUS);
+		return;
+	}
+
+	/* Create status object */
+	status = files_json_status(h, 1);
+	if(status == NULL)
+		return;
+
+	/* Update event */
+	event_add(h->event, FILES_EVENT_PLAYER, 0, status);
+}
+
+static void inline files_event_status(struct files_handle *h)
+{
+	struct json *status;
+
+	if(h->event == NULL)
+		return;
+
+	/* Create status object */
+	status = files_json_status(h, 0);
+	if(status == NULL)
+		return;
+
+	/* Add current status to object */
+	json_set_string(status, "status", (h->is_playing != 0 ? "playing" :
+							       "paused"));
+
+	/* Update event */
+	event_add(h->event, FILES_EVENT_STATUS, 0, status);
 }
 
 static int files_httpd_playlist_play(void *user_data, struct httpd_req *req,
