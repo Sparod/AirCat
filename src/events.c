@@ -205,9 +205,6 @@ static struct event *event_remove_from_list(struct event_handle *h,
 {
 	struct event **evp, *ev = NULL;
 
-	/* Lock event list access */
-	pthread_mutex_lock(&h->mutex);
-
 	/* Find event and remove it */
 	evp = &h->evs;
 	while((*evp) != NULL)
@@ -216,16 +213,13 @@ static struct event *event_remove_from_list(struct event_handle *h,
 		if(strcmp(ev->name, name) == 0)
 		{
 			*evp = ev->next;
-			break;
+			return ev;
 		}
 		else
 			evp = &ev->next;
 	}
 
-	/* Unlock event list access */
-	pthread_mutex_unlock(&h->mutex);
-
-	return ev;
+	return NULL;
 }
 
 int event_add(struct event_handle *h, const char *name, enum event_type type,
@@ -237,6 +231,9 @@ int event_add(struct event_handle *h, const char *name, enum event_type type,
 	if(name == NULL)
 		return -1;
 
+	/* Lock event list access */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Find event if already exist */
 	ev = event_remove_from_list(h, name);
 
@@ -246,7 +243,11 @@ int event_add(struct event_handle *h, const char *name, enum event_type type,
 		/* Allocate new event */
 		ev = malloc(sizeof(struct event));
 		if(ev == NULL)
+		{
+			/* Unlock event list access */
+			pthread_mutex_unlock(&h->mutex);
 			return -1;
+		}
 
 		/* Add name */
 		ev->name = strdup(name);
@@ -262,9 +263,6 @@ int event_add(struct event_handle *h, const char *name, enum event_type type,
 	ev->type = type;
 	ev->timestamp = time(NULL);
 	ev->data = data;
-
-	/* Lock event list access */
-	pthread_mutex_lock(&h->mutex);
 
 	/* Add to list */
 	ev->next = h->evs;
@@ -293,8 +291,16 @@ int event_remove(struct event_handle *h, const char *name)
 {
 	struct event *ev;
 
+	/* Lock event list access */
+	pthread_mutex_lock(&h->mutex);
+
 	/* Find event */
 	ev = event_remove_from_list(h, name);
+
+	/* Unlock event list access */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* Event not found */
 	if(ev == NULL)
 		return -1;
 
