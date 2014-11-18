@@ -42,6 +42,7 @@ struct event_handle {
 };
 
 struct events_handle {
+	time_t timestamp;		/*!< Last event time stamp */
 	struct event_handle *events;	/*!< Event handle list (children) */
 	pthread_mutex_t mutex;		/*!< Mutex for events access */
 };
@@ -57,10 +58,30 @@ int events_open(struct events_handle **handle)
 	h = *handle;
 
 	/* Init handle */
+	h->timestamp = 0;
 	h->events = NULL;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
+
+	return 0;
+}
+
+static int events_check_events(struct events_handle *h, time_t last)
+{
+	time_t last_ts;
+
+	/* Lock events access */
+	pthread_mutex_lock(&h->mutex);
+
+	last_ts = h->timestamp;
+
+	/* Unlock events access */
+	pthread_mutex_unlock(&h->mutex);
+
+	/* An event has been found */
+	if(last_ts > last)
+		return 1;
 
 	return 0;
 }
@@ -139,7 +160,7 @@ static char *events_get_events(struct events_handle *h, time_t *last)
 	pthread_mutex_unlock(&h->mutex);
 
 	/* Update highest timestamp */
-	*last = max;
+	*last = max > 0 ? max : time(NULL);
 
 	/* Export JSON object to string */
 	str = (char *) json_export(root);
@@ -268,6 +289,9 @@ int event_add(struct event_handle *h, const char *name, enum event_type type,
 	ev->next = h->evs;
 	h->evs = ev;
 
+	/* Update last global timestamp */
+	h->events->timestamp = ev->timestamp;
+
 	/* Unlock event list access */
 	pthread_mutex_unlock(&h->mutex);
 
@@ -381,6 +405,14 @@ static int events_httpd_get_events(void *user_data, struct httpd_req *req,
 	{
 		last = strtoul(str, NULL, 10);
 		free(str);
+	}
+
+	/* Check if new events are available */
+	if(last > 0 && events_check_events(h, last) == 0)
+	{
+		/* Not changed */
+		printf("not changed\n");
+		return 304;
 	}
 
 	/* Get event list from last event */
