@@ -45,5 +45,17 @@ int file_read(void *h, unsigned char *buffer, size_t size,
 	      struct a_format *fmt);
 void file_close(struct file_handle *h);
 
+/* File event */
+enum file_event {
+	FILE_EVENT_READY,	/*!< File is ready (cache is full) */
+	FILE_EVENT_BUFFERING,	/*!< File is buffering (cache not full) */
+	FILE_EVENT_SEEK, 	/*!< Seek has been done: new position is in 
+				     data as an unsigned long */
+	FILE_EVENT_END		/*!< End of file has been reached */
+};
+typedef void (*file_event_cb)(void *user_data, enum file_event event,
+			      void *data);
+int file_set_event_cb(struct file_handle *h, file_event_cb cb, void *user_data);
+
 #endif
 

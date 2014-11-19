@@ -47,6 +47,11 @@ struct file_handle {
 	unsigned long channels;
 	unsigned int bitrate;
 	unsigned long length;
+	/* Event callback */
+	file_event_cb event_cb;
+	void *event_udata;
+	int buffering;
+	int end;
 	/* Mutex for thread safe status */
 	pthread_mutex_t mutex;
 };
@@ -76,6 +81,10 @@ int file_open(struct file_handle **handle, const char *uri)
 	h->pcm_pos = 0;
 	h->pcm_pos_off = 0;
 	h->pcm_remaining = 0;
+	h->event_cb = NULL;
+	h->event_udata = NULL;
+	h->buffering = 0;
+	h->end = 0;
 
 	/* Init mutex */
 	pthread_mutex_init(&h->mutex, NULL);
@@ -146,6 +155,10 @@ unsigned long file_set_pos(struct file_handle *h, unsigned long pos)
 	h->pcm_pos_off = pos * 1000;
 	h->pcm_remaining = 0;
 
+	/* Notify new position */
+	if(h->event_cb != NULL)
+		h->event_cb(h->event_udata, FILE_EVENT_SEEK, &pos);
+
 	/* Unlock stream access */
 	pthread_mutex_unlock(&h->mutex);
 
@@ -188,8 +201,8 @@ int file_get_status(struct file_handle *h)
 	if(h->demux == NULL)
 		return FILE_CLOSED;
 
-/*	if(feof(h->fp))
-		return FILE_EOF;*/
+	if(h->end)
+		return FILE_EOF;
 
 	return FILE_OPENED;
 }
@@ -245,7 +258,26 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Get frame */
 		len = demux_get_frame(h->demux, &frame);
 		if(len <= 0)
+		{
+			/* File is buffering */
+			if(len == 0)
+			{
+				/* Notify demux is buffering */
+				if(h->event_cb != NULL && h->buffering == 0)
+					h->event_cb(h->event_udata,
+						    FILE_EVENT_BUFFERING, NULL);
+				h->buffering = 1;
+			}
 			break;
+		}
+		else if(h->buffering == 1)
+		{
+			/* Notify demux cache is ready */
+			if(h->event_cb != NULL)
+				h->event_cb(h->event_udata,
+					    FILE_EVENT_READY, NULL);
+			h->buffering = 0;
+		}
 
 		/* Decode next frame */
 		samples = decoder_decode(h->dec, frame,
@@ -287,7 +319,14 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 
 	/* End of stream */
 	if(len < 0 && total_samples == 0)
+	{
+		/* Notify end of stream */
+		if(h->event_cb != NULL && h->end == 0)
+			h->event_cb(h->event_udata, FILE_EVENT_END, NULL);
+		h->end = 1;
+
 		return -1;
+	}
 
 	/* Fill audio format */
 	if(fmt != NULL)
@@ -297,6 +336,21 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	}
 
 	return total_samples;
+}
+
+int file_set_event_cb(struct file_handle *h, file_event_cb cb, void *user_data)
+{
+	/* Lock stream access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Set event callback */
+	h->event_cb = cb;
+	h->event_udata = user_data;
+
+	/* Unlock stream access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
 }
 
 void file_close(struct file_handle *h)
