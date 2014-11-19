@@ -411,7 +411,6 @@ static int events_httpd_get_events(void *user_data, struct httpd_req *req,
 	if(last > 0 && events_check_events(h, last) == 0)
 	{
 		/* Not changed */
-		printf("not changed\n");
 		return 304;
 	}
 
