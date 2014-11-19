@@ -320,10 +320,16 @@ int file_read(void *user_data, unsigned char *buffer, size_t size,
 	/* End of stream */
 	if(len < 0 && total_samples == 0)
 	{
+		/* Lock stream access */
+		pthread_mutex_lock(&h->mutex);
+
 		/* Notify end of stream */
 		if(h->event_cb != NULL && h->end == 0)
 			h->event_cb(h->event_udata, FILE_EVENT_END, NULL);
 		h->end = 1;
+
+		/* Unlock stream access */
+		pthread_mutex_unlock(&h->mutex);
 
 		return -1;
 	}
