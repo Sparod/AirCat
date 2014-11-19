@@ -61,6 +61,9 @@ struct shout_handle {
 	unsigned char in_buffer[BUFFER_SIZE];
 	unsigned long in_len;
 	unsigned long pcm_remaining;
+	/* Event callback */
+	shoutcast_event_cb event_cb;
+	void *event_udata;
 	/* Mutex for thread safe */
 	pthread_mutex_t mutex;
 };
@@ -93,6 +96,8 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	h->in_len = 0;
 	h->pcm_remaining = 0;
 	h->status = SHOUT_DATA;
+	h->event_cb = NULL;
+	h->event_udata = NULL;
 
 	/* Set to zero radio_info structure */
 	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
@@ -397,8 +402,23 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 					 size - total_samples, &info);
 		if(samples <= 0)
 		{
+			/* End of stream */
 			if(ret < 0 && total_samples <= 0)
+			{
+				/* Lock event access */
+				pthread_mutex_lock(&h->mutex);
+
+				/* Notify end of stream */
+				if(h->event_cb != NULL)
+					h->event_cb(h->event_udata,
+						    SHOUT_EVENT_END, NULL);
+
+				/* Unlock event access */
+				pthread_mutex_unlock(&h->mutex);
+
 				return -1;
+			}
+
 			return total_samples;
 		}
 
@@ -460,6 +480,22 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	pthread_mutex_unlock(&h->mutex);
 
 	return str;
+}
+
+int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
+			   void *user_data)
+{
+	/* Lock event access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Set event callback */
+	h->event_cb = cb;
+	h->event_udata = user_data;
+
+	/* Unlock event access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
 }
 
 int shoutcast_close(struct shout_handle *h)
@@ -572,6 +608,12 @@ static int shoutcast_read_stream(struct shout_handle *h)
 					if(h->meta != NULL)
 						free(h->meta);
 					h->meta = strdup((char*)h->meta_buffer);
+
+					/* Notify meta update */
+					if(h->event_cb != NULL)
+						h->event_cb(h->event_udata,
+							    SHOUT_EVENT_META,
+							    h->meta);
 
 					/* Unlock meta string access */
 					pthread_mutex_unlock(&h->mutex);

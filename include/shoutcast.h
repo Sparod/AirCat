@@ -54,5 +54,18 @@ char *shoutcast_get_metadata(struct shout_handle *h);
 
 int shoutcast_close(struct shout_handle *h);
 
+/* Shoutcast event */
+enum shoutcast_event {
+	SHOUT_EVENT_READY,	/*!< Cache is full */
+	SHOUT_EVENT_BUFFERING,	/*!< Cache is buffering */
+	SHOUT_EVENT_META,	/*!< Metadata has changed: metadata string is 
+				     in data as (char*) */
+	SHOUT_EVENT_END		/*!< End of stream has been reached */
+};
+typedef void (*shoutcast_event_cb)(void *user_data, enum shoutcast_event event,
+				   void *data);
+int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
+			   void *user_data);
+
 #endif
 
