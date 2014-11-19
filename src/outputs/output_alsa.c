@@ -63,6 +63,10 @@ struct output_stream {
 	/* Stream cache */
 	struct cache_handle *cache;
 	unsigned long delay;
+	/* Stream event callback */
+	output_stream_event_cb event_cb;
+	void *event_ud;
+	int buffering;
 	/* Next output stream in list */
 	struct output_stream *next;
 };
@@ -178,6 +182,9 @@ struct output_stream *output_alsa_add_stream(struct output *h,
 	s->volume = OUTPUT_VOLUME_MAX;
 	s->cache = NULL;
 	s->delay = cache;
+	s->event_cb = NULL;
+	s->event_ud = NULL;
+	s->buffering = 0;
 
 	/* Add cache for write() */
 	if(input_callback == NULL)
@@ -362,6 +369,23 @@ unsigned long output_alsa_get_status_stream(struct output *h,
 	return ret;
 }
 
+int output_alsa_set_stream_event_cb(struct output *h, struct output_stream *s,
+				    output_stream_event_cb cb, void *user_data)
+{
+	/* Lock callback access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Set event callback */
+	s->event_cb = cb;
+	s->event_ud = user_data;
+
+	/* Unlock callback access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+
 unsigned long output_alsa_abort_stream(struct output *h,
 				       struct output_stream *s)
 {
@@ -539,8 +563,33 @@ static int output_alsa_mix_streams(struct output *h, unsigned char *in_buffer,
 				if(s->res != NULL)
 					resample_close(s->res);
 				s->res = NULL;
+
+				/* Notify end of stream */
+				if(s->event_cb != NULL)
+					s->event_cb(s->event_ud,
+						    STREAM_EVENT_END, NULL);
 			}
+			else if(s->delay > 0)
+			{
+				/* Notify cache is buffering */
+				if(s->event_cb != NULL && s->buffering == 0)
+					s->event_cb(s->event_ud,
+						    STREAM_EVENT_BUFFERING,
+						    NULL);
+				s->buffering = 1;
+			}
+
 			continue;
+		}
+
+		/* Cache is full */
+		if(s->delay > 0 && s->buffering == 1)
+		{
+			/* Notify cache is ready */
+			if(s->event_cb != NULL)
+				s->event_cb(s->event_ud, STREAM_EVENT_READY,
+					    NULL);
+			s->buffering = 0;
 		}
 
 		/* Update played value (in ms) */
@@ -713,6 +762,7 @@ struct output_module output_alsa = {
 	.get_volume_stream = (void*) &output_alsa_get_volume_stream,
 	.set_cache_stream = (void*) &output_alsa_set_cache_stream,
 	.get_status_stream = (void*) &output_alsa_get_status_stream,
+	.set_stream_event_cb = (void*) &output_alsa_set_stream_event_cb,
 	.abort_stream = (void*) &output_alsa_abort_stream,
 	.restore_stream = (void*) &output_alsa_restore_stream,
 	.remove_stream = (void*) &output_alsa_remove_stream,

@@ -895,6 +895,34 @@ unsigned long output_get_status_stream(struct output_handle *h,
 	return ret;
 }
 
+int output_set_stream_event_cb(struct output_handle *h,
+			       struct output_stream_handle *s,
+			       output_stream_event_cb cb, void *user_data)
+{
+	int ret = -1;
+
+	if(h == NULL || s == NULL)
+		return 0;
+
+	/* Lock output access */
+	pthread_mutex_lock(h->mutex);
+
+	/* Check output module */
+	if(h->outputs != NULL && h->outputs->mod != NULL &&
+	   h->outputs->handle != NULL && s->stream != NULL)
+	{
+		/* Set stream event callback */
+		ret = h->outputs->mod->set_stream_event_cb(h->outputs->handle,
+							   s->stream, cb,
+							   user_data);
+	}
+
+	/* Unlock output access */
+	pthread_mutex_unlock(h->mutex);
+
+	return ret;
+}
+
 /******************************************************************************
  *                              Output URLs part                              *
  ******************************************************************************/

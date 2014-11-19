@@ -96,4 +96,16 @@ unsigned long output_get_status_stream(struct output_handle *h,
 				       struct output_stream_handle *s,
 				       enum output_stream_key key);
 
+/* Output stream event */
+enum stream_event {
+	STREAM_EVENT_READY,	/*!< Stream is ready to play (cache is full) */
+	STREAM_EVENT_BUFFERING, /*!< Stream is buffering (cache not ready) */
+	STREAM_EVENT_END	/*!< End of stream has been reached */
+};
+typedef void (*output_stream_event_cb)(void *user_data, enum stream_event event,
+				       void *data);
+int output_set_stream_event_cb(struct output_handle *h,
+			       struct output_stream_handle *s,
+			       output_stream_event_cb cb, void *user_data);
+
 #endif

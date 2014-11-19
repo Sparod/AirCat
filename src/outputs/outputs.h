@@ -37,6 +37,8 @@ struct output_module {
 	int (*set_cache_stream)(void *, void *, unsigned long);
 	unsigned long (*get_status_stream)(void *, void *,
 					   enum output_stream_key);
+	int (*set_stream_event_cb)(void *, void *, output_stream_event_cb,
+				   void *);
 	ssize_t (*write_stream)(void *, void *, const unsigned char *, size_t,
 				struct a_format *);
 	unsigned long (*abort_stream)(void *, void *);
