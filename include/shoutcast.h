@@ -39,7 +39,8 @@ struct radio_info {
 
 struct shout_handle;
 
-int shoutcast_open(struct shout_handle **h, const char *url);
+int shoutcast_open(struct shout_handle **handle, const char *url,
+		   unsigned long cache_size, int use_thread);
 
 unsigned long shoutcast_get_samplerate(struct shout_handle *h);
 

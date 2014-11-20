@@ -81,7 +81,7 @@ static int radio_play(struct radio_handle *h, const char *id)
 		return -1;
 
 	/* Open radio */
-	if(shoutcast_open(&h->shout, h->radio->url) != 0)
+	if(shoutcast_open(&h->shout, h->radio->url, h->cache/1000, 0) != 0)
 		return -1;
 
 	/* Get samplerate and channels */
@@ -90,7 +90,7 @@ static int radio_play(struct radio_handle *h, const char *id)
 
 	/* Open new Audio stream output and play */
 	h->stream = output_add_stream(h->output, NULL, samplerate, channels,
-				      h->cache, 1, &shoutcast_read, h->shout);
+				      0, 0, &shoutcast_read, h->shout);
 	output_play_stream(h->output, h->stream);
 
 	return 0;

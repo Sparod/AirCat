@@ -25,87 +25,132 @@
 #include "http.h"
 #include "decoder.h"
 #include "shoutcast.h"
+#include "vring.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
-#define BUFFER_SIZE 8192
-#define SHOUT_TIMEOUT 1
-#define SHOUT_SYNC_TIMEOUT 5000
+/**
+ * Cache settings
+ *  DEFAULT_CACHE_SIZE: Default ache size (in s).
+ *  DEFAULT_BITRATE: Default bitrate when icy-br is not available (in kb/s).
+ *  MIN_CACHE_LEN: Minimum length of data in cache before buffering.
+ *  MAX_RW_SIZE: Maximum read/write for ring buffer (see vring.h).
+ * The default bitrate is set to highest bitrate possible (even if AAC can 
+ * support higher).
+ * Maximum read/write size must be upper than biggest frame size.
+ */
+#define DEFAULT_CACHE_SIZE 1
+#define DEFAULT_BITRATE 320
+#define MIN_CACHE_LEN 2048
+#define MAX_RW_SIZE 8192
 
-enum {
-	SHOUT_DATA,
-	SHOUT_META_LEN,
-	SHOUT_META_DATA
+/**
+ * Synchronization settings: minimum size needed for stream synchronization on
+ * first frame. (Best value is 2x the maximum frame size + frame header)
+ *  SYNC_TOTAL_TIMEOUT: total timeout for synchronization (must be a multiple 
+ *                      of SYNC_TIMEOUT. This value is in s).
+ *  SYNC_TIMEOUT: timeout for HTTP read (in ms).
+ */
+#define MP3_SYNC_SIZE (2881 * 2) + 3
+#define AAC_SYNC_SIZE MAX_RW_SIZE
+#define SYNC_TOTAL_TIMEOUT 5
+#define SYNC_TIMEOUT 1
+
+/**
+ * State of metadata demultiplexing in stream
+ */
+enum shout_state {
+	SHOUT_DATA,	/*!< Stream data: frames */
+	SHOUT_META_LEN,	/*!< Length part of metadata field */
+	SHOUT_META_DATA /*!< Data part of metadata field */
 };
 
+/**
+ * Shoutcast metadata cache
+ */
+struct shout_meta {
+	struct shout_meta *next;	/*!< Next metadata in cache */
+	size_t remaining;		/*!< Remaining bytes before next 
+					     metadata */
+	char data[0];			/*!< Metadata string */
+};
+
+/**
+ * Shoutcast handler
+ */
 struct shout_handle {
 	/* HTTP Client */
-	struct http_handle *http;
+	struct http_handle *http;	/*!< HTTP client handler */
+	/* Input ring buffer: cache */
+	struct vring_handle *ring;	/*!< Ring buffer cache */
+	unsigned long cache_size;	/*!< Cache size in seconds */
+	int is_ready;			/*!< Flag for cache status */
+	struct shout_meta *metas;	/*!< Metadata cache (first) */
+	struct shout_meta *meta_last;	/*!< Last metadata in cache */
 	/* Metadata handling */
-	int status;
-	unsigned int metaint;
-	unsigned int remaining;
-	int meta_len;
-	int meta_size;
-	unsigned char meta_buffer[16*255];
+	enum shout_state state;		/*!< State of stream demultiplexing */
+	unsigned int metaint;		/*!< Bytes between two meta data */
+	unsigned int remaining;		/*!< Remaining bytes before next
+					     state */
+	int meta_len;			/*!< Read length from current meta data 
+					     field */
+	int meta_size;			/*!< Size of current meta data field */
 	/* Radio info */
-	struct radio_info info;
-	char *meta;
+	struct radio_info info;		/*!< Radio information */
 	/* Decoder and stream properties */
-	struct decoder_handle *dec;
-	unsigned long samplerate;
-	unsigned char channels;
-	/* Input buffer and PCM output cache */
-	unsigned char in_buffer[BUFFER_SIZE];
-	unsigned long in_len;
-	unsigned long pcm_remaining;
+	struct decoder_handle *dec;	/*!< Decoder handler */
+	unsigned long samplerate;	/*!< Output samplerate of stream */
+	unsigned char channels;		/*!< Channel number of stream */
+	/* PCM output cache */
+	unsigned long pcm_remaining;	/*!< Bytes remaining in decoder output 
+					     buffer */
 	/* Event callback */
-	shoutcast_event_cb event_cb;
-	void *event_udata;
+	shoutcast_event_cb event_cb;	/*!< Callback for event */
+	void *event_udata;		/*!< User data for event callback */
 	/* Mutex for thread safe */
-	pthread_mutex_t mutex;
+	pthread_mutex_t mutex;		/*!< Mutex for meta data and thread */
 };
 
-static int shoutcast_read_stream(struct shout_handle *h);
-static int shoutcast_sync_mp3_stream(struct shout_handle *h);
-static int shoutcast_sync_aac_stream(struct shout_handle *h);
+static inline int shoutcast_sync(struct shout_handle *h);
+static ssize_t shoutcast_sync_mp3_stream(struct shout_handle *h,
+					 unsigned char *buffer, size_t in_len);
+static ssize_t shoutcast_sync_aac_stream(struct shout_handle *h,
+					 unsigned char *buffer, size_t in_len);
+static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
+				     unsigned long timeout);
+static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size);
 
-int shoutcast_open(struct shout_handle **handle, const char *url)
+int shoutcast_open(struct shout_handle **handle, const char *url,
+		   unsigned long cache_size, int use_thread)
 {
+	enum a_codec type = CODEC_NO;
 	struct shout_handle *h;
+	unsigned char *buffer;
+	ssize_t len = 0;
+	size_t size;
 	int code = 0;
-	int type;
 	char *p;
-	int i;
 
-	/* Alloc structure */
+	/* Allocate handler */
 	*handle = malloc(sizeof(struct shout_handle));
 	if(*handle == NULL)
 		return -1;
 	h = *handle;
 
-	/* Init structure */
-	h->http = NULL;
-	h->metaint = 0;
-	h->remaining = 0;
-	h->meta_len = 0;
-	h->meta = NULL;
-	h->dec = NULL;
-	h->in_len = 0;
-	h->pcm_remaining = 0;
-	h->status = SHOUT_DATA;
-	h->event_cb = NULL;
-	h->event_udata = NULL;
+	/* Set to zero the handler */
+	memset(h, 0, sizeof(struct shout_handle));
 
-	/* Set to zero radio_info structure */
-	memset((unsigned char*)&h->info, 0, sizeof(struct radio_info));
+	/* Init structure */
+	h->cache_size = cache_size > 0 ? cache_size : DEFAULT_CACHE_SIZE;
+	h->state = SHOUT_DATA;
+	h->is_ready = 1;
 
 	/* Init thread mutex */
 	pthread_mutex_init(&h->mutex, NULL);
 
-	/* Init http client */
+	/* Init HTTP client */
 	if(http_open(&h->http, 1) != 0)
 	{
 		shoutcast_close(h);
@@ -143,52 +188,103 @@ int shoutcast_open(struct shout_handle **handle, const char *url)
 	if(p != NULL)
 	{
 		if(strncmp(p, "audio/mpeg", 10) == 0)
+		{
 			h->info.type = MPEG_STREAM;
-		else if(strncmp(p, "audio/aacp", 10) == 0)
+			type = CODEC_MP3;
+		}
+		else if(strncmp(p, "audio/aac", 9) == 0)
+		{
 			h->info.type = AAC_STREAM;
+			type = CODEC_AAC;
+		}
 		else
 		{
 			h->info.type = NONE_STREAM;
 			return -1;
 		}
 	}
+	else
+		return -1;
 
 	/* Update metaint with extracted info */
 	h->metaint = h->info.metaint;
 	h->remaining = h->metaint;
 
-	/* Fill input buffer */
-	for(i = 0; i < SHOUT_SYNC_TIMEOUT && 
-		   h->in_len < BUFFER_SIZE; i++)
-	{
-		shoutcast_read_stream(h);
-		usleep(1000);
-	}
-	if(h->in_len < 1024)
+	/* Calculate input buffer size */
+	size = h->cache_size * 1000;
+	if(h->info.bitrate > 0)
+		size *= h->info.bitrate / 8;
+	else
+		size *= DEFAULT_BITRATE / 8;
+
+	/* Create a ring buffer for input data */
+	if(vring_open(&h->ring, size, MAX_RW_SIZE) != 0)
+		return -1;
+
+	/* Synchronize to first frame in stream */
+	if(shoutcast_sync(h) < 0)
+		return -1;
+
+	/* Get data buffer */
+	len = vring_read(h->ring, &buffer, 0, 0);
+	if(len <= 0)
 		return -1;
 
 	/* Open decoder */
-	if(h->info.type == MPEG_STREAM)
-	{
-		type = CODEC_MP3;
-
-		/* Sync to first frame */
-		if(shoutcast_sync_mp3_stream(h) != 0)
-			return -1;
-	}
-	else
-	{
-		type = CODEC_AAC;
-
-		/* Sync to first frame */
-		if(shoutcast_sync_aac_stream(h) != 0)
-			return -1;
-	}
-
-	/* Open decoder */
-	if(decoder_open(&h->dec, type, h->in_buffer, h->in_len, &h->samplerate,
+	if(decoder_open(&h->dec, type, buffer, len, &h->samplerate,
 			&h->channels) != 0)
 		return -1;
+
+	/* Set buffer not ready */
+	h->is_ready = 0;
+
+	return 0;
+}
+
+static inline int shoutcast_sync(struct shout_handle *h)
+{
+	ssize_t (*sync_fn)(struct shout_handle *, unsigned char *, size_t);
+	unsigned char *buffer;
+	time_t now = time(NULL);
+	size_t sync_size;
+	ssize_t len = 0;
+
+	/* Get setting for synchronization */
+	switch(h->info.type)
+	{
+		case MPEG_STREAM:
+			sync_size = MP3_SYNC_SIZE;
+			sync_fn = shoutcast_sync_mp3_stream;
+			break;
+		case AAC_STREAM:
+			sync_size = AAC_SYNC_SIZE;
+			sync_fn = shoutcast_sync_aac_stream;
+			break;
+		default:
+			return -1;
+	}
+
+	/* Fill as possible */
+	while(len < sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
+		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
+
+	/* Get buffer */
+	len = vring_read(h->ring, &buffer, 0, 0);
+	if(len <= 0)
+		return -1;
+
+	/* Find first frame in stream */
+	len = sync_fn(h, buffer, len);
+	if(len < 0)
+		return -1;
+
+	/* Forward to first frame */
+	shoutcast_forward_buffer(h, len);
+
+	/* Complete buffer as possible */
+	len = vring_get_length(h->ring);
+	while(len < sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
+		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
 
 	return 0;
 }
@@ -209,7 +305,8 @@ unsigned char shoutcast_get_channels(struct shout_handle *h)
 	return h->channels;
 }
 
-static int shoutcast_sync_mp3_stream(struct shout_handle *h)
+static ssize_t shoutcast_sync_mp3_stream(struct shout_handle *h,
+					 unsigned char *buffer, size_t in_len)
 {
 	unsigned int bitrates[2][3][15] = {
 		{ /* MPEG-1 */
@@ -237,19 +334,16 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 	int mp, mpeg, layer, padding;
 	unsigned long samplerate;
 	unsigned int bitrate;
-	int tmp;
-	int len;
-	int i;
+	int tmp, len, i;
 
 	/* Sync input buffer to first MP3 header */
-	for(i = 0; i < h->in_len - 3; i++)
+	for(i = 0; i < in_len - 3; i++)
 	{
-		if(h->in_buffer[i] == 0xFF &&
-		   h->in_buffer[i+1] != 0xFF &&
-		   (h->in_buffer[i+1] & 0xE0) == 0xE0)
+		if(buffer[i] == 0xFF && buffer[i+1] != 0xFF &&
+		   (buffer[i+1] & 0xE0) == 0xE0)
 		{
 			/* Get Mpeg version */
-			mpeg = 3 - ((h->in_buffer[i+1] >> 3) & 0x03);
+			mpeg = 3 - ((buffer[i+1] >> 3) & 0x03);
 			mp = mpeg;
 			if(mpeg == 2)
 				continue;
@@ -260,24 +354,24 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 			}
 
 			/* Get Layer */
-			layer = 3 - ((h->in_buffer[i+1] >> 1) & 0x03);
+			layer = 3 - ((buffer[i+1] >> 1) & 0x03);
 			if(layer == 3)
 				continue;
 
 			/* Get bitrate */
-			tmp = (h->in_buffer[i+2] >> 4) & 0x0F;
+			tmp = (buffer[i+2] >> 4) & 0x0F;
 			if(tmp == 0 || tmp == 15)
 				continue;
 			bitrate = bitrates[mp][layer][tmp];
 
 			/* Get samplerate */
-			tmp = (h->in_buffer[i+2] >> 2) & 0x03;
+			tmp = (buffer[i+2] >> 2) & 0x03;
 			if(tmp == 3)
 				continue;
 			samplerate = samplerates[mpeg][tmp];
 
 			/* Get padding */
-			padding = (h->in_buffer[i+2] >> 1) & 0x01;
+			padding = (buffer[i+2] >> 1) & 0x01;
 
 			/* Calculate length */
 			if(layer == 0)
@@ -300,58 +394,38 @@ static int shoutcast_sync_mp3_stream(struct shout_handle *h)
 			}
 
 			/* Check presence of next frame */
-			if(i + len + 2 > h->in_len ||
-			   h->in_buffer[i+len] != 0xFF ||
-			   h->in_buffer[i+len+1] == 0xFF ||
-			   (h->in_buffer[i+len+1] & 0xE0) != 0xE0)
+			if(i + len + 2 > in_len || buffer[i+len] != 0xFF ||
+			   buffer[i+len+1] == 0xFF ||
+			   (buffer[i+len+1] & 0xE0) != 0xE0)
 				continue;
 
-			/* Move to first frame */
-			memmove(h->in_buffer, &h->in_buffer[i],
-				h->in_len-i);
-			h->in_len -= i;
-
-			/* Refill input buffer */
-			shoutcast_read_stream(h);
-
-			return 0;
+			return i;
 		}
 	}
 
 	return -1;
 }
 
-static int shoutcast_sync_aac_stream(struct shout_handle *h)
+static ssize_t shoutcast_sync_aac_stream(struct shout_handle *h,
+					 unsigned char *buffer, size_t in_len)
 {
-	int len;
-	int i;
+	int len, i;
 
 	/* Sync input buffer to first ADTS header */
-	for(i = 0; i < h->in_len - 5; i++)
+	for(i = 0; i < in_len - 5; i++)
 	{
-		if(h->in_buffer[i] == 0xFF &&
-		   (h->in_buffer[i+1] & 0xF6) == 0xF0)
+		if(buffer[i] == 0xFF && (buffer[i+1] & 0xF6) == 0xF0)
 		{
 			/* Get frame length */
-			len = ((h->in_buffer[i+3] & 0x3) << 11) |
-			      (h->in_buffer[i+4] << 3) |
-			      (h->in_buffer[i+5] >> 5);
+			len = ((buffer[i+3] & 0x3) << 11) | (buffer[i+4] << 3) |
+			      (buffer[i+5] >> 5);
 
 			/* Check next frame */
-			if(i + len + 2 > h->in_len ||
-			   h->in_buffer[i+len] != 0xFF ||
-			   (h->in_buffer[i+len+1] & 0xF6) != 0xF0)
+			if(i + len + 2 > in_len || buffer[i+len] != 0xFF ||
+			   (buffer[i+len+1] & 0xF6) != 0xF0)
 				continue;
 
-			/* Move to first frame */
-			memmove(h->in_buffer, &h->in_buffer[i],
-				h->in_len-i);
-			h->in_len -= i;
-
-			/* Refill input buffer */
-			shoutcast_read_stream(h);
-
-			return 0;
+			return i;
 		}
 	}
 
@@ -363,9 +437,10 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 {
 	struct shout_handle *h = (struct shout_handle *) user_data;
 	struct decoder_info info;
+	unsigned char *in_buffer;
 	int total_samples = 0;
+	ssize_t len = 0;
 	int samples;
-	int ret;
 
 	if(h == NULL)
 		return -1;
@@ -394,45 +469,36 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 	while(total_samples < size)
 	{
 		/* Fill input buffer as possible */
-		ret = shoutcast_read_stream(h);
+		len = shoutcast_fill_buffer(h, 0);
+		if(!h->is_ready)
+			break;
+
+		/* Get data */
+		len = vring_read(h->ring, &in_buffer, 0, 0);
+		if(len <= MIN_CACHE_LEN)
+		{
+			/* Notify cache is empty */
+			if(h->event_cb != NULL && h->is_ready == 1)
+				h->event_cb(h->event_udata,
+					    SHOUT_EVENT_BUFFERING, NULL);
+			h->is_ready = 0;
+			break;
+		}
 
 		/* Decode next frame */
-		samples = decoder_decode(h->dec, h->in_buffer, h->in_len,
+		samples = decoder_decode(h->dec, in_buffer, len > 0 ? len : 0,
 					 &buffer[total_samples * 4],
 					 size - total_samples, &info);
 		if(samples <= 0)
 		{
-			/* End of stream */
-			if(ret < 0 && total_samples <= 0)
-			{
-				/* Lock event access */
-				pthread_mutex_lock(&h->mutex);
-
-				/* Notify end of stream */
-				if(h->event_cb != NULL)
-					h->event_cb(h->event_udata,
-						    SHOUT_EVENT_END, NULL);
-
-				/* Unlock event access */
-				pthread_mutex_unlock(&h->mutex);
-
-				return -1;
-			}
-
-			return total_samples;
+			/* Forward used bytes in ring buffer */
+			if(len > 0 && info.used > 0)
+				shoutcast_forward_buffer(h, info.used);
+			break;
 		}
 
-		/* Move input buffer to next frame */
-		if(info.used < h->in_len)
-		{
-			memmove(h->in_buffer, &h->in_buffer[info.used],
-				h->in_len - info.used);
-			h->in_len -=  info.used;
-		}
-		else
-		{
-			h->in_len = 0;
-		}
+		/* Forward ring buffer to next frame */
+		shoutcast_forward_buffer(h, info.used);
 
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
@@ -458,6 +524,22 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 		fmt->channels = h->channels;
 	}
 
+	/* End of stream */
+	if(len < 0 && total_samples <= 0)
+	{
+		/* Lock event access */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Notify end of stream */
+		if(h->event_cb != NULL)
+			h->event_cb(h->event_udata, SHOUT_EVENT_END, NULL);
+
+		/* Unlock event access */
+		pthread_mutex_unlock(&h->mutex);
+
+		return -1;
+	}
+
 	return total_samples;
 }
 
@@ -473,8 +555,9 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	/* Lock meta string access */
 	pthread_mutex_lock(&h->mutex);
 
-	if(h->meta != NULL)
-		str = strdup(h->meta);
+	/* Copy current metadata */
+	if(h->metas != NULL && h->metas->data != NULL)
+		str = strdup(h->metas->data);
 
 	/* Unlock meta string access */
 	pthread_mutex_unlock(&h->mutex);
@@ -500,6 +583,8 @@ int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
 
 int shoutcast_close(struct shout_handle *h)
 {
+	struct shout_meta *m;
+
 	if(h == NULL)
 		return 0;
 
@@ -511,9 +596,13 @@ int shoutcast_close(struct shout_handle *h)
 	if(h->http != NULL)
 		http_close(h->http);
 
-	/* Free meta */
-	if(h->meta != NULL)
-		free(h->meta);
+	/* Free metas */
+	while(h->metas != NULL)
+	{
+		m = h->metas;
+		h->metas = m->next;
+		free(m);
+	}
 
 	/* Free handler */
 	free(h);
@@ -521,112 +610,170 @@ int shoutcast_close(struct shout_handle *h)
 	return 0;
 }
 
-static int shoutcast_read_stream(struct shout_handle *h)
+static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
+				     unsigned long timeout)
 {
-	unsigned long in_len;
-	int read_len = 0;
-	unsigned char c;
+	struct shout_meta *m;
+	unsigned char *buffer;
+	ssize_t size;
+	ssize_t len;
 
-	/* Calculate input size to read */
-	in_len = BUFFER_SIZE - h->in_len;
-
-	/* Fill input buffer */
-	while(in_len > 0)
+	/* Fill cache */
+	do
 	{
-		if(h->status == SHOUT_DATA)
+		/* Get buffer write */
+		size = vring_write(h->ring, &buffer);
+		if(size <= 0)
 		{
-			/* Get size to read */
-			read_len = in_len;
-			if(h->metaint > 0 && read_len > h->remaining)
-				read_len = h->remaining;
-
-			/* Fill inpput buffer */
-			read_len = http_read_timeout(h->http,
-						     &h->in_buffer[h->in_len],
-						     read_len, SHOUT_TIMEOUT);
-			if(read_len <= 0)
+			if(size == 0 && h->is_ready == 0)
 			{
-				if(read_len == 0)
-					break;
-				return -1;
+				/* Notify cache is ready */
+				if(h->event_cb != NULL)
+					h->event_cb(h->event_udata,
+						    SHOUT_EVENT_READY, NULL);
+				h->is_ready = 1;
 			}
-
-			/* Update input buffer size */
-			h->remaining -= read_len;
-			h->in_len += read_len;
-			in_len -= read_len;
-
-			if(h->metaint > 0 && h->remaining == 0)
-				h->status = SHOUT_META_LEN;
+			break;
 		}
-		if(h->status == SHOUT_META_LEN)
+		else if(h->remaining > 0 && size > h->remaining)
+			size = h->remaining;
+
+		/* Read data from http */
+		len = http_read_timeout(h->http, buffer, size, timeout);
+		if(len <= 0)
 		{
-			/* Read meta size */
-			read_len = http_read_timeout(h->http, &c, 1,
-						     SHOUT_TIMEOUT);
-			if(read_len <= 0)
-			{
-				if(read_len == 0)
-					break;
+			if(len < 0)
 				return -1;
-			}
-
-			/* Set meta size */
-			h->meta_size = c * 16;
-			h->meta_len = 0;
-			h->status = SHOUT_META_DATA;
+			break;
 		}
-		if(h->status == SHOUT_META_DATA)
+
+		/* No meta data */
+		if(h->metaint == 0)
+			continue;
+
+		/* Update remaining length */
+		h->remaining -= len;
+
+		/* Process data */
+		switch(h->state)
 		{
-			/* Read string */
-			read_len = h->meta_size - h->meta_len;
-			if(read_len > 0)
-			{
-				read_len = http_read_timeout(h->http,
-						   &h->meta_buffer[h->meta_len],
-						   read_len, SHOUT_TIMEOUT);
-				if(read_len <= 0)
+			case SHOUT_DATA:
+				/* Meta data field reached */
+				if(h->remaining == 0)
 				{
-					if(read_len == 0)
-						break;
-					return -1;
+					h->remaining = 1;
+					h->state = SHOUT_META_LEN;
 				}
-			}
 
-			/* Update position */
-			h->meta_len += read_len;
-			if(h->meta_len == h->meta_size)
-			{
-				h->meta_buffer[h->meta_len] = '\0';
+				/* Forward in ring buffer */
+				vring_write_forward(h->ring, len);
+				break;
+			case SHOUT_META_LEN:
+				/* Set meta data size */
+				h->meta_size = buffer[0] * 16;
+				h->meta_len = 0;
 
-				if(h->meta_len > 0)
+				/* Lock meta string access */
+				pthread_mutex_lock(&h->mutex);
+
+				if(h->meta_size > 0)
 				{
-					/* Lock meta string access */
-					pthread_mutex_lock(&h->mutex);
+					h->remaining = h->meta_size;
+					h->state = SHOUT_META_DATA;
 
-					/* Copy string */
-					if(h->meta != NULL)
-						free(h->meta);
-					h->meta = strdup((char*)h->meta_buffer);
+					/* Allocate a new metadata */
+					m = calloc(1,
+						   sizeof(struct shout_meta) +
+						   h->meta_size);
+					if(m == NULL)
+						return -1;
+					if(h->meta_last != NULL)
+						h->meta_last->next = m;
+					else
+						h->metas = m;
+					h->meta_last = m;
+				}
+				else
+				{
+					h->remaining = h->metaint;
+					h->state = SHOUT_DATA;
+				}
 
-					/* Notify meta update */
-					if(h->event_cb != NULL)
+				/* Update remaining bytes before next meta */
+				h->meta_last->remaining += h->metaint;
+
+				/* Unlock meta string access */
+				pthread_mutex_unlock(&h->mutex);
+
+				break;
+			case SHOUT_META_DATA:
+				/* Lock meta string access */
+				pthread_mutex_lock(&h->mutex);
+
+				/* Copy to last metadata */
+				memcpy(&h->meta_last->data[h->meta_len],
+				       buffer, len);
+				h->meta_len += len;
+
+				/* Unlock meta string access */
+				pthread_mutex_unlock(&h->mutex);
+
+				/* Meta data field reached */
+				if(h->remaining == 0)
+				{
+					/* Notify new metadata */
+					if(h->event_cb != NULL &&
+					   h->metas == h->meta_last)
 						h->event_cb(h->event_udata,
 							    SHOUT_EVENT_META,
-							    h->meta);
+							    h->metas->data);
 
-					/* Unlock meta string access */
-					pthread_mutex_unlock(&h->mutex);
+					h->remaining = h->metaint;
+					h->state = SHOUT_DATA;
 				}
-
-				h->status = SHOUT_DATA;
-			}
-
-			/* Refill remaining bytes before next Metadata */
-			h->remaining = h->metaint;
+				break;
 		}
+	} while(!h->is_ready);
+
+	return vring_get_length(h->ring);
+}
+
+static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
+{
+	struct shout_meta *m;
+	ssize_t len;
+
+	/* Forward ring buffer */
+	len = vring_read_forward(h->ring, size);
+
+	/* Lock meta string access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Update first meta */
+	while(h->metas != NULL && size > h->metas->remaining)
+	{
+		/* Go to next meta */
+		h->metas->remaining = 0;
+		size -= h->metas->remaining;
+
+		/* Free metadata */
+		m = h->metas;
+		h->metas = m->next;
+		free(m);
+
+		/* Notify new metadata */
+		if(h->event_cb != NULL)
+			h->event_cb(h->event_udata, SHOUT_EVENT_META,
+				    h->metas->data);
 	}
 
-	return 0;
+	/* Update remaining bytes before next metadata */
+	if(h->metas != NULL)
+		h->metas->remaining -= size;
+
+	/* Unlock meta string access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return len;
 }
 
