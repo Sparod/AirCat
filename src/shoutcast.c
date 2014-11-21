@@ -596,6 +596,10 @@ int shoutcast_close(struct shout_handle *h)
 	if(h->http != NULL)
 		http_close(h->http);
 
+	/* Close and free ring buffer */
+	if(h->ring != NULL)
+		vring_close(h->ring);
+
 	/* Free metas */
 	while(h->metas != NULL)
 	{
