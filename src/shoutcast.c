@@ -59,6 +59,11 @@
 #define SYNC_TIMEOUT 1
 
 /**
+ * Thread timeout in ms.
+ */
+#define THREAD_TIMEOUT 100
+
+/**
  * State of metadata demultiplexing in stream
  */
 enum shout_state {
@@ -109,7 +114,10 @@ struct shout_handle {
 	/* Event callback */
 	shoutcast_event_cb event_cb;	/*!< Callback for event */
 	void *event_udata;		/*!< User data for event callback */
-	/* Mutex for thread safe */
+	/* Internal thread */
+	int use_thread;			/*!< Internal thread usage */
+	int stop;			/*!< Stop signal for thread */
+	pthread_t thread;		/*!< Internal thread */
 	pthread_mutex_t mutex;		/*!< Mutex for meta data and thread */
 };
 
@@ -121,6 +129,7 @@ static ssize_t shoutcast_sync_aac_stream(struct shout_handle *h,
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				     unsigned long timeout);
 static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size);
+static void *shoutcast_thread(void *user_data);
 
 int shoutcast_open(struct shout_handle **handle, const char *url,
 		   unsigned long cache_size, int use_thread)
@@ -237,6 +246,14 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 
 	/* Set buffer not ready */
 	h->is_ready = 0;
+
+	/* Start internal thread */
+	if(use_thread)
+	{
+		if(pthread_create(&h->thread, NULL, shoutcast_thread, h) != 0)
+			return -1;
+		h->use_thread = 1;
+	}
 
 	return 0;
 }
@@ -432,6 +449,26 @@ static ssize_t shoutcast_sync_aac_stream(struct shout_handle *h,
 	return -1;
 }
 
+static void *shoutcast_thread(void *user_data)
+{
+	struct shout_handle *h = user_data;
+	ssize_t len;
+
+	/* Fill buffer until end */
+	while(!h->stop)
+	{
+		/* Fill cache from stream */
+		len = shoutcast_fill_buffer(h, THREAD_TIMEOUT);
+		if(len < 0)
+			break;
+	}
+
+	/* End of stream */
+	h->stop = 1;
+
+	return NULL;
+}
+
 int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 		   struct a_format *fmt)
 {
@@ -469,7 +506,8 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 	while(total_samples < size)
 	{
 		/* Fill input buffer as possible */
-		len = shoutcast_fill_buffer(h, 0);
+		if(!h->use_thread)
+			len = shoutcast_fill_buffer(h, 0);
 		if(!h->is_ready)
 			break;
 
@@ -525,7 +563,7 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 	}
 
 	/* End of stream */
-	if(len < 0 && total_samples <= 0)
+	if((len < 0 || h->stop) && total_samples <= 0)
 	{
 		/* Lock event access */
 		pthread_mutex_lock(&h->mutex);
@@ -588,6 +626,13 @@ int shoutcast_close(struct shout_handle *h)
 	if(h == NULL)
 		return 0;
 
+	/* Stop internal thread */
+	if(h->use_thread)
+	{
+		h->stop = 1;
+		pthread_join(h->thread, NULL);
+	}
+
 	/* Close decoder */
 	if(h->dec != NULL)
 		decoder_close(h->dec);
@@ -637,6 +682,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 						    SHOUT_EVENT_READY, NULL);
 				h->is_ready = 1;
 			}
+			usleep(timeout*1000);
 			break;
 		}
 		else if(h->remaining > 0 && size > h->remaining)
