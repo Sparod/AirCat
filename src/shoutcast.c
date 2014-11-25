@@ -64,7 +64,8 @@
 #define THREAD_TIMEOUT 100
 
 /**
- * Pause buffer settings: block size
+ * Pause buffer settings:
+ *  BLOCK_SIZE: basic block size.
  */
 #define BLOCK_SIZE 8192
 
@@ -129,7 +130,9 @@ struct shout_handle {
 	int use_thread;			/*!< Internal thread usage */
 	int stop;			/*!< Stop signal for thread */
 	pthread_t thread;		/*!< Internal thread */
-	pthread_mutex_t mutex;		/*!< Mutex for meta data and thread */
+	pthread_mutex_t mutex;		/*!< Mutex for thread */
+	pthread_mutex_t meta_mutex;		/*!< Mutex for metadata */
+	pthread_mutex_t pause_mutex;		/*!< Mutex for pause buffer */
 };
 
 static inline int shoutcast_sync(struct shout_handle *h);
@@ -169,6 +172,8 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 
 	/* Init thread mutex */
 	pthread_mutex_init(&h->mutex, NULL);
+	pthread_mutex_init(&h->meta_mutex, NULL);
+	pthread_mutex_init(&h->pause_mutex, NULL);
 
 	/* Init HTTP client */
 	if(http_open(&h->http, 1) != 0)
@@ -526,10 +531,17 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 		len = vring_read(h->ring, &in_buffer, 0, 0);
 		if(len <= MIN_CACHE_LEN)
 		{
+			/* Lock event access */
+			pthread_mutex_lock(&h->mutex);
+
 			/* Notify cache is empty */
 			if(h->event_cb != NULL && h->is_ready == 1)
 				h->event_cb(h->event_udata,
 					    SHOUT_EVENT_BUFFERING, NULL);
+
+			/* Unlock event access */
+			pthread_mutex_unlock(&h->mutex);
+
 			h->is_ready = 0;
 			break;
 		}
@@ -602,43 +614,43 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	char *str = NULL;
 
 	/* Lock meta string access */
-	pthread_mutex_lock(&h->mutex);
+	pthread_mutex_lock(&h->meta_mutex);
 
 	/* Copy current metadata */
 	if(h->metas != NULL)
 		str = strdup(h->metas->data);
 
 	/* Unlock meta string access */
-	pthread_mutex_unlock(&h->mutex);
+	pthread_mutex_unlock(&h->meta_mutex);
 
 	return str;
 }
 
 int shoutcast_play(struct shout_handle *h)
 {
-	/* Lock meta string access */
-	pthread_mutex_lock(&h->mutex);
+	/* Lock pause buffer access */
+	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Play stream */
 	h->is_paused = 0;
 
-	/* Unlock meta string access */
-	pthread_mutex_unlock(&h->mutex);
+	/* Unlock pause buffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
 
 	return 0;
 }
 
 int shoutcast_pause(struct shout_handle *h)
 {
-	/* Lock meta string access */
-	pthread_mutex_lock(&h->mutex);
+	/* Lock pause buffer access */
+	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Pause stream */
 	h->is_paused = 1;
 	h->is_ready = 0;
 
-	/* Unlock meta string access */
-	pthread_mutex_unlock(&h->mutex);
+	/* Unlock pause buffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
 
 	return 0;
 }
@@ -806,20 +818,27 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 		size = vring_write(h->ring, &buffer);
 		if(size <= 0)
 		{
-			/* Lock meta string access */
-			pthread_mutex_lock(&h->mutex);
+			/* Lock pause buffer access */
+			pthread_mutex_lock(&h->pause_mutex);
 
 			if(size == 0 && h->is_ready == 0 && !h->is_paused)
 			{
+				/* Lock event access */
+				pthread_mutex_lock(&h->mutex);
+
 				/* Notify cache is ready */
 				if(h->event_cb != NULL)
 					h->event_cb(h->event_udata,
 						    SHOUT_EVENT_READY, NULL);
+
+				/* Unlock event access */
+				pthread_mutex_unlock(&h->mutex);
+
 				h->is_ready = 1;
 			}
 
-			/* Unlock meta string access */
-			pthread_mutex_unlock(&h->mutex);
+			/* Unlock pause buffer access */
+			pthread_mutex_unlock(&h->pause_mutex);
 
 			/* Wait timeout */
 			usleep(timeout*1000);
@@ -864,7 +883,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				h->meta_len = 0;
 
 				/* Lock meta string access */
-				pthread_mutex_lock(&h->mutex);
+				pthread_mutex_lock(&h->meta_mutex);
 
 				if(h->meta_size > 0)
 				{
@@ -888,12 +907,12 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				}
 
 				/* Unlock meta string access */
-				pthread_mutex_unlock(&h->mutex);
+				pthread_mutex_unlock(&h->meta_mutex);
 
 				break;
 			case SHOUT_META_DATA:
 				/* Lock meta string access */
-				pthread_mutex_lock(&h->mutex);
+				pthread_mutex_lock(&h->meta_mutex);
 
 				/* Copy data to metadata */
 				if(h->meta != NULL)
@@ -911,7 +930,8 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 					if(h->meta == NULL)
 					{
 						/* Unlock meta string access */
-						pthread_mutex_unlock(&h->mutex);
+						pthread_mutex_unlock(
+								&h->meta_mutex);
 						break;
 					}
 
@@ -928,7 +948,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				}
 
 				/* Unlock meta string access */
-				pthread_mutex_unlock(&h->mutex);
+				pthread_mutex_unlock(&h->meta_mutex);
 
 				break;
 		}
@@ -946,7 +966,7 @@ static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 	len = vring_read_forward(h->ring, size);
 
 	/* Lock meta string access */
-	pthread_mutex_lock(&h->mutex);
+	pthread_mutex_lock(&h->meta_mutex);
 
 	/* Update first meta */
 	while(h->metas != NULL && size >= h->metas->remaining)
@@ -962,10 +982,16 @@ static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 			h->metas = m->next;
 			free(m);
 
+			/* Lock event access */
+			pthread_mutex_lock(&h->mutex);
+
 			/* Notify new metadata */
 			if(h->event_cb != NULL)
 				h->event_cb(h->event_udata, SHOUT_EVENT_META,
 					    h->metas->data);
+
+			/* Unlock event access */
+			pthread_mutex_unlock(&h->mutex);
 		}
 	}
 
@@ -974,7 +1000,7 @@ static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 		h->metas->remaining -= size;
 
 	/* Unlock meta string access */
-	pthread_mutex_unlock(&h->mutex);
+	pthread_mutex_unlock(&h->meta_mutex);
 
 	return len;
 }
