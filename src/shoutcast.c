@@ -73,13 +73,13 @@ enum shout_state {
 };
 
 /**
- * Shoutcast metadata cache
+ * Shoutcast data cache: used for metadata cache and pause buffer
  */
-struct shout_meta {
-	struct shout_meta *next;	/*!< Next metadata in cache */
-	size_t remaining;		/*!< Remaining bytes before next 
-					     metadata */
-	char data[0];			/*!< Metadata string */
+struct shout_data {
+	struct shout_data *next;	/*!< Next data block in cache */
+	size_t remaining;		/*!< Remaining bytes before next
+					     data block */
+	char data[0];			/*!< Data block */
 };
 
 /**
@@ -92,8 +92,8 @@ struct shout_handle {
 	struct vring_handle *ring;	/*!< Ring buffer cache */
 	unsigned long cache_size;	/*!< Cache size in seconds */
 	int is_ready;			/*!< Flag for cache status */
-	struct shout_meta *metas;	/*!< Metadata cache (first) */
-	struct shout_meta *meta_last;	/*!< Last metadata in cache */
+	struct shout_data *metas;	/*!< Metadata cache (first) */
+	struct shout_data *metas_last;	/*!< Last metadata in cache */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -102,6 +102,7 @@ struct shout_handle {
 	int meta_len;			/*!< Read length from current meta data 
 					     field */
 	int meta_size;			/*!< Size of current meta data field */
+	struct shout_data *meta;	/*!< Current metadata */
 	/* Radio info */
 	struct radio_info info;		/*!< Radio information */
 	/* Decoder and stream properties */
@@ -594,7 +595,7 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	pthread_mutex_lock(&h->mutex);
 
 	/* Copy current metadata */
-	if(h->metas != NULL && h->metas->data != NULL)
+	if(h->metas != NULL)
 		str = strdup(h->metas->data);
 
 	/* Unlock meta string access */
@@ -621,7 +622,7 @@ int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
 
 int shoutcast_close(struct shout_handle *h)
 {
-	struct shout_meta *m;
+	struct shout_data *m;
 
 	if(h == NULL)
 		return 0;
@@ -652,6 +653,8 @@ int shoutcast_close(struct shout_handle *h)
 		h->metas = m->next;
 		free(m);
 	}
+	if(h->meta != NULL)
+		free(h->meta);
 
 	/* Free handler */
 	free(h);
@@ -662,7 +665,6 @@ int shoutcast_close(struct shout_handle *h)
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				     unsigned long timeout)
 {
-	struct shout_meta *m;
 	unsigned char *buffer;
 	ssize_t size;
 	ssize_t len;
@@ -731,26 +733,21 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 					h->remaining = h->meta_size;
 					h->state = SHOUT_META_DATA;
 
-					/* Allocate a new metadata */
-					m = calloc(1,
-						   sizeof(struct shout_meta) +
-						   h->meta_size);
-					if(m == NULL)
-						return -1;
-					if(h->meta_last != NULL)
-						h->meta_last->next = m;
-					else
-						h->metas = m;
-					h->meta_last = m;
+					/* Allocate a new meta */
+					h->meta = calloc(1,
+						     sizeof(struct shout_data) +
+						     h->meta_size);
 				}
 				else
 				{
 					h->remaining = h->metaint;
 					h->state = SHOUT_DATA;
-				}
 
-				/* Update remaining bytes before next meta */
-				h->meta_last->remaining += h->metaint;
+					/* Update bytes before next metadata */
+					if(h->metas_last != NULL)
+						h->metas_last->remaining +=
+								     h->metaint;
+				}
 
 				/* Unlock meta string access */
 				pthread_mutex_unlock(&h->mutex);
@@ -760,27 +757,41 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				/* Lock meta string access */
 				pthread_mutex_lock(&h->mutex);
 
-				/* Copy to last metadata */
-				memcpy(&h->meta_last->data[h->meta_len],
-				       buffer, len);
+				/* Copy data to metadata */
+				if(h->meta != NULL)
+					memcpy(h->meta->data+h->meta_len, 
+					       buffer, len);
 				h->meta_len += len;
+
+				/* Meta data field end */
+				if(h->remaining == 0)
+				{
+					h->remaining = h->metaint;
+					h->state = SHOUT_DATA;
+
+					/* Bad metadata */
+					if(h->meta == NULL)
+					{
+						/* Unlock meta string access */
+						pthread_mutex_unlock(&h->mutex);
+						break;
+					}
+
+					/* Update remaining bytes */
+					h->meta->remaining = h->metaint;
+
+					/* Add meta to cache */
+					if(h->metas_last != NULL)
+						h->metas_last->next = h->meta;
+					else
+						h->metas = h->meta;
+					h->metas_last = h->meta;
+					h->meta = NULL;
+				}
 
 				/* Unlock meta string access */
 				pthread_mutex_unlock(&h->mutex);
 
-				/* Meta data field reached */
-				if(h->remaining == 0)
-				{
-					/* Notify new metadata */
-					if(h->event_cb != NULL &&
-					   h->metas == h->meta_last)
-						h->event_cb(h->event_udata,
-							    SHOUT_EVENT_META,
-							    h->metas->data);
-
-					h->remaining = h->metaint;
-					h->state = SHOUT_DATA;
-				}
 				break;
 		}
 	} while(!h->is_ready);
@@ -790,7 +801,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 
 static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 {
-	struct shout_meta *m;
+	struct shout_data *m;
 	ssize_t len;
 
 	/* Forward ring buffer */
@@ -800,25 +811,28 @@ static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 	pthread_mutex_lock(&h->mutex);
 
 	/* Update first meta */
-	while(h->metas != NULL && size > h->metas->remaining)
+	while(h->metas != NULL && size >= h->metas->remaining)
 	{
 		/* Go to next meta */
-		h->metas->remaining = 0;
 		size -= h->metas->remaining;
+		h->metas->remaining = 0;
 
-		/* Free metadata */
-		m = h->metas;
-		h->metas = m->next;
-		free(m);
+		/* Update cache */
+		if(h->metas->next != NULL)
+		{
+			m = h->metas;
+			h->metas = m->next;
+			free(m);
 
-		/* Notify new metadata */
-		if(h->event_cb != NULL)
-			h->event_cb(h->event_udata, SHOUT_EVENT_META,
-				    h->metas->data);
+			/* Notify new metadata */
+			if(h->event_cb != NULL)
+				h->event_cb(h->event_udata, SHOUT_EVENT_META,
+					    h->metas->data);
+		}
 	}
 
 	/* Update remaining bytes before next metadata */
-	if(h->metas != NULL)
+	if(h->metas != NULL && size < h->metas->remaining)
 		h->metas->remaining -= size;
 
 	/* Unlock meta string access */
