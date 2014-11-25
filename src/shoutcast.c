@@ -64,6 +64,11 @@
 #define THREAD_TIMEOUT 100
 
 /**
+ * Pause buffer settings: block size
+ */
+#define BLOCK_SIZE 8192
+
+/**
  * State of metadata demultiplexing in stream
  */
 enum shout_state {
@@ -94,6 +99,11 @@ struct shout_handle {
 	int is_ready;			/*!< Flag for cache status */
 	struct shout_data *metas;	/*!< Metadata cache (first) */
 	struct shout_data *metas_last;	/*!< Last metadata in cache */
+	/* Pause buffer */
+	struct shout_data *pauses;	/*!< First block in pause buffer */
+	struct shout_data *pauses_last;	/*!< Last block in pause buffer */
+	struct shout_data *pause;	/*!< Current pause buffer block */
+	int is_paused;			/*!< Stream is paused: buffering */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -604,6 +614,35 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	return str;
 }
 
+int shoutcast_play(struct shout_handle *h)
+{
+	/* Lock meta string access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Play stream */
+	h->is_paused = 0;
+
+	/* Unlock meta string access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
+int shoutcast_pause(struct shout_handle *h)
+{
+	/* Lock meta string access */
+	pthread_mutex_lock(&h->mutex);
+
+	/* Pause stream */
+	h->is_paused = 1;
+	h->is_ready = 0;
+
+	/* Unlock meta string access */
+	pthread_mutex_unlock(&h->mutex);
+
+	return 0;
+}
+
 int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
 			   void *user_data)
 {
@@ -646,7 +685,7 @@ int shoutcast_close(struct shout_handle *h)
 	if(h->ring != NULL)
 		vring_close(h->ring);
 
-	/* Free metas */
+	/* Free meta cache */
 	while(h->metas != NULL)
 	{
 		m = h->metas;
@@ -656,10 +695,97 @@ int shoutcast_close(struct shout_handle *h)
 	if(h->meta != NULL)
 		free(h->meta);
 
+	/* Free pause buffer */
+	while(h->pauses != NULL)
+	{
+		m = h->pauses;
+		h->pauses = m->next;
+		free(m);
+	}
+
 	/* Free handler */
 	free(h);
 
 	return 0;
+}
+
+static ssize_t shoutcast_read_stream(struct shout_handle *h,
+				     unsigned char *buffer, size_t size,
+				     unsigned long timeout)
+{
+	ssize_t len;
+	size_t pos;
+	size_t r_len = 0;
+
+	/* No pause has been performed */
+	if(!h->is_paused && h->pauses == NULL && h->pause == NULL)
+		return http_read_timeout(h->http, buffer, size, timeout);
+
+	/* Allocate a new block */
+	if(buffer == NULL && h->pause == NULL)
+	{
+		h->pause = malloc(sizeof(struct shout_data) + BLOCK_SIZE);
+		if(h->pause == NULL)
+			return -1;
+		h->pause->remaining = BLOCK_SIZE;
+		h->pause->next = NULL;
+	}
+
+	/* Read data from HTTP stream */
+	if(h->pause != NULL)
+	{
+		/* Get data from HTTP stream */
+		pos = BLOCK_SIZE - h->pause->remaining;
+		len = http_read_timeout(h->http,
+					(unsigned char*) h->pause->data + pos,
+					h->pause->remaining, timeout);
+		if(len < 0)
+			return -1;
+
+		/* Update remaining space in block */
+		h->pause->remaining -= len;
+		if(h->pause->remaining == 0)
+		{
+			/* Add block to buffer pause */
+			if(h->pauses_last != NULL)
+				h->pauses_last->next = h->pause;
+			else
+				h->pauses = h->pause;
+			h->pause->remaining = BLOCK_SIZE;
+			h->pauses_last = h->pause;
+			h->pause = NULL;
+		}
+	}
+
+	/* Stream playing is paused */
+	if(buffer == NULL)
+		return 0;
+
+	/* Get data from pause buffer */
+	while(h->pauses != NULL && size > 0)
+	{
+		pos = BLOCK_SIZE - h->pauses->remaining;
+		len = size > h->pauses->remaining ? h->pauses->remaining : size;
+		memcpy(buffer + r_len, h->pauses->data + pos, len);
+		h->pauses->remaining -= len;
+		r_len += len;
+		size -= len;
+
+		/* Remove block from pause buffer */
+		if(h->pauses->remaining == 0)
+		{
+			if(h->pause != NULL)
+				break;
+			h->pause = h->pauses;
+			h->pauses = h->pauses->next;
+			if(h->pauses == NULL)
+				h->pauses_last = NULL;
+			h->pause->remaining = BLOCK_SIZE;
+			h->pause->next = NULL;
+		}
+	}
+
+	return r_len;
 }
 
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
@@ -669,6 +795,10 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 	ssize_t size;
 	ssize_t len;
 
+	/* Stream is paused: fill pause buffer */
+	if(h->is_paused)
+		return shoutcast_read_stream(h, NULL, 0, timeout);
+
 	/* Fill cache */
 	do
 	{
@@ -676,7 +806,10 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 		size = vring_write(h->ring, &buffer);
 		if(size <= 0)
 		{
-			if(size == 0 && h->is_ready == 0)
+			/* Lock meta string access */
+			pthread_mutex_lock(&h->mutex);
+
+			if(size == 0 && h->is_ready == 0 && !h->is_paused)
 			{
 				/* Notify cache is ready */
 				if(h->event_cb != NULL)
@@ -684,14 +817,19 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 						    SHOUT_EVENT_READY, NULL);
 				h->is_ready = 1;
 			}
+
+			/* Unlock meta string access */
+			pthread_mutex_unlock(&h->mutex);
+
+			/* Wait timeout */
 			usleep(timeout*1000);
 			break;
 		}
 		else if(h->remaining > 0 && size > h->remaining)
 			size = h->remaining;
 
-		/* Read data from http */
-		len = http_read_timeout(h->http, buffer, size, timeout);
+		/* Read data from HTTP stream */
+		len = shoutcast_read_stream(h, buffer, size, timeout);
 		if(len <= 0)
 		{
 			if(len < 0)

@@ -21,20 +21,33 @@
 
 #include "format.h"
 
-enum {NONE_STREAM, MPEG_STREAM, AAC_STREAM};
+/**
+ * Shoutcast stream type (audio codec)
+ */
+enum shout_type {
+	NONE_STREAM,	/*!< Unknown type */
+	MPEG_STREAM,	/*!< MP3 stream */
+	AAC_STREAM	/*!< AAC or AAC+ stream */
+};
 
+/**
+ * Radio information extracted from HTTP header
+ */
 struct radio_info {
-	int bitrate;		//icy-br: || ice-audio-info: ice-bitrate=
-	char *description;	//icy-description:
-	char *genre;		//icy-genre:
-	char *name;		//icy-name:
-	int pub;		//icy-pub:
-	int private;		//icy-private;
-	char *url;		//icy-url:
-	int samplerate;		//ice-audio-info: ice-samplerate=
-	int channels;		//ice-audio-info: ice-channels=
-	int metaint;		//icy-metaint:
-	int type;		// Audio Codec (MPEG_STREAM or AAC_STREAM)
+	char *description;	/*!< Radio description (icy-description) */
+	char *genre;		/*!< Radio/Music genre (icy-genre) */
+	char *name;		/*!< Radio name (icy-name) */
+	int pub;		/*!< Public radio (icy-pub) */
+	int private;		/*!< Private radio (icy-private) */
+	char *url;		/*!< Radio URL (icy-url) */
+	int samplerate;		/*!< Stream samplerate (ice-audio-info:
+							     ice-samplerate) */
+	int channels;		/*!< Stream channel number (ice-audio-info:
+								ice-channels) */
+	int bitrate;		/*!< Stream bitrate (icy-br || ice-audio-info:
+								  ice-bitrate */
+	int metaint;		/*!< Stream metadata interval (icy-metaint) */
+	enum shout_type type;	/*!< Stream audio codec type */
 };
 
 struct shout_handle;
@@ -52,6 +65,10 @@ int shoutcast_read(void *h, unsigned char *buffer, size_t size,
 const struct radio_info *shoutcast_get_info(struct shout_handle *h);
 
 char *shoutcast_get_metadata(struct shout_handle *h);
+
+int shoutcast_play(struct shout_handle *h);
+
+int shoutcast_pause(struct shout_handle *h);
 
 int shoutcast_close(struct shout_handle *h);
 
