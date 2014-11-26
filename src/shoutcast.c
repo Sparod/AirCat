@@ -975,24 +975,25 @@ static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
 		size -= h->metas->remaining;
 		h->metas->remaining = 0;
 
-		/* Update cache */
-		if(h->metas->next != NULL)
-		{
-			m = h->metas;
-			h->metas = m->next;
-			free(m);
+		/* No more metadata in cache */
+		if(h->metas->next == NULL)
+			break;
 
-			/* Lock event access */
-			pthread_mutex_lock(&h->mutex);
+		/* Get next metadata in cache */
+		m = h->metas;
+		h->metas = m->next;
+		free(m);
 
-			/* Notify new metadata */
-			if(h->event_cb != NULL)
-				h->event_cb(h->event_udata, SHOUT_EVENT_META,
-					    h->metas->data);
+		/* Lock event access */
+		pthread_mutex_lock(&h->mutex);
 
-			/* Unlock event access */
-			pthread_mutex_unlock(&h->mutex);
-		}
+		/* Notify new metadata */
+		if(h->event_cb != NULL)
+			h->event_cb(h->event_udata, SHOUT_EVENT_META,
+				    h->metas->data);
+
+		/* Unlock event access */
+		pthread_mutex_unlock(&h->mutex);
 	}
 
 	/* Update remaining bytes before next metadata */
