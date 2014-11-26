@@ -74,8 +74,11 @@
 /**
  * Pause buffer settings:
  *  BLOCK_SIZE: basic block size.
+ *  CHECK_POOL: pool is check every CHECK_POOL seconds and only two block are 
+ *              kept. Others are freed.
  */
 #define BLOCK_SIZE 8192
+#define CHECK_POOL 30
 
 /**
  * State of metadata demultiplexing in stream
@@ -116,6 +119,7 @@ struct shout_handle {
 	int is_paused;			/*!< Stream is paused: buffering */
 	struct timeval start_pause;	/*!< Timestamp of pause start */
 	unsigned long pause_len;	/*!< Duration of pause buffer (ms) */
+	time_t last_pool_check;		/*!< Last pool check */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -744,7 +748,7 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 				     unsigned char *buffer, size_t size,
 				     unsigned long timeout)
 {
-	struct shout_data *b;
+	struct shout_data *b, *b2;
 	ssize_t len;
 	size_t pos;
 	size_t r_len = 0;
@@ -830,6 +834,30 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 			else
 				h->pool = b;
 			h->pool_last = b;
+
+			/* Check pool size */
+			if(h->last_pool_check + CHECK_POOL <= time(NULL))
+			{
+				/* Update last check pool timer */
+				h->last_pool_check = time(NULL);
+
+				/* Free all blocks which are useless */
+				if(h->pool != NULL && h->pool->next != NULL)
+				{
+					/* Keep only two block */
+					b = h->pool->next->next;
+					h->pool_last = h->pool->next;
+					h->pool_last->next = NULL;
+
+					/* Free all blocks */
+					while(b != NULL)
+					{
+						b2 = b;
+						b = b->next;
+						free(b2);
+					}
+				}
+			}
 		}
 	}
 
