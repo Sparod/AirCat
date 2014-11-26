@@ -21,6 +21,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/time.h>
 
 #include "http.h"
 #include "decoder.h"
@@ -57,6 +58,13 @@
 #define AAC_SYNC_SIZE MAX_RW_SIZE
 #define SYNC_TOTAL_TIMEOUT 5
 #define SYNC_TIMEOUT 1
+
+/**
+ * All synchronize size must be lower or equal to minimum cache length
+ */
+#if (AAC_SYNC_SIZE < MIN_CACHE_LEN) || (MP3_SYNC_SIZE < MIN_CACHE_LEN)
+#error MIN_CACHE_LEN must be greater than all syncronization size
+#endif
 
 /**
  * Thread timeout in ms.
@@ -103,8 +111,11 @@ struct shout_handle {
 	/* Pause buffer */
 	struct shout_data *pauses;	/*!< First block in pause buffer */
 	struct shout_data *pauses_last;	/*!< Last block in pause buffer */
-	struct shout_data *pause;	/*!< Current pause buffer block */
+	struct shout_data *pool;	/*!< Current pause buffer block */
+	struct shout_data *pool_last;	/*!< Last pause buffer block in pool */
 	int is_paused;			/*!< Stream is paused: buffering */
+	struct timeval start_pause;	/*!< Timestamp of pause start */
+	unsigned long pause_len;	/*!< Duration of pause buffer (ms) */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -142,6 +153,8 @@ static ssize_t shoutcast_sync_aac_stream(struct shout_handle *h,
 					 unsigned char *buffer, size_t in_len);
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				     unsigned long timeout);
+static ssize_t shoutcast_get_buffer(struct shout_handle *h,
+				    unsigned char **buffer);
 static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size);
 static void *shoutcast_thread(void *user_data);
 
@@ -251,7 +264,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 		return -1;
 
 	/* Get data buffer */
-	len = vring_read(h->ring, &buffer, 0, 0);
+	len = shoutcast_get_buffer(h, &buffer);
 	if(len <= 0)
 		return -1;
 
@@ -302,7 +315,7 @@ static inline int shoutcast_sync(struct shout_handle *h)
 		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
 
 	/* Get buffer */
-	len = vring_read(h->ring, &buffer, 0, 0);
+	len = shoutcast_get_buffer(h, &buffer);
 	if(len <= 0)
 		return -1;
 
@@ -315,7 +328,7 @@ static inline int shoutcast_sync(struct shout_handle *h)
 	shoutcast_forward_buffer(h, len);
 
 	/* Complete buffer as possible */
-	len = vring_get_length(h->ring);
+	len = shoutcast_get_buffer(h, &buffer);
 	while(len < sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
 		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
 
@@ -528,23 +541,9 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 			break;
 
 		/* Get data */
-		len = vring_read(h->ring, &in_buffer, 0, 0);
-		if(len <= MIN_CACHE_LEN)
-		{
-			/* Lock event access */
-			pthread_mutex_lock(&h->mutex);
-
-			/* Notify cache is empty */
-			if(h->event_cb != NULL && h->is_ready == 1)
-				h->event_cb(h->event_udata,
-					    SHOUT_EVENT_BUFFERING, NULL);
-
-			/* Unlock event access */
-			pthread_mutex_unlock(&h->mutex);
-
-			h->is_ready = 0;
+		len = shoutcast_get_buffer(h, &in_buffer);
+		if(len <= 0)
 			break;
-		}
 
 		/* Decode next frame */
 		samples = decoder_decode(h->dec, in_buffer, len > 0 ? len : 0,
@@ -628,11 +627,21 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 
 int shoutcast_play(struct shout_handle *h)
 {
+	struct timeval now;
+
 	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Play stream */
-	h->is_paused = 0;
+	if(h->is_paused)
+	{
+		h->is_paused = 0;
+
+		/* Calculate duration of pause */
+		gettimeofday(&now, NULL);
+		h->pause_len += ((now.tv_sec - h->start_pause.tv_sec) * 1000) +
+				((now.tv_usec - h->start_pause.tv_usec) / 1000);
+	}
 
 	/* Unlock pause buffer access */
 	pthread_mutex_unlock(&h->pause_mutex);
@@ -646,8 +655,12 @@ int shoutcast_pause(struct shout_handle *h)
 	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Pause stream */
-	h->is_paused = 1;
-	h->is_ready = 0;
+	if(!h->is_paused)
+	{
+		h->is_paused = 1;
+		h->is_ready = 0;
+		gettimeofday(&h->start_pause, NULL);
+	}
 
 	/* Unlock pause buffer access */
 	pthread_mutex_unlock(&h->pause_mutex);
@@ -714,6 +727,12 @@ int shoutcast_close(struct shout_handle *h)
 		h->pauses = m->next;
 		free(m);
 	}
+	while(h->pool != NULL)
+	{
+		m = h->pool;
+		h->pool = m->next;
+		free(m);
+	}
 
 	/* Free handler */
 	free(h);
@@ -725,75 +744,92 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 				     unsigned char *buffer, size_t size,
 				     unsigned long timeout)
 {
+	struct shout_data *b;
 	ssize_t len;
 	size_t pos;
 	size_t r_len = 0;
 
 	/* No pause has been performed */
-	if(!h->is_paused && h->pauses == NULL && h->pause == NULL)
+	if(buffer != NULL && h->pauses == NULL && h->pool == NULL)
 		return http_read_timeout(h->http, buffer, size, timeout);
 
-	/* Allocate a new block */
-	if(buffer == NULL && h->pause == NULL)
-	{
-		h->pause = malloc(sizeof(struct shout_data) + BLOCK_SIZE);
-		if(h->pause == NULL)
-			return -1;
-		h->pause->remaining = BLOCK_SIZE;
-		h->pause->next = NULL;
-	}
+	/* Fill pause buffer */
+	do {
+		/* No block is ready for filling */
+		if(h->pool == NULL)
+		{
+			/* Allocate a block */
+			h->pool = malloc(sizeof(struct shout_data)+BLOCK_SIZE);
+			if(h->pool == NULL)
+				break;
+			h->pool->remaining = BLOCK_SIZE;
+			h->pool->next = NULL;
+			h->pool_last = h->pool;
+		}
 
-	/* Read data from HTTP stream */
-	if(h->pause != NULL)
-	{
 		/* Get data from HTTP stream */
-		pos = BLOCK_SIZE - h->pause->remaining;
+		pos = BLOCK_SIZE - h->pool->remaining;
 		len = http_read_timeout(h->http,
-					(unsigned char*) h->pause->data + pos,
-					h->pause->remaining, timeout);
-		if(len < 0)
-			return -1;
+					(unsigned char*) h->pool->data + pos,
+					h->pool->remaining, 0);
+		if(len <= 0)
+			break;
 
 		/* Update remaining space in block */
-		h->pause->remaining -= len;
-		if(h->pause->remaining == 0)
+		h->pool->remaining -= len;
+		if(h->pool->remaining == 0)
 		{
+			/* Remove block from pool */
+			b = h->pool;
+			h->pool = b->next;
+			if(h->pool == NULL)
+				h->pool_last = NULL;
+
 			/* Add block to buffer pause */
 			if(h->pauses_last != NULL)
-				h->pauses_last->next = h->pause;
+				h->pauses_last->next = b;
 			else
-				h->pauses = h->pause;
-			h->pause->remaining = BLOCK_SIZE;
-			h->pauses_last = h->pause;
-			h->pause = NULL;
+				h->pauses = b;
+			h->pauses_last = b;
+			b->remaining = BLOCK_SIZE;
+			b->next = NULL;
 		}
-	}
+	} while(h->pool != NULL);
 
-	/* Stream playing is paused */
+	/* Stream is paused: do not return data */
 	if(buffer == NULL)
 		return 0;
 
 	/* Get data from pause buffer */
 	while(h->pauses != NULL && size > 0)
 	{
-		pos = BLOCK_SIZE - h->pauses->remaining;
-		len = size > h->pauses->remaining ? h->pauses->remaining : size;
-		memcpy(buffer + r_len, h->pauses->data + pos, len);
-		h->pauses->remaining -= len;
+		/* Copy data from pause buffer */
+		b = h->pauses;
+		pos = BLOCK_SIZE - b->remaining;
+		len = size > b->remaining ? b->remaining : size;
+		memcpy(buffer + r_len, b->data + pos, len);
+
+		/* Update block values */
+		b->remaining -= len;
 		r_len += len;
 		size -= len;
 
-		/* Remove block from pause buffer */
-		if(h->pauses->remaining == 0)
+		/* Block is empty: get next */
+		if(b->remaining == 0)
 		{
-			if(h->pause != NULL)
-				break;
-			h->pause = h->pauses;
-			h->pauses = h->pauses->next;
+			/* Remove block from pause buffer */
+			h->pauses = b->next;
 			if(h->pauses == NULL)
 				h->pauses_last = NULL;
-			h->pause->remaining = BLOCK_SIZE;
-			h->pause->next = NULL;
+
+			/* Update block and set to pause block */
+			b->remaining = BLOCK_SIZE;
+			b->next = NULL;
+			if(h->pool_last != NULL)
+				h->pool_last->next = b;
+			else
+				h->pool = b;
+			h->pool_last = b;
 		}
 	}
 
@@ -803,12 +839,22 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				     unsigned long timeout)
 {
+	int is_paused;
 	unsigned char *buffer;
 	ssize_t size;
 	ssize_t len;
 
+	/* Lock pause bufffer access */
+	pthread_mutex_lock(&h->pause_mutex);
+
+	/* Copy current stream status */
+	is_paused = h->is_paused;
+
+	/* Unlock pause bufffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
+
 	/* Stream is paused: fill pause buffer */
-	if(h->is_paused)
+	if(is_paused)
 		return shoutcast_read_stream(h, NULL, 0, timeout);
 
 	/* Fill cache */
@@ -955,6 +1001,33 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 	} while(!h->is_ready);
 
 	return vring_get_length(h->ring);
+}
+
+static ssize_t shoutcast_get_buffer(struct shout_handle *h,
+				    unsigned char **buffer)
+{
+	ssize_t len;
+
+	/* Get data from ring buffer */
+	len = vring_read(h->ring, buffer, 0, 0);
+	if(len > 0 && len <= MIN_CACHE_LEN)
+	{
+		/* Lock event access */
+		pthread_mutex_lock(&h->mutex);
+
+		/* Notify cache is empty */
+		if(h->event_cb != NULL && h->is_ready == 1)
+			h->event_cb(h->event_udata, SHOUT_EVENT_BUFFERING,
+				    NULL);
+
+		/* Unlock event access */
+		pthread_mutex_unlock(&h->mutex);
+
+		h->is_ready = 0;
+		len = 0;
+	}
+
+	return len;
 }
 
 static ssize_t shoutcast_forward_buffer(struct shout_handle *h, size_t size)
