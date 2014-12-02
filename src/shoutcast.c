@@ -116,10 +116,12 @@ struct shout_handle {
 	struct shout_data *pauses_last;	/*!< Last block in pause buffer */
 	struct shout_data *pool;	/*!< Current pause buffer block */
 	struct shout_data *pool_last;	/*!< Last pause buffer block in pool */
+	unsigned long pause_count;	/*!< Count of pause buffer block */
 	int is_paused;			/*!< Stream is paused: buffering */
 	struct timeval start_pause;	/*!< Timestamp of pause start */
 	unsigned long pause_len;	/*!< Duration of pause buffer (ms) */
 	time_t last_pool_check;		/*!< Last pool check */
+	size_t skip_size;		/*!< Len to skip in pause buffer */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -707,6 +709,56 @@ int shoutcast_pause(struct shout_handle *h)
 	return 0;
 }
 
+unsigned long shoutcast_skip(struct shout_handle *h, unsigned long skip)
+{
+	struct timeval now;
+
+	/* Lock pause buffer access */
+	pthread_mutex_lock(&h->pause_mutex);
+
+	/* Calculate duration of pause */
+	if(h->is_paused)
+	{
+		/* Add current pause time */
+		gettimeofday(&now, NULL);
+		h->pause_len += ((now.tv_sec - h->start_pause.tv_sec) * 1000) +
+			     ((now.tv_usec - h->start_pause.tv_usec) / 1000);
+		gettimeofday(&h->start_pause, NULL);
+	}
+
+	/* Update skip value */
+	if(h->pause_len < skip)
+		skip = h->pause_len;
+
+	/* Update skip size if pause buffer is bigger */
+	if(h->pause_len > 0)
+	{
+		h->skip_size += skip * ((h->pause_count + 1) * BLOCK_SIZE) /
+				h->pause_len;
+		h->pause_len -= skip;
+		h->is_ready = 0;
+	}
+
+	/* Unlock pause buffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
+
+	return skip;
+}
+
+void shoutcast_reset(struct shout_handle *h)
+{
+	/* Lock pause buffer access */
+	pthread_mutex_lock(&h->pause_mutex);
+
+	/* Reset pause buffer */
+	h->skip_size = ~1L;
+	h->is_ready = 0;
+
+	/* Unlock pause buffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
+}
+
+
 int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
 			   void *user_data)
 {
@@ -781,7 +833,7 @@ int shoutcast_close(struct shout_handle *h)
 
 static ssize_t shoutcast_read_stream(struct shout_handle *h,
 				     unsigned char *buffer, size_t size,
-				     unsigned long timeout)
+				     unsigned long timeout, int skip)
 {
 	struct shout_data *b, *b2;
 	ssize_t len;
@@ -794,6 +846,10 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 
 	/* Fill pause buffer */
 	do {
+		/* Skipping: do not retrieve data from HTTP stream */
+		if(skip)
+			break;
+
 		/* No block is ready for filling */
 		if(h->pool == NULL)
 		{
@@ -832,12 +888,50 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 			h->pauses_last = b;
 			b->remaining = BLOCK_SIZE;
 			b->next = NULL;
+			h->pause_count++;
 		}
 	} while(h->pool != NULL);
 
 	/* Stream is paused: do not return data */
 	if(buffer == NULL)
 		return 0;
+
+	/* Skipping: flush pool */
+	if(skip && h->pool != NULL)
+	{
+		/* Some data are remaining */
+		if(h->pool->remaining < BLOCK_SIZE)
+		{
+			/* Remove from pool */
+			b = h->pool;
+			h->pool = b->next;
+			if(h->pool == NULL)
+				h->pool_last = NULL;
+
+			/* Add to pause buffer */
+			if(h->pauses_last != NULL)
+				h->pauses_last->next = b;
+			else
+				h->pauses = b;
+			h->pauses_last = b;
+
+			/* Move data to end of block */
+			len = BLOCK_SIZE - b->remaining;
+			memmove(b->data + b->remaining, b->data, len);
+			b->remaining = len;
+			b->next = NULL;
+			h->pause_count++;
+		}
+
+		/* Free all other blocks in pool */
+		while(h->pool != NULL)
+		{
+			b = h->pool;
+			h->pool = b->next;
+			free(b);
+		}
+		h->pool_last = NULL;
+	}
 
 	/* Get data from pause buffer */
 	while(h->pauses != NULL && size > 0)
@@ -864,14 +958,22 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 			/* Update block and set to pause block */
 			b->remaining = BLOCK_SIZE;
 			b->next = NULL;
-			if(h->pool_last != NULL)
-				h->pool_last->next = b;
+			if(!skip)
+			{
+				/* Add block to pool */
+				if(h->pool_last != NULL)
+					h->pool_last->next = b;
+				else
+					h->pool = b;
+				h->pool_last = b;
+			}
 			else
-				h->pool = b;
-			h->pool_last = b;
+				free(b);
+			h->pause_count--;
 
 			/* Check pool size */
-			if(h->last_pool_check + CHECK_POOL <= time(NULL))
+			if(h->last_pool_check + CHECK_POOL <= time(NULL) &&
+			   !skip)
 			{
 				/* Update last check pool timer */
 				h->last_pool_check = time(NULL);
@@ -902,27 +1004,48 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				     unsigned long timeout)
 {
-	int is_paused;
 	unsigned char *buffer;
+	int skip = 0;
 	ssize_t size;
 	ssize_t len;
 
 	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
+	/* Skipping time in pause buffer */
+	if(h->skip_size > 0)
+		skip = 1;
+
 	/* Copy current stream status */
-	is_paused = h->is_paused;
+	if(h->is_paused && !skip)
+	{
+		/* Unlock pause buffer access */
+		pthread_mutex_unlock(&h->pause_mutex);
+
+		return shoutcast_read_stream(h, NULL, 0, timeout, 0);
+	}
 
 	/* Unlock pause buffer access */
 	pthread_mutex_unlock(&h->pause_mutex);
 
-	/* Stream is paused: fill pause buffer */
-	if(is_paused)
-		return shoutcast_read_stream(h, NULL, 0, timeout);
-
 	/* Fill cache */
 	do
 	{
+		/* Lock pause buffer access */
+		pthread_mutex_lock(&h->pause_mutex);
+
+		/* Forward in cache */
+		while(h->skip_size > 0)
+		{
+			len = shoutcast_forward_buffer(h, h->skip_size);
+			if(len <= 0)
+				break;
+			h->skip_size -= len;
+		}
+
+		/* Unlock pause buffer access */
+		pthread_mutex_unlock(&h->pause_mutex);
+
 		/* Get buffer write */
 		size = vring_write(h->ring, &buffer);
 		if(size <= 0)
@@ -946,6 +1069,8 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 
 				/* Update cache status */
 				h->is_ready = 1;
+				if(skip)
+					h->resync = 1;
 			}
 
 			/* Unlock pause buffer access */
@@ -959,11 +1084,26 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 			size = h->remaining;
 
 		/* Read data from HTTP stream */
-		len = shoutcast_read_stream(h, buffer, size, timeout);
+		len = shoutcast_read_stream(h, buffer, size, timeout, skip);
 		if(len <= 0)
 		{
+			/* Lock pause buffer access */
+			pthread_mutex_lock(&h->pause_mutex);
+
+			/* Pause buffer is empty */
+			if(skip && h->pauses == NULL)
+			{
+				h->pause_len = 0;
+				h->skip_size = 0;
+				h->resync = 1;
+			}
+
+			/* Unlock pause buffer access */
+			pthread_mutex_unlock(&h->pause_mutex);
+
 			if(len < 0)
 				return -1;
+
 			break;
 		}
 
