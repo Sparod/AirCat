@@ -758,7 +758,6 @@ void shoutcast_reset(struct shout_handle *h)
 	pthread_mutex_unlock(&h->pause_mutex);
 }
 
-
 int shoutcast_set_event_cb(struct shout_handle *h, shoutcast_event_cb cb,
 			   void *user_data)
 {

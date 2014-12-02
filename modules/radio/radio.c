@@ -69,8 +69,14 @@ static int radio_play(struct radio_handle *h, const char *id)
 	unsigned long samplerate;
 	unsigned char channels;
 
-	if(id == NULL)
+	/* Play/pause behavior */
+	if(id == NULL || *id == '\0')
+	{
+		/* Check radio is playing */
+		if(h->shout != NULL)
+			return shoutcast_play(h->shout);
 		return -1;
+	}
 
 	/* Stop previous radio */
 	radio_stop(h);
@@ -94,6 +100,15 @@ static int radio_play(struct radio_handle *h, const char *id)
 	output_play_stream(h->output, h->stream);
 
 	return 0;
+}
+
+static int radio_pause(struct radio_handle *h)
+{
+	if(h == NULL || h->shout == NULL)
+		return -1;
+
+	/* Pause radio */
+	return shoutcast_pause(h->shout);
 }
 
 static int radio_stop(struct radio_handle *h)
@@ -282,6 +297,17 @@ static int radio_httpd_play(void *user_data, struct httpd_req *req,
 	return 200;
 }
 
+static int radio_httpd_pause(void *user_data, struct httpd_req *req,
+			     struct httpd_res **res)
+{
+	struct radio_handle *h = user_data;
+
+	/* Pause radio */
+	radio_pause(h);
+
+	return 200;
+}
+
 static int radio_httpd_stop(void *user_data, struct httpd_req *req,
 			    struct httpd_res **res)
 {
@@ -382,6 +408,7 @@ static struct url_table radio_url[] = {
 	{"/info/",          HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_info},
 	{"/list",           HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_list},
 	{"/play",           HTTPD_EXT_URL, HTTPD_PUT, 0, &radio_httpd_play},
+	{"/pause",          0,             HTTPD_PUT, 0, &radio_httpd_pause},
 	{"/stop",           0,             HTTPD_PUT, 0, &radio_httpd_stop},
 	{"/status",         HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_status},
 	{0, 0, 0}
