@@ -668,21 +668,15 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 
 int shoutcast_play(struct shout_handle *h)
 {
-	struct timeval now;
+	/* Update pause duration */
+	shoutcast_get_pause(h);
 
 	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Play stream */
 	if(h->is_paused)
-	{
 		h->is_paused = 0;
-
-		/* Calculate duration of pause */
-		gettimeofday(&now, NULL);
-		h->pause_len += ((now.tv_sec - h->start_pause.tv_sec) * 1000) +
-				((now.tv_usec - h->start_pause.tv_usec) / 1000);
-	}
 
 	/* Unlock pause buffer access */
 	pthread_mutex_unlock(&h->pause_mutex);
@@ -709,22 +703,39 @@ int shoutcast_pause(struct shout_handle *h)
 	return 0;
 }
 
-unsigned long shoutcast_skip(struct shout_handle *h, unsigned long skip)
+unsigned long shoutcast_get_pause(struct shout_handle *h)
 {
 	struct timeval now;
+	unsigned long len;
 
 	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
-	/* Calculate duration of pause */
 	if(h->is_paused)
 	{
 		/* Add current pause time */
 		gettimeofday(&now, NULL);
 		h->pause_len += ((now.tv_sec - h->start_pause.tv_sec) * 1000) +
 			     ((now.tv_usec - h->start_pause.tv_usec) / 1000);
-		gettimeofday(&h->start_pause, NULL);
+		memcpy(&h->start_pause, &now, sizeof(struct timeval));
 	}
+
+	/* Copy len */
+	len = h->pause_len;
+
+	/* Unlock pause buffer access */
+	pthread_mutex_unlock(&h->pause_mutex);
+
+	return len;
+}
+
+unsigned long shoutcast_skip(struct shout_handle *h, unsigned long skip)
+{
+	/* Update pause duration */
+	shoutcast_get_pause(h);
+
+	/* Lock pause buffer access */
+	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Update skip value */
 	if(h->pause_len < skip)

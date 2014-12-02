@@ -70,6 +70,8 @@ int shoutcast_play(struct shout_handle *h);
 
 int shoutcast_pause(struct shout_handle *h);
 
+unsigned long shoutcast_get_pause(struct shout_handle *h);
+
 unsigned long shoutcast_skip(struct shout_handle *h, unsigned long skip);
 
 void shoutcast_reset(struct shout_handle *h);
