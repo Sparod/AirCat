@@ -111,6 +111,24 @@ static int radio_pause(struct radio_handle *h)
 	return shoutcast_pause(h->shout);
 }
 
+static unsigned long radio_skip(struct radio_handle *h, unsigned long skip)
+{
+	if(h == NULL || h->shout == NULL)
+		return -1;
+
+	/* Skip ms in radio stream */
+	return shoutcast_skip(h->shout, skip);
+}
+
+static void radio_reset(struct radio_handle *h)
+{
+	if(h == NULL || h->shout == NULL)
+		return;
+
+	/* Reset radio stream (cache and pause) */
+	shoutcast_reset(h->shout);
+}
+
 static int radio_stop(struct radio_handle *h)
 {
 	if(h == NULL || h->shout == NULL)
@@ -138,6 +156,7 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	char *artist = NULL;
 	char *title = NULL;
 	char *str = NULL;
+	enum shout_status status;
 	unsigned long v;
 
 	/* No radio playing */
@@ -193,18 +212,16 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 		json_set_string(root, "artist", artist);
 
 		/* Add playing status */
-		v = output_get_status_stream(h->output, h->stream,
-					     OUTPUT_STREAM_CACHE_STATUS);
-		if(v == CACHE_BUFFERING)
-		{
-			/* Get cache filling rate */
-			v = output_get_status_stream(h->output, h->stream,
-						   OUTPUT_STREAM_CACHE_FILLING);
-			json_set_int(root, "buffering", v);
-		}
+		status = shoutcast_get_status(h->shout);
+		if(status == SHOUT_BUFFERING)
+			json_set_int(root, "buffering",
+				     shoutcast_get_filling(h->shout));
 		v = output_get_status_stream(h->output, h->stream,
 					     OUTPUT_STREAM_PLAYED);
 		json_set_int(root, "elapsed", v / 1000);
+
+		/* Add pause duration */
+		json_set_int64(root, "pause", shoutcast_get_pause(h->shout));
 
 		/* Free string */
 		if(str != NULL)
@@ -304,6 +321,47 @@ static int radio_httpd_pause(void *user_data, struct httpd_req *req,
 
 	/* Pause radio */
 	radio_pause(h);
+
+	return 200;
+}
+
+static int radio_httpd_skip(void *user_data, struct httpd_req *req,
+			    struct httpd_res **res)
+{
+	struct radio_handle *h = user_data;
+	struct json *root = NULL;
+	unsigned long value;
+	const char *str;
+
+	/* Get time to skip (in ms) */
+	value = strtoul(req->resource, NULL, 10);
+	if(value == 0)
+		return 200;
+
+	/* Create a new JSON object */
+	root = json_new();
+	if(root == NULL)
+		return 500;
+
+	/* Skip value ms in radio stream */
+	json_set_int64(root, "skipped", radio_skip(h, value));
+
+	/* Create HTTP response with JSON object */
+	*res = httpd_new_response((char*)json_export(root), 1, 1);
+
+	/* Free JSON object */
+	json_free(root);
+
+	return 200;
+}
+
+static int radio_httpd_reset(void *user_data, struct httpd_req *req,
+			     struct httpd_res **res)
+{
+	struct radio_handle *h = user_data;
+
+	/* Reset radio stream (pause and cache) */
+	radio_reset(h);
 
 	return 200;
 }
@@ -409,6 +467,8 @@ static struct url_table radio_url[] = {
 	{"/list",           HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_list},
 	{"/play",           HTTPD_EXT_URL, HTTPD_PUT, 0, &radio_httpd_play},
 	{"/pause",          0,             HTTPD_PUT, 0, &radio_httpd_pause},
+	{"/skip/",          HTTPD_EXT_URL, HTTPD_PUT, 0, &radio_httpd_skip},
+	{"/reset" ,         0,             HTTPD_PUT, 0, &radio_httpd_reset},
 	{"/stop",           0,             HTTPD_PUT, 0, &radio_httpd_stop},
 	{"/status",         HTTPD_EXT_URL, HTTPD_GET, 0, &radio_httpd_status},
 	{0, 0, 0}
