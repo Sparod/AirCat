@@ -107,7 +107,8 @@ struct shout_handle {
 	struct http_handle *http;	/*!< HTTP client handler */
 	/* Input ring buffer: cache */
 	struct vring_handle *ring;	/*!< Ring buffer cache */
-	unsigned long cache_size;	/*!< Cache size in seconds */
+	unsigned long cache_len;	/*!< Cache size in seconds */
+	size_t cache_size;		/*!< Cache size in bytes */
 	int is_ready;			/*!< Flag for cache status */
 	struct shout_data *metas;	/*!< Metadata cache (first) */
 	struct shout_data *metas_last;	/*!< Last metadata in cache */
@@ -176,7 +177,6 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 	struct shout_handle *h;
 	unsigned char *buffer;
 	ssize_t len = 0;
-	size_t size;
 	int code = 0;
 	char *p;
 
@@ -190,7 +190,7 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 	memset(h, 0, sizeof(struct shout_handle));
 
 	/* Init structure */
-	h->cache_size = cache_size > 0 ? cache_size : DEFAULT_CACHE_SIZE;
+	h->cache_len = cache_size > 0 ? cache_size : DEFAULT_CACHE_SIZE;
 	h->state = SHOUT_DATA;
 	h->is_ready = 1;
 
@@ -260,14 +260,14 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 	h->remaining = h->metaint;
 
 	/* Calculate input buffer size */
-	size = h->cache_size * 1000;
+	h->cache_size = h->cache_len * 1000;
 	if(h->info.bitrate > 0)
-		size *= h->info.bitrate / 8;
+		h->cache_size *= h->info.bitrate / 8;
 	else
-		size *= DEFAULT_BITRATE / 8;
+		h->cache_size *= DEFAULT_BITRATE / 8;
 
 	/* Create a ring buffer for input data */
-	if(vring_open(&h->ring, size, MAX_RW_SIZE) != 0)
+	if(vring_open(&h->ring, h->cache_size, MAX_RW_SIZE) != 0)
 		return -1;
 
 	/* Synchronize to first frame in stream */
@@ -628,6 +628,9 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 	/* End of stream */
 	if((len < 0 || h->stop) && total_samples <= 0)
 	{
+		/* Set end of stream */
+		h->stop = 1;
+
 		/* Lock event access */
 		pthread_mutex_lock(&h->mutex);
 
@@ -664,6 +667,25 @@ char *shoutcast_get_metadata(struct shout_handle *h)
 	pthread_mutex_unlock(&h->meta_mutex);
 
 	return str;
+}
+
+enum shout_status shoutcast_get_status(struct shout_handle *h)
+{
+	if(h->is_paused)
+		return SHOUT_PAUSED;
+	else if(!h->is_ready)
+		return SHOUT_BUFFERING;
+	else if(h->stop)
+		return SHOUT_STOPPED;
+	return SHOUT_PLAYING;
+}
+
+int shoutcast_get_filling(struct shout_handle *h)
+{
+	/* Stream buffering: calculate ratio in % */
+	if(!h->is_ready)
+		return vring_get_length(h->ring) * 100 / h->cache_size;
+	return 100;
 }
 
 int shoutcast_play(struct shout_handle *h)

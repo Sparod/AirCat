@@ -31,6 +31,16 @@ enum shout_type {
 };
 
 /**
+ * Shoutcast status
+ */
+enum shout_status {
+	SHOUT_PLAYING,		/*!< Radio is playing */
+	SHOUT_PAUSED,		/*!< Radio is paused */
+	SHOUT_BUFFERING,	/*!< Cache is filling (play is suspended) */
+	SHOUT_STOPPED		/*!< Radio is stopped (end of stream) */
+};
+
+/**
  * Radio information extracted from HTTP header
  */
 struct radio_info {
@@ -65,6 +75,10 @@ int shoutcast_read(void *h, unsigned char *buffer, size_t size,
 const struct radio_info *shoutcast_get_info(struct shout_handle *h);
 
 char *shoutcast_get_metadata(struct shout_handle *h);
+
+enum shout_status shoutcast_get_status(struct shout_handle *h);
+
+int shoutcast_get_filling(struct shout_handle *h);
 
 int shoutcast_play(struct shout_handle *h);
 
