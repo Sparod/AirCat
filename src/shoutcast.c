@@ -141,6 +141,11 @@ struct shout_handle {
 	/* Event callback */
 	shoutcast_event_cb event_cb;	/*!< Callback for event */
 	void *event_udata;		/*!< User data for event callback */
+	/* Synchrinzation */
+	ssize_t (*sync_fn)(struct shout_handle *, unsigned char *, size_t);
+					/*!< Callback for synchronization */
+	size_t sync_size;		/*!< Minimal size for synchronization */
+	int resync;			/*!< Stream must be synchronized */
 	/* Internal thread */
 	int use_thread;			/*!< Internal thread usage */
 	int stop;			/*!< Stop signal for thread */
@@ -293,29 +298,27 @@ int shoutcast_open(struct shout_handle **handle, const char *url,
 
 static inline int shoutcast_sync(struct shout_handle *h)
 {
-	ssize_t (*sync_fn)(struct shout_handle *, unsigned char *, size_t);
 	unsigned char *buffer;
 	time_t now = time(NULL);
-	size_t sync_size;
 	ssize_t len = 0;
 
 	/* Get setting for synchronization */
 	switch(h->info.type)
 	{
 		case MPEG_STREAM:
-			sync_size = MP3_SYNC_SIZE;
-			sync_fn = shoutcast_sync_mp3_stream;
+			h->sync_size = MP3_SYNC_SIZE;
+			h->sync_fn = shoutcast_sync_mp3_stream;
 			break;
 		case AAC_STREAM:
-			sync_size = AAC_SYNC_SIZE;
-			sync_fn = shoutcast_sync_aac_stream;
+			h->sync_size = AAC_SYNC_SIZE;
+			h->sync_fn = shoutcast_sync_aac_stream;
 			break;
 		default:
 			return -1;
 	}
 
 	/* Fill as possible */
-	while(len < sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
+	while(len < h->sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
 		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
 
 	/* Get buffer */
@@ -324,7 +327,7 @@ static inline int shoutcast_sync(struct shout_handle *h)
 		return -1;
 
 	/* Find first frame in stream */
-	len = sync_fn(h, buffer, len);
+	len = h->sync_fn(h, buffer, len);
 	if(len < 0)
 		return -1;
 
@@ -333,7 +336,7 @@ static inline int shoutcast_sync(struct shout_handle *h)
 
 	/* Complete buffer as possible */
 	len = shoutcast_get_buffer(h, &buffer);
-	while(len < sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
+	while(len < h->sync_size && time(NULL) - now < SYNC_TOTAL_TIMEOUT)
 		len = shoutcast_fill_buffer(h, SYNC_TIMEOUT);
 
 	return 0;
@@ -541,13 +544,39 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 		/* Fill input buffer as possible */
 		if(!h->use_thread)
 			len = shoutcast_fill_buffer(h, 0);
-		if(!h->is_ready)
-			break;
+
+		/* Lock pause buffer access */
+		pthread_mutex_lock(&h->pause_mutex);
 
 		/* Get data */
-		len = shoutcast_get_buffer(h, &in_buffer);
-		if(len <= 0)
+		if((!h->is_ready && !h->resync) || h->is_paused ||
+		   (len = shoutcast_get_buffer(h, &in_buffer)) <= 0)
+		{
+			/* Unlock pause buffer access */
+			pthread_mutex_unlock(&h->pause_mutex);
 			break;
+		}
+
+		/* Resynchronize stream */
+		if(h->resync)
+		{
+			/* Not enough data or failed to synchronize */
+			if(len < h->sync_size ||
+			   (len = h->sync_fn(h, in_buffer, len)) < 0)
+			{
+				/* Unlock pause buffer access */
+				pthread_mutex_unlock(&h->pause_mutex);
+				break;
+			}
+
+			/* Update stream position */
+			shoutcast_forward_buffer(h, len);
+			h->resync = 0;
+
+			/* Unlock pause buffer access */
+			pthread_mutex_unlock(&h->pause_mutex);
+			continue;
+		}
 
 		/* Decode next frame */
 		samples = decoder_decode(h->dec, in_buffer, len > 0 ? len : 0,
@@ -558,11 +587,17 @@ int shoutcast_read(void *user_data, unsigned char *buffer, size_t size,
 			/* Forward used bytes in ring buffer */
 			if(len > 0 && info.used > 0)
 				shoutcast_forward_buffer(h, info.used);
+
+			/* Unlock pause buffer access */
+			pthread_mutex_unlock(&h->pause_mutex);
 			break;
 		}
 
 		/* Forward ring buffer to next frame */
 		shoutcast_forward_buffer(h, info.used);
+
+		/* Unlock pause buffer access */
+		pthread_mutex_unlock(&h->pause_mutex);
 
 		/* Update remaining counter */
 		h->pcm_remaining = info.remaining;
@@ -872,13 +907,13 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 	ssize_t size;
 	ssize_t len;
 
-	/* Lock pause bufffer access */
+	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
 	/* Copy current stream status */
 	is_paused = h->is_paused;
 
-	/* Unlock pause bufffer access */
+	/* Unlock pause buffer access */
 	pthread_mutex_unlock(&h->pause_mutex);
 
 	/* Stream is paused: fill pause buffer */
@@ -895,6 +930,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 			/* Lock pause buffer access */
 			pthread_mutex_lock(&h->pause_mutex);
 
+			/* Cache is full */
 			if(size == 0 && h->is_ready == 0 && !h->is_paused)
 			{
 				/* Lock event access */
@@ -908,6 +944,7 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 				/* Unlock event access */
 				pthread_mutex_unlock(&h->mutex);
 
+				/* Update cache status */
 				h->is_ready = 1;
 			}
 
