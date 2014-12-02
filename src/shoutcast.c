@@ -868,7 +868,11 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 					(unsigned char*) h->pool->data + pos,
 					h->pool->remaining, 0);
 		if(len <= 0)
+		{
+			/* Sleep the timeout */
+			usleep(timeout*1000);
 			break;
+		}
 
 		/* Update remaining space in block */
 		h->pool->remaining -= len;
