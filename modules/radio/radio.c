@@ -156,7 +156,7 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 	char *artist = NULL;
 	char *title = NULL;
 	char *str = NULL;
-	enum shout_status status;
+	char *status = NULL;
 	unsigned long v;
 
 	/* No radio playing */
@@ -212,10 +212,28 @@ static char *radio_get_json_status(struct radio_handle *h, int add_pic)
 		json_set_string(root, "artist", artist);
 
 		/* Add playing status */
-		status = shoutcast_get_status(h->shout);
-		if(status == SHOUT_BUFFERING)
-			json_set_int(root, "buffering",
-				     shoutcast_get_filling(h->shout));
+		switch(shoutcast_get_status(h->shout))
+		{
+			case SHOUT_PAUSED:
+				status = "paused";
+				break;
+			case SHOUT_BUFFERING:
+				status = "buffering";
+				json_set_int(root, "buffering",
+					     shoutcast_get_filling(h->shout));
+				break;
+			case SHOUT_STOPPED:
+				status = "stopped";
+				break;
+			case SHOUT_PLAYING:
+				status = "playing";
+				break;
+			default:
+				status = "unknown";
+		}
+		json_set_string(root, "status", status);
+
+		/* Add elapsed time */
 		v = output_get_status_stream(h->output, h->stream,
 					     OUTPUT_STREAM_PLAYED);
 		json_set_int(root, "elapsed", v / 1000);
