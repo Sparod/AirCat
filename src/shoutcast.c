@@ -123,6 +123,7 @@ struct shout_handle {
 	unsigned long pause_len;	/*!< Duration of pause buffer (ms) */
 	time_t last_pool_check;		/*!< Last pool check */
 	size_t skip_size;		/*!< Len to skip in pause buffer */
+	int end_pause;			/*!< End of stream during pause */
 	/* Metadata handling */
 	enum shout_state state;		/*!< State of stream demultiplexing */
 	unsigned int metaint;		/*!< Bytes between two meta data */
@@ -673,10 +674,10 @@ enum shout_status shoutcast_get_status(struct shout_handle *h)
 {
 	if(h->is_paused)
 		return SHOUT_PAUSED;
-	else if(!h->is_ready)
-		return SHOUT_BUFFERING;
 	else if(h->stop)
 		return SHOUT_STOPPED;
+	else if(!h->is_ready)
+		return SHOUT_BUFFERING;
 	return SHOUT_PLAYING;
 }
 
@@ -733,7 +734,7 @@ unsigned long shoutcast_get_pause(struct shout_handle *h)
 	/* Lock pause buffer access */
 	pthread_mutex_lock(&h->pause_mutex);
 
-	if(h->is_paused)
+	if(h->is_paused && !h->end_pause)
 	{
 		/* Add current pause time */
 		gettimeofday(&now, NULL);
@@ -766,8 +767,8 @@ unsigned long shoutcast_skip(struct shout_handle *h, unsigned long skip)
 	/* Update skip size if pause buffer is bigger */
 	if(h->pause_len > 0)
 	{
-		h->skip_size += skip * ((h->pause_count + 1) * BLOCK_SIZE) /
-				h->pause_len;
+		h->skip_size += skip * (((h->pause_count + 1) * BLOCK_SIZE) -
+				h->skip_size) / h->pause_len;
 		h->pause_len -= skip;
 		h->is_ready = 0;
 	}
@@ -871,6 +872,7 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 	ssize_t len;
 	size_t pos;
 	size_t r_len = 0;
+	int eos = 0;
 
 	/* No pause has been performed */
 	if(buffer != NULL && h->pauses == NULL && h->pool == NULL)
@@ -903,6 +905,10 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 		{
 			/* Sleep the timeout */
 			usleep(timeout*1000);
+
+			/* End of stream */
+			if(len < 0)
+				eos = 1;
 			break;
 		}
 
@@ -930,7 +936,7 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 
 	/* Stream is paused: do not return data */
 	if(buffer == NULL)
-		return 0;
+		return eos;
 
 	/* Skipping: flush pool */
 	if(skip && h->pool != NULL)
@@ -1034,6 +1040,10 @@ static ssize_t shoutcast_read_stream(struct shout_handle *h,
 		}
 	}
 
+	/* End of stream */
+	if(eos && r_len == 0)
+		return -1;
+
 	return r_len;
 }
 
@@ -1058,7 +1068,18 @@ static ssize_t shoutcast_fill_buffer(struct shout_handle *h,
 		/* Unlock pause buffer access */
 		pthread_mutex_unlock(&h->pause_mutex);
 
-		return shoutcast_read_stream(h, NULL, 0, timeout, 0);
+		/* Fill pause buffer */
+		len = shoutcast_read_stream(h, NULL, 0, timeout, 0);
+
+		/* End of stream */
+		if(len != 0)
+		{
+			/* Update pause */
+			shoutcast_get_pause(h);
+			h->end_pause = 1;
+		}
+
+		return 0;
 	}
 
 	/* Unlock pause buffer access */
