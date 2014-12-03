@@ -83,6 +83,8 @@ struct rtp_handle {
 	uint16_t pool_packet_count;
 	uint16_t delay_packet_count;
 	uint16_t resent_packet_count;
+	uint16_t min_packet_count;	/*!< Minimum packet count under which 
+					     jitter buffer must be refilled */
 	/* Current jitter buffer status */
 	int filling;
 	uint16_t packet_count;
@@ -136,6 +138,9 @@ int rtp_open(struct rtp_handle **handle, struct rtp_attr *attr)
 	h->resent_packet_count = attr->resent_ratio > 80 ? 
 			       h->delay_packet_count * 80 / 100 :
 			       h->delay_packet_count * attr->resent_ratio / 100;
+	h->min_packet_count = attr->fill_ratio > 80 ?
+				 h->delay_packet_count * 80 / 100 :
+				 h->delay_packet_count * attr->fill_ratio / 100;
 	h->max_misorder = attr->max_misorder;
 	h->max_dropout = attr->max_dropout;
 
@@ -627,7 +632,9 @@ static ssize_t rtp_get(struct rtp_handle *h, unsigned char *buffer, size_t size)
 
 	/* Update jitter packet count */
 	h->packet_count--;
-	if(h->packet_count == 0)
+
+	/* Jitter buffer is not enough filled: refill */
+	if(h->packet_count <= h->min_packet_count)
 		h->filling = 1;
 
 	/* Update jitter buffer position */

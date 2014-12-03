@@ -29,7 +29,7 @@
 #define RTP_LOST_PACKET -1
 #define RTP_DISCARDED_PACKET -2
 
-struct rtp_attr{
+struct rtp_attr {
 	/* RTP configuration */
 	unsigned char *ip;
 	unsigned int port;
@@ -46,6 +46,10 @@ struct rtp_attr{
 					//  packet count)
 	unsigned char resent_ratio;	// Packet resent threshold event (%)
 					//  max is 80% of delay_packet_count.
+	unsigned char fill_ratio;	/*!< Packet count threshold (in %) 
+					     under which the jitter buffer must 
+					     be refilled. Maximum ratio is 80% 
+					     of delay_packet_count. */
 	/* RTP module params */
 	uint16_t max_misorder;		// Reset threshold for late packets:
 					//  0 for default value (= 100)

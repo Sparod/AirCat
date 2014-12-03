@@ -263,6 +263,7 @@ int raop_open(struct raop_handle **handle, struct raop_attr *attr)
 		r_attr.delay_packet_count = RAOP_DEFAULT_DELAY * h->samplerate /
 					    h->samples / 1000;
 		r_attr.resent_ratio = 10;
+		r_attr.fill_ratio = 5;
 		r_attr.cust_cb = &raop_cust_cb;
 		r_attr.cust_data = NULL;
 		r_attr.rtcp_cb = &raop_rtcp_cb;
