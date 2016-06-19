@@ -46,7 +46,7 @@ aircat_LDADD = $(libssl_LIBS) \
 	       $(libtag_LIBS) \
 	       $(libsqlite_LIBS) \
 	       $(libsmbclient_LIBS) \
-	       -lpthread
+	       -lpthread -ldl
 
 aircat_LDFLAGS = -export-dynamic
 

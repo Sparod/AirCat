@@ -22,6 +22,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <mntent.h>
+#include <sys/types.h>
 
 #include "fs_posix.h"
 
